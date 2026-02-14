@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/room_canvas.dart';
 
 class Editor2DScreen extends StatelessWidget {
   const Editor2DScreen({super.key});
@@ -21,9 +22,7 @@ class Editor2DScreen extends StatelessWidget {
           Expanded(
             child: Container(
               color: Colors.white,
-              child: const Center(
-                child: Text("Canvas Area (2D)"),
-              ),
+              child: const RoomCanvas(),
             ),
           ),
         ],
