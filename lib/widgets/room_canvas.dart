@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:furniture_visualizer/models/furniture_model.dart';
+import 'package:flutter/services.dart';
 
 class RoomCanvas extends StatefulWidget {
   const RoomCanvas({super.key});
@@ -12,63 +13,73 @@ class _RoomCanvasState extends State<RoomCanvas> {
 
   List<FurnitureModel> furnitureItems = [];
   FurnitureModel? selectedItem;
+  final FocusNode _focusNode = FocusNode();
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-
-      onPanStart: (details) {
-        for (var item in furnitureItems) {
-          if (_isInside(item, details.localPosition)) {
-            selectedItem = item;
-            break;
+    return RawKeyboardListener(
+      focusNode: _focusNode,
+      autofocus: true,
+      onKey: (event) {
+       if (event.isKeyPressed(LogicalKeyboardKey.delete)) {
+         if (selectedItem != null) {
+            setState(() {
+              furnitureItems.remove(selectedItem);
+             selectedItem = null;
+           });
           }
-        }
+       }
       },
+      child: GestureDetector(
+        onPanStart: (details) {
+         for (var item in furnitureItems) {
+            if (_isInside(item, details.localPosition)) {
+              selectedItem = item;
+             break;
+           }
+         }
+       },
+       onPanUpdate: (details) {
+          if (selectedItem != null) {
+            setState(() {
+              selectedItem!.position += details.delta;
+            });
+         }
+       },
+       onPanEnd: (_) {
+         selectedItem = null;
+       },
+       onTapDown: (details) {
+         bool tappedOnItem = false;
 
-      onPanUpdate: (details) {
-        if (selectedItem != null) {
-          setState(() {
-            selectedItem!.position += details.delta;
-          });
-        }
-      },
+         for (var item in furnitureItems) {
+           if (_isInside(item, details.localPosition)) {
+             tappedOnItem = true;
+             selectedItem = item;
+             break;
+           }
+         }
 
-      onPanEnd: (_) {
-        selectedItem = null;
-      },
-
-      onTapDown: (details) {
-        bool tappedOnItem = false;
-
-        for (var item in furnitureItems) {
-          if (_isInside(item, details.localPosition)) {
-            tappedOnItem = true;
-            selectedItem = item;
-            break;
-          }
-        }
-
-        if (!tappedOnItem) {
-          setState(() {
-            furnitureItems.add(
-              FurnitureModel(
-                id: DateTime.now().toString(),
-                name: "Chair",
-                position: details.localPosition,
-                size: const Size(80, 80),
-                color: Colors.blueGrey,
-              ),
-            );
-          });
-        }
-      },
-
-      child: CustomPaint(
-        painter: RoomPainter(furnitureItems, selectedItem),
-        size: Size.infinite,
+         if (!tappedOnItem) {
+           setState(() {
+             furnitureItems.add(
+               FurnitureModel(
+                 id: DateTime.now().toString(),
+                 name: "Chair",
+                 position: details.localPosition,
+                 size: const Size(80, 80),
+                 color: Colors.blueGrey,
+               ),
+             );
+           });
+         }
+       },
+       child: CustomPaint(
+         painter: RoomPainter(furnitureItems, selectedItem),
+         size: Size.infinite,
+       ),
       ),
-    );
+   );
   }
 
   bool _isInside(FurnitureModel item, Offset point) {
