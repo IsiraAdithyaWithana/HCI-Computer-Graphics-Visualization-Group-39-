@@ -9,12 +9,14 @@ class RoomCanvas extends StatefulWidget {
 }
 
 class _RoomCanvasState extends State<RoomCanvas> {
+
   List<FurnitureModel> furnitureItems = [];
   FurnitureModel? selectedItem;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
+
       onPanStart: (details) {
         for (var item in furnitureItems) {
           if (_isInside(item, details.localPosition)) {
@@ -23,6 +25,7 @@ class _RoomCanvasState extends State<RoomCanvas> {
           }
         }
       },
+
       onPanUpdate: (details) {
         if (selectedItem != null) {
           setState(() {
@@ -30,24 +33,39 @@ class _RoomCanvasState extends State<RoomCanvas> {
           });
         }
       },
+
       onPanEnd: (_) {
         selectedItem = null;
       },
+
       onTapDown: (details) {
-        setState(() {
-          furnitureItems.add(
-            FurnitureModel(
-              id: DateTime.now().toString(),
-              name: "Chair",
-              position: details.localPosition,
-              size: const Size(80, 80),
-              color: Colors.blueGrey,
-            ),
-          );
-        });
+        bool tappedOnItem = false;
+
+        for (var item in furnitureItems) {
+          if (_isInside(item, details.localPosition)) {
+            tappedOnItem = true;
+            selectedItem = item;
+            break;
+          }
+        }
+
+        if (!tappedOnItem) {
+          setState(() {
+            furnitureItems.add(
+              FurnitureModel(
+                id: DateTime.now().toString(),
+                name: "Chair",
+                position: details.localPosition,
+                size: const Size(80, 80),
+                color: Colors.blueGrey,
+              ),
+            );
+          });
+        }
       },
+
       child: CustomPaint(
-        painter: RoomPainter(furnitureItems),
+        painter: RoomPainter(furnitureItems, selectedItem),
         size: Size.infinite,
       ),
     );
@@ -61,16 +79,19 @@ class _RoomCanvasState extends State<RoomCanvas> {
   }
 }
 
+
 class RoomPainter extends CustomPainter {
   final List<FurnitureModel> furnitureItems;
+  final FurnitureModel? selectedItem;
 
-  RoomPainter(this.furnitureItems);
+  RoomPainter(this.furnitureItems, this.selectedItem);
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint();
 
     for (var item in furnitureItems) {
+
       paint.color = item.color;
 
       canvas.drawRect(
@@ -82,6 +103,24 @@ class RoomPainter extends CustomPainter {
         ),
         paint,
       );
+
+      // Draw selection border
+      if (item == selectedItem) {
+        final borderPaint = Paint()
+          ..color = Colors.orange
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3;
+
+        canvas.drawRect(
+          Rect.fromLTWH(
+            item.position.dx,
+            item.position.dy,
+            item.size.width,
+            item.size.height,
+          ),
+          borderPaint,
+        );
+      }
     }
   }
 
