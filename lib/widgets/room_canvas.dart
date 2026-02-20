@@ -20,6 +20,53 @@ class _RoomCanvasState extends State<RoomCanvas> {
   bool _isResizing = false;
   bool _isDragging = false;
 
+  void _showContextMenu(Offset position) async {
+    if (selectedItem == null) return;
+
+    final selected = await showMenu(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        position.dx,
+        position.dy,
+        position.dx,
+        position.dy,
+      ),
+      items: [
+        const PopupMenuItem(value: 'delete', child: Text('Delete')),
+        const PopupMenuItem(value: 'duplicate', child: Text('Duplicate')),
+        const PopupMenuItem(value: 'rotate', child: Text('Rotate 90°')),
+      ],
+    );
+
+    if (selected == 'delete') {
+      setState(() {
+        furnitureItems.removeWhere((item) => item.id == selectedItem!.id);
+        selectedItem = null;
+      });
+    }
+
+    if (selected == 'duplicate') {
+      setState(() {
+        furnitureItems.add(
+          FurnitureModel(
+            id: DateTime.now().toString(),
+            type: selectedItem!.type,
+            position: selectedItem!.position + const Offset(20, 20),
+            size: selectedItem!.size,
+            color: selectedItem!.color,
+            rotation: selectedItem!.rotation,
+          ),
+        );
+      });
+    }
+
+    if (selected == 'rotate') {
+      setState(() {
+        selectedItem!.rotation += 1.5708; // 90° in radians
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return RawKeyboardListener(
@@ -50,6 +97,19 @@ class _RoomCanvasState extends State<RoomCanvas> {
           setState(() {
             selectedItem = null;
           });
+        },
+
+        onSecondaryTapDown: (details) {
+          for (var item in furnitureItems.reversed) {
+            if (_isInside(item, details.localPosition)) {
+              setState(() {
+                selectedItem = item;
+              });
+
+              _showContextMenu(details.globalPosition);
+              return;
+            }
+          }
         },
 
         onPanStart: (details) {
@@ -207,15 +267,24 @@ class RoomPainter extends CustomPainter {
     final paint = Paint();
 
     for (var item in furnitureItems) {
+      canvas.save();
+
+      // Move to center of item
+      canvas.translate(
+        item.position.dx + item.size.width / 2,
+        item.position.dy + item.size.height / 2,
+      );
+
+      // Rotate
+      canvas.rotate(item.rotation);
+
+      // Move origin back to top-left of rectangle
+      canvas.translate(-item.size.width / 2, -item.size.height / 2);
+
       paint.color = item.color;
 
       canvas.drawRect(
-        Rect.fromLTWH(
-          item.position.dx,
-          item.position.dy,
-          item.size.width,
-          item.size.height,
-        ),
+        Rect.fromLTWH(0, 0, item.size.width, item.size.height),
         paint,
       );
 
@@ -226,26 +295,20 @@ class RoomPainter extends CustomPainter {
           ..strokeWidth = 3;
 
         canvas.drawRect(
-          Rect.fromLTWH(
-            item.position.dx,
-            item.position.dy,
-            item.size.width,
-            item.size.height,
-          ),
+          Rect.fromLTWH(0, 0, item.size.width, item.size.height),
           borderPaint,
         );
 
         final handlePaint = Paint()..color = Colors.red;
 
         canvas.drawCircle(
-          Offset(
-            item.position.dx + item.size.width,
-            item.position.dy + item.size.height,
-          ),
+          Offset(item.size.width, item.size.height),
           8,
           handlePaint,
         );
       }
+
+      canvas.restore();
     }
   }
 

@@ -8,6 +8,7 @@ class FurnitureModel {
   Offset position;
   Size size;
   Color color;
+  double rotation;
 
   FurnitureModel({
     required this.id,
@@ -15,5 +16,6 @@ class FurnitureModel {
     required this.position,
     required this.size,
     required this.color,
+    this.rotation = 0,
   });
 }
