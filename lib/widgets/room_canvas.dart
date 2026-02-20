@@ -12,11 +12,13 @@ class RoomCanvas extends StatefulWidget {
 }
 
 class _RoomCanvasState extends State<RoomCanvas> {
-
   List<FurnitureModel> furnitureItems = [];
   FurnitureModel? selectedItem;
   final FocusNode _focusNode = FocusNode();
-  
+  Offset? _dragStart;
+  Offset? _itemStartPosition;
+  bool _isResizing = false;
+  bool _isDragging = false;
 
   @override
   Widget build(BuildContext context) {
@@ -24,97 +26,128 @@ class _RoomCanvasState extends State<RoomCanvas> {
       focusNode: _focusNode,
       autofocus: true,
       onKey: (event) {
-        if (event.isKeyPressed(LogicalKeyboardKey.delete)) {
+        if (event is RawKeyDownEvent &&
+            event.logicalKey == LogicalKeyboardKey.delete) {
           if (selectedItem != null) {
             setState(() {
-              furnitureItems.remove(selectedItem);
+              furnitureItems.removeWhere((item) => item.id == selectedItem!.id);
               selectedItem = null;
             });
           }
         }
       },
       child: GestureDetector(
-
-        onPanStart: (details) {
-          for (var item in furnitureItems) {
+        onTapDown: (details) {
+          for (var item in furnitureItems.reversed) {
             if (_isInside(item, details.localPosition)) {
               setState(() {
                 selectedItem = item;
               });
-              break;
+              return;
             }
+          }
+
+          setState(() {
+            selectedItem = null;
+          });
+        },
+
+        onPanStart: (details) {
+          if (selectedItem != null &&
+              _isOnResizeHandle(selectedItem!, details.localPosition)) {
+            _isResizing = true;
+            return;
+          }
+
+          for (var item in furnitureItems.reversed) {
+            if (_isInside(item, details.localPosition)) {
+              setState(() {
+                selectedItem = item;
+              });
+
+              _isDragging = true;
+              _dragStart = details.localPosition;
+              _itemStartPosition = item.position;
+              return;
+            }
+          }
+
+          _isDragging = false;
+          _isResizing = false;
+        },
+
+        onPanUpdate: (details) {
+          if (selectedItem == null) return;
+
+          if (_isDragging && _dragStart != null && _itemStartPosition != null) {
+            final delta = details.localPosition - _dragStart!;
+
+            setState(() {
+              selectedItem!.position = _itemStartPosition! + delta;
+            });
+          }
+
+          if (_isResizing) {
+            setState(() {
+              selectedItem!.size = Size(
+                (details.localPosition.dx - selectedItem!.position.dx).clamp(
+                  40,
+                  500,
+                ),
+                (details.localPosition.dy - selectedItem!.position.dy).clamp(
+                  40,
+                  500,
+                ),
+              );
+            });
           }
         },
 
-        onSecondaryTapDown: (details) {
-  if (selectedItem != null) {
-    showMenu(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        details.globalPosition.dx,
-        details.globalPosition.dy,
-        0,
-        0,
-      ),
-      items: [
-        const PopupMenuItem(
-          value: "delete",
-          child: Text("Delete"),
-        ),
-      ],
-    ).then((value) {
-      if (value == "delete") {
-        setState(() {
-          furnitureItems.remove(selectedItem);
-          selectedItem = null;
-        });
-      }
-    });
-  }
-},
+        onPanEnd: (_) {
+          if (selectedItem != null) {
+            setState(() {
+              selectedItem!.position = Offset(
+                (selectedItem!.position.dx / 20).round() * 20,
+                (selectedItem!.position.dy / 20).round() * 20,
+              );
 
-        onPanUpdate: (details) {
-  if (selectedItem != null) {
-    final newPosition = selectedItem!.position + details.delta;
+              selectedItem!.size = Size(
+                (selectedItem!.size.width / 20).round() * 20,
+                (selectedItem!.size.height / 20).round() * 20,
+              );
+            });
+          }
 
-    setState(() {
-      selectedItem!.position = Offset(
-        (newPosition.dx / 20).round() * 20,
-        (newPosition.dy / 20).round() * 20,
-      );
-    });
-  }
-},
+          _isDragging = false;
+          _isResizing = false;
+          _dragStart = null;
+          _itemStartPosition = null;
+        },
 
+        onTapUp: (details) {
+          bool tappedOnItem = false;
 
-        onTapDown: (details) {
-  bool tappedOnItem = false;
+          for (var item in furnitureItems) {
+            if (_isInside(item, details.localPosition)) {
+              tappedOnItem = true;
+              break;
+            }
+          }
 
-  for (var item in furnitureItems) {
-    if (_isInside(item, details.localPosition)) {
-      setState(() {
-        selectedItem = item;
-      });
-      tappedOnItem = true;
-      break;
-    }
-  }
-
-  if (!tappedOnItem) {
-    setState(() {
-      selectedItem = null; // deselect previous
-      furnitureItems.add(
-        FurnitureModel(
-          id: DateTime.now().toString(),
-          type: widget.selectedType,
-          position: details.localPosition,
-          size: _getSize(widget.selectedType),
-          color: _getColor(widget.selectedType),
-        ),
-      );  
-    });
-  }
-},
+          if (!tappedOnItem) {
+            setState(() {
+              furnitureItems.add(
+                FurnitureModel(
+                  id: DateTime.now().toString(),
+                  type: widget.selectedType,
+                  position: details.localPosition,
+                  size: _getSize(widget.selectedType),
+                  color: _getColor(widget.selectedType),
+                ),
+              );
+            });
+          }
+        },
 
         child: CustomPaint(
           painter: RoomPainter(furnitureItems, selectedItem),
@@ -131,29 +164,37 @@ class _RoomCanvasState extends State<RoomCanvas> {
         point.dy <= item.position.dy + item.size.height;
   }
 
+  bool _isOnResizeHandle(FurnitureModel item, Offset point) {
+    final handleCenter = Offset(
+      item.position.dx + item.size.width,
+      item.position.dy + item.size.height,
+    );
+
+    return (point - handleCenter).distance <= 12;
+  }
+
   Size _getSize(FurnitureType type) {
-  switch (type) {
-    case FurnitureType.chair:
-      return const Size(60, 60);
-    case FurnitureType.table:
-      return const Size(120, 80);
-    case FurnitureType.sofa:
-      return const Size(150, 70);
+    switch (type) {
+      case FurnitureType.chair:
+        return const Size(60, 60);
+      case FurnitureType.table:
+        return const Size(120, 80);
+      case FurnitureType.sofa:
+        return const Size(150, 70);
+    }
+  }
+
+  Color _getColor(FurnitureType type) {
+    switch (type) {
+      case FurnitureType.chair:
+        return Colors.blueGrey;
+      case FurnitureType.table:
+        return Colors.brown;
+      case FurnitureType.sofa:
+        return Colors.green;
+    }
   }
 }
-
-Color _getColor(FurnitureType type) {
-  switch (type) {
-    case FurnitureType.chair:
-      return Colors.blueGrey;
-    case FurnitureType.table:
-      return Colors.brown;
-    case FurnitureType.sofa:
-      return Colors.green;
-  }
-}
-}
-
 
 class RoomPainter extends CustomPainter {
   final List<FurnitureModel> furnitureItems;
@@ -166,7 +207,6 @@ class RoomPainter extends CustomPainter {
     final paint = Paint();
 
     for (var item in furnitureItems) {
-
       paint.color = item.color;
 
       canvas.drawRect(
@@ -179,8 +219,7 @@ class RoomPainter extends CustomPainter {
         paint,
       );
 
-      // Draw selection border
-      if (item == selectedItem) {
+      if (selectedItem != null && item.id == selectedItem!.id) {
         final borderPaint = Paint()
           ..color = Colors.orange
           ..style = PaintingStyle.stroke
@@ -195,20 +234,18 @@ class RoomPainter extends CustomPainter {
           ),
           borderPaint,
         );
-      }
-      if (item == selectedItem) {
-  final handlePaint = Paint()
-    ..color = Colors.red;
 
-  canvas.drawCircle(
-    Offset(
-      item.position.dx + item.size.width,
-      item.position.dy + item.size.height,
-    ),
-    8,
-    handlePaint,
-  );
-}
+        final handlePaint = Paint()..color = Colors.red;
+
+        canvas.drawCircle(
+          Offset(
+            item.position.dx + item.size.width,
+            item.position.dy + item.size.height,
+          ),
+          8,
+          handlePaint,
+        );
+      }
     }
   }
 
