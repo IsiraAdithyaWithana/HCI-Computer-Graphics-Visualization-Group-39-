@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:furniture_visualizer/widgets/mouse_tool_sidebar.dart';
 import '../widgets/room_canvas.dart';
 import '../models/furniture_model.dart';
 
@@ -10,6 +11,7 @@ class Editor2DScreen extends StatefulWidget {
 }
 
 class _Editor2DScreenState extends State<Editor2DScreen> {
+  MouseMode _currentMode = MouseMode.select;
   FurnitureType selectedType = FurnitureType.chair;
 
   // ✅ THIS FIXES THE RED ERROR
@@ -66,7 +68,17 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       ),
       body: Row(
         children: [
-          // LEFT PANEL
+          // 🖱 TOOL SIDEBAR
+          MouseToolSidebar(
+            currentMode: _currentMode,
+            onModeChanged: (mode) {
+              setState(() {
+                _currentMode = mode;
+              });
+            },
+          ),
+
+          // 🪑 FURNITURE SIDEBAR
           Container(
             width: 200,
             color: Colors.grey[200],
@@ -100,10 +112,12 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             ),
           ),
 
+          // 🎨 CANVAS
           Expanded(
             child: RoomCanvas(
-              key: canvasKey, // ✅ IMPORTANT
+              key: canvasKey,
               selectedType: selectedType,
+              currentMode: _currentMode,
             ),
           ),
         ],

@@ -5,13 +5,21 @@ import '../models/furniture_model.dart';
 import 'dart:math' as Math;
 
 class RoomCanvas extends StatefulWidget {
-  final FurnitureType selectedType;
+  final MouseMode currentMode;
 
-  const RoomCanvas({super.key, required this.selectedType});
+  const RoomCanvas({
+    super.key,
+    required this.selectedType,
+    required this.currentMode,
+  });
+
+  final FurnitureType selectedType;
 
   @override
   State<RoomCanvas> createState() => RoomCanvasState();
 }
+
+enum MouseMode { select, hand, draw }
 
 class RoomCanvasState extends State<RoomCanvas> {
   List<FurnitureModel> furnitureItems = [];
@@ -44,6 +52,10 @@ class RoomCanvasState extends State<RoomCanvas> {
 
   final TransformationController _transformationController =
       TransformationController();
+
+  double _getScale() {
+    return _transformationController.value.getMaxScaleOnAxis();
+  }
 
   void toggleResizeMode() {
     setState(() {
@@ -246,12 +258,21 @@ class RoomCanvasState extends State<RoomCanvas> {
               boundaryMargin: const EdgeInsets.all(1000),
               minScale: 0.5,
               maxScale: 3,
-              panEnabled: false,
+              panEnabled: widget.currentMode == MouseMode.hand,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
 
                 onTapDown: (details) {
-                  final scenePos = details.localPosition;
+                  if (widget.currentMode != MouseMode.select) return;
+
+                  Offset _getScenePosition(Offset globalPosition) {
+                    final renderBox = context.findRenderObject() as RenderBox;
+                    final local = renderBox.globalToLocal(globalPosition);
+                    return _toScene(local);
+                  }
+
+                  final scenePos = _getScenePosition(details.globalPosition);
+
                   if (_isTappingHandle(scenePos)) return;
 
                   for (var item in furnitureItems.reversed) {
@@ -277,29 +298,38 @@ class RoomCanvasState extends State<RoomCanvas> {
                 },
 
                 onTapUp: (details) {
-                  final scenePos = details.localPosition;
-                  if (_isTappingHandle(scenePos)) return;
-
-                  final tappedItem = furnitureItems.any(
-                    (i) => _isInsideRotated(i, scenePos),
-                  );
-                  if (!tappedItem) {
-                    setState(() {
-                      furnitureItems.add(
-                        FurnitureModel(
-                          id: DateTime.now().toString(),
-                          type: widget.selectedType,
-                          position: _snapOffset(scenePos),
-                          size: _getSize(widget.selectedType),
-                          color: _getColor(widget.selectedType),
-                        ),
-                      );
-                    });
+                  Offset _getScenePosition(Offset globalPosition) {
+                    final renderBox = context.findRenderObject() as RenderBox;
+                    final local = renderBox.globalToLocal(globalPosition);
+                    return _toScene(local);
                   }
+
+                  final scenePos = _getScenePosition(details.globalPosition);
+
+                  if (widget.currentMode != MouseMode.draw) return;
+
+                  setState(() {
+                    furnitureItems.add(
+                      FurnitureModel(
+                        id: DateTime.now().toString(),
+                        type: widget.selectedType,
+                        position: _snapOffset(scenePos),
+                        size: _getSize(widget.selectedType),
+                        color: _getColor(widget.selectedType),
+                      ),
+                    );
+                  });
                 },
 
                 onSecondaryTapDown: (details) {
-                  final scenePos = details.localPosition;
+                  Offset _getScenePosition(Offset globalPosition) {
+                    final renderBox = context.findRenderObject() as RenderBox;
+                    final local = renderBox.globalToLocal(globalPosition);
+                    return _toScene(local);
+                  }
+
+                  final scenePos = _getScenePosition(details.globalPosition);
+
                   for (var item in furnitureItems.reversed) {
                     if (_isInsideRotated(item, scenePos)) {
                       setState(() {
@@ -316,7 +346,22 @@ class RoomCanvasState extends State<RoomCanvas> {
                 },
 
                 onPanStart: (details) {
-                  final scenePos = details.localPosition;
+                  // ✋ HAND MODE
+                  if (widget.currentMode == MouseMode.hand) {
+                    setState(() {
+                      _isPanningCanvas = true;
+                      _dragStart = details.globalPosition;
+                    });
+                    return;
+                  }
+
+                  Offset _getScenePosition(Offset globalPosition) {
+                    final renderBox = context.findRenderObject() as RenderBox;
+                    final local = renderBox.globalToLocal(globalPosition);
+                    return _toScene(local);
+                  }
+
+                  final scenePos = _getScenePosition(details.globalPosition);
 
                   if (selectedItem != null &&
                       _isOnRotateHandle(selectedItem!, scenePos)) {
@@ -383,34 +428,50 @@ class RoomCanvasState extends State<RoomCanvas> {
                     }
                   }
 
-                  if (!clickedOnObject) {
+                  if (!clickedOnObject &&
+                      (widget.currentMode == MouseMode.select ||
+                          widget.currentMode == MouseMode.draw)) {
                     setState(() {
                       _isSelectingBox = true;
                       _selectionStart = scenePos;
                       _selectionCurrent = scenePos;
 
-                      selectedItems.clear();
-                      selectedItem = null;
+                      if (widget.currentMode == MouseMode.select) {
+                        selectedItems.clear();
+                        selectedItem = null;
+                      }
                     });
+
                     return;
                   }
                 },
 
                 onPanUpdate: (details) {
-                  final scenePos = details.localPosition;
+                  Offset _getScenePosition(Offset globalPosition) {
+                    final renderBox = context.findRenderObject() as RenderBox;
+                    final local = renderBox.globalToLocal(globalPosition);
+                    return _toScene(local);
+                  }
+
+                  final scenePos = _getScenePosition(details.globalPosition);
+
                   // Keep overlay tracking the pointer during any drag
                   final widgetLocal = _globalToWidgetLocal(
                     details.globalPosition,
                   );
 
-                  // ── MARQUEE SELECTION ─────────────────────────────────
-                  if (_isSelectingBox && _selectionStart != null) {
+                  // ── MARQUEE (Select OR Draw Mode) ─────────────────────
+                  if ((widget.currentMode == MouseMode.select ||
+                          widget.currentMode == MouseMode.draw) &&
+                      _isSelectingBox &&
+                      _selectionStart != null) {
                     setState(() {
                       _selectionCurrent = scenePos;
 
                       // update cursor overlay position
                       _hoverScreenPosition = widgetLocal;
                     });
+
                     return;
                   }
 
@@ -477,11 +538,16 @@ class RoomCanvasState extends State<RoomCanvas> {
 
                     final matrix = _transformationController.value.clone();
                     matrix.translate(delta.dx, delta.dy);
-                    _transformationController.value = matrix;
+                    final scale = _getScale();
+
+                    _transformationController.value =
+                        _transformationController.value.clone()..translate(
+                          details.delta.dx / scale,
+                          details.delta.dy / scale,
+                        );
 
                     _dragStart = details.globalPosition;
 
-                    // 🔥 IMPORTANT: update cursor overlay position
                     setState(() {
                       _hoverScreenPosition = _globalToWidgetLocal(
                         details.globalPosition,
@@ -491,8 +557,44 @@ class RoomCanvasState extends State<RoomCanvas> {
                 },
 
                 onPanEnd: (_) {
+                  // 🟩 DRAW MODE — create object from drag size
+                  if (widget.currentMode == MouseMode.draw &&
+                      _selectionStart != null &&
+                      _selectionCurrent != null) {
+                    final rect = Rect.fromPoints(
+                      _selectionStart!,
+                      _selectionCurrent!,
+                    );
+
+                    if (rect.width.abs() > 10 && rect.height.abs() > 10) {
+                      setState(() {
+                        furnitureItems.add(
+                          FurnitureModel(
+                            id: DateTime.now().toString(),
+                            type: widget.selectedType,
+                            position: _snapOffset(rect.topLeft),
+                            size: Size(
+                              _snap(rect.size.width.abs()),
+                              _snap(rect.size.height.abs()),
+                            ),
+                            color: _getColor(widget.selectedType),
+                          ),
+                        );
+                      });
+                    }
+
+                    setState(() {
+                      _isSelectingBox = false;
+                      _selectionStart = null;
+                      _selectionCurrent = null;
+                    });
+
+                    return;
+                  }
+
                   // ── FINISH MARQUEE SELECTION ──────────────────────────
-                  if (_isSelectingBox &&
+                  if (widget.currentMode == MouseMode.select &&
+                      _isSelectingBox &&
                       _selectionStart != null &&
                       _selectionCurrent != null) {
                     final rect = Rect.fromPoints(
@@ -528,55 +630,39 @@ class RoomCanvasState extends State<RoomCanvas> {
                     return;
                   }
 
-                  if (selectedItems.isNotEmpty) {
-                    setState(() {
-                      for (var item in selectedItems) {
-                        item.position = _snapOffset(item.position);
-
-                        item.size = Size(
-                          _snap(item.size.width).clamp(40.0, 800.0),
-                          _snap(item.size.height).clamp(40.0, 800.0),
-                        );
-                      }
-                    });
-                  }
-
+                  // Reset states
                   setState(() {
                     _isRotating = false;
                     _isDragging = false;
                     _isResizing = false;
                     _isPanningCanvas = false;
-                    // Clear all custom cursors — onHover will re-evaluate
-                    // them on the next mouse move.
-                    _showRotateCursor = false;
-                    _showResizeCursor = false;
-                    _showMoveCursor = false;
                   });
 
                   _dragStart = null;
                 },
 
-                child: CustomPaint(
-                  painter: RoomPainter(furnitureItems, selectedItems),
-                  size: Size.infinite,
+                child: Stack(
+                  children: [
+                    CustomPaint(
+                      painter: RoomPainter(furnitureItems, selectedItems),
+                      size: Size.infinite,
+                    ),
+
+                    // 🟦 Marquee inside scene space
+                    if (_isSelectingBox &&
+                        _selectionStart != null &&
+                        _selectionCurrent != null)
+                      CustomPaint(
+                        painter: _SelectionPainter(
+                          _selectionStart!,
+                          _selectionCurrent!,
+                        ),
+                        size: Size.infinite,
+                      ),
+                  ],
                 ),
               ),
             ),
-
-            // ── MARQUEE SELECTION BOX ─────────────────────────────────
-            if (_isSelectingBox &&
-                _selectionStart != null &&
-                _selectionCurrent != null)
-              Positioned.fill(
-                child: IgnorePointer(
-                  child: CustomPaint(
-                    painter: _SelectionPainter(
-                      _selectionStart!,
-                      _selectionCurrent!,
-                    ),
-                  ),
-                ),
-              ),
 
             // ── Custom cursor overlay ────────────────────────────────────
             // One Positioned widget handles all three cursor images.
