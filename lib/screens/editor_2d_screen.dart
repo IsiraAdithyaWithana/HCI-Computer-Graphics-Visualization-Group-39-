@@ -22,6 +22,18 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
         title: const Text("2D Room Editor"),
         actions: [
           IconButton(
+            icon: Icon(
+              canvasKey.currentState?.isSnapResizeEnabled ?? true
+                  ? Icons.grid_on
+                  : Icons.crop_free,
+            ),
+            tooltip: "Toggle Resize Mode",
+            onPressed: () {
+              canvasKey.currentState?.toggleResizeMode();
+              setState(() {}); // refresh icon
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.save),
             onPressed: () {
               final json = canvasKey.currentState?.exportToJson();

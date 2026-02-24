@@ -34,11 +34,20 @@ class RoomCanvasState extends State<RoomCanvas> {
   bool enableSnap = true;
   List<FurnitureModel> selectedItems = [];
   bool _isPanningCanvas = false;
+  bool snapResizeEnabled = true;
 
   static const double _cursorSize = 32;
 
   final TransformationController _transformationController =
       TransformationController();
+
+  void toggleResizeMode() {
+    setState(() {
+      snapResizeEnabled = !snapResizeEnabled;
+    });
+  }
+
+  bool get isSnapResizeEnabled => snapResizeEnabled;
 
   Offset _toScene(Offset screenPosition) {
     final inverseMatrix = Matrix4.inverted(_transformationController.value);
@@ -84,29 +93,32 @@ class RoomCanvasState extends State<RoomCanvas> {
 
   /// Updates all three hover-cursor flags based on where the pointer is.
   void _updateHoverCursorFlags(Offset scenePos) {
-    if (selectedItem == null) {
-      _showRotateCursor = false;
-      _showResizeCursor = false;
-      _showMoveCursor = false;
-      return;
+    _showRotateCursor = false;
+    _showResizeCursor = false;
+    _showMoveCursor = false;
+
+    // 1️⃣ Check handles only for selected item
+    if (selectedItem != null) {
+      if (_isOnRotateHandle(selectedItem!, scenePos)) {
+        _showRotateCursor = true;
+        return;
+      }
+
+      if (_isOnResizeHandle(selectedItem!, scenePos)) {
+        _showResizeCursor = true;
+        return;
+      }
     }
-    if (_isOnRotateHandle(selectedItem!, scenePos)) {
-      _showRotateCursor = true;
-      _showResizeCursor = false;
-      _showMoveCursor = false;
-    } else if (_isOnResizeHandle(selectedItem!, scenePos)) {
-      _showRotateCursor = false;
-      _showResizeCursor = true;
-      _showMoveCursor = false;
-    } else if (_isInsideRotated(selectedItem!, scenePos)) {
-      _showRotateCursor = false;
-      _showResizeCursor = false;
-      _showMoveCursor = true;
-    } else {
-      _showRotateCursor = false;
-      _showResizeCursor = false;
-      _showMoveCursor = false;
+
+    // 2️⃣ Check if hovering ANY furniture item
+    for (var item in furnitureItems.reversed) {
+      if (_isInsideRotated(item, scenePos)) {
+        _showMoveCursor = true;
+        return;
+      }
     }
+
+    // 3️⃣ Otherwise nothing special (canvas cursor will show)
   }
 
   /// Which asset path to use for the overlay, if any.
@@ -334,15 +346,25 @@ class RoomCanvasState extends State<RoomCanvas> {
                   for (var item in furnitureItems.reversed) {
                     if (_isInsideRotated(item, scenePos)) {
                       setState(() {
+                        if (!selectedItems.contains(item)) {
+                          if (!HardwareKeyboard.instance.isControlPressed) {
+                            selectedItems.clear();
+                          }
+                          selectedItems.add(item);
+                        }
+
                         selectedItem = item;
+
                         _isDragging = true;
                         _isRotating = false;
                         _isResizing = false;
                         _isPanningCanvas = false;
+
                         _showMoveCursor = true;
                         _showRotateCursor = false;
                         _showResizeCursor = false;
                       });
+
                       _dragStart = scenePos;
                       return;
                     }
@@ -389,13 +411,20 @@ class RoomCanvasState extends State<RoomCanvas> {
                   // ── RESIZE ─────────────────────────────────────────────
                   if (_isResizing && selectedItem != null) {
                     final local = _toLocalRotatedSpace(selectedItem!, scenePos);
+
+                    double newWidth = local.dx.clamp(40, 800);
+                    double newHeight = local.dy.clamp(40, 800);
+
+                    if (snapResizeEnabled) {
+                      newWidth = _snap(newWidth);
+                      newHeight = _snap(newHeight);
+                    }
+
                     setState(() {
-                      selectedItem!.size = Size(
-                        _snap(local.dx.clamp(40, 800)),
-                        _snap(local.dy.clamp(40, 800)),
-                      );
+                      selectedItem!.size = Size(newWidth, newHeight);
                       _hoverScreenPosition = widgetLocal;
                     });
+
                     return;
                   }
 
