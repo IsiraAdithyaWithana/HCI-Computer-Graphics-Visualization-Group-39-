@@ -428,15 +428,20 @@ class RoomCanvasState extends State<RoomCanvas> {
                     return;
                   }
 
-                  // ── DRAG OBJECT ─────────────────────────────────────────
+                  // ── DRAG OBJECT(S) ──────────────────────────────────────
                   if (_isDragging &&
-                      selectedItem != null &&
+                      selectedItems.isNotEmpty &&
                       _dragStart != null) {
                     final delta = scenePos - _dragStart!;
+
                     setState(() {
-                      selectedItem!.position += delta;
+                      for (var item in selectedItems) {
+                        item.position += delta;
+                      }
+
                       _hoverScreenPosition = widgetLocal;
                     });
+
                     _dragStart = scenePos;
                     return;
                   }
@@ -461,15 +466,16 @@ class RoomCanvasState extends State<RoomCanvas> {
                 },
 
                 onPanEnd: (_) {
-                  if (selectedItem != null) {
+                  if (selectedItems.isNotEmpty) {
                     setState(() {
-                      selectedItem!.position = _snapOffset(
-                        selectedItem!.position,
-                      );
-                      selectedItem!.size = Size(
-                        _snap(selectedItem!.size.width).clamp(40.0, 800.0),
-                        _snap(selectedItem!.size.height).clamp(40.0, 800.0),
-                      );
+                      for (var item in selectedItems) {
+                        item.position = _snapOffset(item.position);
+
+                        item.size = Size(
+                          _snap(item.size.width).clamp(40.0, 800.0),
+                          _snap(item.size.height).clamp(40.0, 800.0),
+                        );
+                      }
                     });
                   }
 
