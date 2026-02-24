@@ -25,6 +25,10 @@ class RoomCanvasState extends State<RoomCanvas> {
   Offset?
   _hoverScreenPosition; // widget-local screen space — for cursor overlay
 
+  bool _isSelectingBox = false;
+  Offset? _selectionStart;
+  Offset? _selectionCurrent;
+
   // Which custom cursor to show (only one can be true at a time)
   bool _showRotateCursor = false;
   bool _showResizeCursor = false;
@@ -370,16 +374,26 @@ class RoomCanvasState extends State<RoomCanvas> {
                     }
                   }
 
-                  setState(() {
-                    _isPanningCanvas = true;
-                    _isDragging = false;
-                    _isRotating = false;
-                    _isResizing = false;
-                    _showRotateCursor = false;
-                    _showResizeCursor = false;
-                    _showMoveCursor = false;
-                  });
-                  _dragStart = details.globalPosition;
+                  // If clicking empty space → start selection box
+                  bool clickedOnObject = false;
+                  for (var item in furnitureItems) {
+                    if (_isInsideRotated(item, scenePos)) {
+                      clickedOnObject = true;
+                      break;
+                    }
+                  }
+
+                  if (!clickedOnObject) {
+                    setState(() {
+                      _isSelectingBox = true;
+                      _selectionStart = scenePos;
+                      _selectionCurrent = scenePos;
+
+                      selectedItems.clear();
+                      selectedItem = null;
+                    });
+                    return;
+                  }
                 },
 
                 onPanUpdate: (details) {
@@ -388,6 +402,17 @@ class RoomCanvasState extends State<RoomCanvas> {
                   final widgetLocal = _globalToWidgetLocal(
                     details.globalPosition,
                   );
+
+                  // ── MARQUEE SELECTION ─────────────────────────────────
+                  if (_isSelectingBox && _selectionStart != null) {
+                    setState(() {
+                      _selectionCurrent = scenePos;
+
+                      // update cursor overlay position
+                      _hoverScreenPosition = widgetLocal;
+                    });
+                    return;
+                  }
 
                   // ── ROTATE ─────────────────────────────────────────────
                   if (_isRotating && selectedItem != null) {
@@ -466,6 +491,43 @@ class RoomCanvasState extends State<RoomCanvas> {
                 },
 
                 onPanEnd: (_) {
+                  // ── FINISH MARQUEE SELECTION ──────────────────────────
+                  if (_isSelectingBox &&
+                      _selectionStart != null &&
+                      _selectionCurrent != null) {
+                    final rect = Rect.fromPoints(
+                      _selectionStart!,
+                      _selectionCurrent!,
+                    );
+
+                    setState(() {
+                      selectedItems.clear();
+
+                      for (var item in furnitureItems) {
+                        final itemRect = Rect.fromLTWH(
+                          item.position.dx,
+                          item.position.dy,
+                          item.size.width,
+                          item.size.height,
+                        );
+
+                        if (rect.overlaps(itemRect)) {
+                          selectedItems.add(item);
+                        }
+                      }
+
+                      selectedItem = selectedItems.isNotEmpty
+                          ? selectedItems.last
+                          : null;
+
+                      _isSelectingBox = false;
+                      _selectionStart = null;
+                      _selectionCurrent = null;
+                    });
+
+                    return;
+                  }
+
                   if (selectedItems.isNotEmpty) {
                     setState(() {
                       for (var item in selectedItems) {
@@ -500,6 +562,21 @@ class RoomCanvasState extends State<RoomCanvas> {
                 ),
               ),
             ),
+
+            // ── MARQUEE SELECTION BOX ─────────────────────────────────
+            if (_isSelectingBox &&
+                _selectionStart != null &&
+                _selectionCurrent != null)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: _SelectionPainter(
+                      _selectionStart!,
+                      _selectionCurrent!,
+                    ),
+                  ),
+                ),
+              ),
 
             // ── Custom cursor overlay ────────────────────────────────────
             // One Positioned widget handles all three cursor images.
@@ -631,6 +708,31 @@ class RoomPainter extends CustomPainter {
 
       canvas.restore();
     }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+class _SelectionPainter extends CustomPainter {
+  final Offset start;
+  final Offset current;
+
+  _SelectionPainter(this.start, this.current);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Rect.fromPoints(start, current);
+
+    final fillPaint = Paint()..color = Colors.blue.withOpacity(0.15);
+
+    final borderPaint = Paint()
+      ..color = Colors.blue
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+
+    canvas.drawRect(rect, fillPaint);
+    canvas.drawRect(rect, borderPaint);
   }
 
   @override
