@@ -4,7 +4,10 @@ import 'package:flutter/services.dart';
 import '../models/furniture_model.dart';
 import 'dart:math' as Math;
 
+enum MouseMode { select, hand, draw }
+
 class RoomCanvas extends StatefulWidget {
+  final FurnitureType selectedType;
   final MouseMode currentMode;
 
   const RoomCanvas({
@@ -13,72 +16,80 @@ class RoomCanvas extends StatefulWidget {
     required this.currentMode,
   });
 
-  final FurnitureType selectedType;
-
   @override
   State<RoomCanvas> createState() => RoomCanvasState();
 }
 
-enum MouseMode { select, hand, draw }
-
 class RoomCanvasState extends State<RoomCanvas> {
+  // Canvas content
   List<FurnitureModel> furnitureItems = [];
+  List<FurnitureModel> selectedItems = [];
   FurnitureModel? selectedItem;
-  final FocusNode _focusNode = FocusNode();
-  Offset? _dragStart;
-  bool _isResizing = false;
-  bool _isDragging = false;
-  bool _isRotating = false;
-  Offset? _hoverPosition; // scene space — for hit testing
-  Offset?
-  _hoverScreenPosition; // widget-local screen space — for cursor overlay
 
+  // Drag / gesture state
+  Offset? _dragStart;
+  bool _isRotating = false;
+  bool _isDragging = false;
+  bool _isResizing = false;
+  bool _isPanningCanvas = false;
+
+  // Marquee selection / draw-by-drag state
   bool _isSelectingBox = false;
   Offset? _selectionStart;
   Offset? _selectionCurrent;
 
-  // Which custom cursor to show (only one can be true at a time)
+  // Screen-space position of the pointer, used to position the PNG overlay.
+  Offset? _hoverScreenPosition;
+  // Scene-space position of the pointer, used for hit testing.
+  Offset? _hoverScenePosition;
   bool _showRotateCursor = false;
   bool _showResizeCursor = false;
   bool _showMoveCursor = false;
 
+  // Settings
   final double gridSize = 20;
   bool enableSnap = true;
-  List<FurnitureModel> selectedItems = [];
-  bool _isPanningCanvas = false;
   bool snapResizeEnabled = true;
 
   static const double _cursorSize = 32;
 
   final TransformationController _transformationController =
       TransformationController();
+  final FocusNode _focusNode = FocusNode();
 
-  double _getScale() {
-    return _transformationController.value.getMaxScaleOnAxis();
-  }
-
-  void toggleResizeMode() {
-    setState(() {
-      snapResizeEnabled = !snapResizeEnabled;
-    });
-  }
+  // Public API used by parent widgets
 
   bool get isSnapResizeEnabled => snapResizeEnabled;
+  void toggleResizeSnap() =>
+      setState(() => snapResizeEnabled = !snapResizeEnabled);
 
-  Offset _toScene(Offset screenPosition) {
-    final inverseMatrix = Matrix4.inverted(_transformationController.value);
-    return MatrixUtils.transformPoint(inverseMatrix, screenPosition);
+  // Returns the current zoom level (1.0 = 100%).
+  double get currentZoom => _transformationController.value.getMaxScaleOnAxis();
+
+  // Sets the zoom level while keeping the canvas centred on the current view.
+  void setZoom(double zoom) {
+    final current = _transformationController.value;
+    final oldScale = current.getMaxScaleOnAxis();
+    final ratio = zoom / oldScale;
+
+    // Scale around the centre of the widget.
+    final box = context.findRenderObject() as RenderBox?;
+    final centre = box != null
+        ? Offset(box.size.width / 2, box.size.height / 2)
+        : Offset.zero;
+
+    final updated = current.clone()
+      ..translate(centre.dx, centre.dy)
+      ..scale(ratio)
+      ..translate(-centre.dx, -centre.dy);
+
+    _transformationController.value = updated;
+    setState(() {});
   }
 
-  Offset _globalToWidgetLocal(Offset globalPosition) {
-    final renderBox = context.findRenderObject() as RenderBox;
-    return renderBox.globalToLocal(globalPosition);
-  }
-
-  String exportToJson() {
-    final data = furnitureItems.map((e) => e.toJson()).toList();
-    return const JsonEncoder.withIndent('  ').convert(data);
-  }
+  String exportToJson() => const JsonEncoder.withIndent(
+    '  ',
+  ).convert(furnitureItems.map((e) => e.toJson()).toList());
 
   void loadFromJson(String jsonString) {
     final List decoded = jsonDecode(jsonString);
@@ -89,66 +100,35 @@ class RoomCanvasState extends State<RoomCanvas> {
     });
   }
 
-  double _snap(double value) {
-    if (!enableSnap) return value;
-    return (value / gridSize).round() * gridSize;
+  // Coordinate helpers
+
+  // Converts a widget-local screen position to scene (canvas) space.
+  Offset _toScene(Offset screenPos) => MatrixUtils.transformPoint(
+    Matrix4.inverted(_transformationController.value),
+    screenPos,
+  );
+
+  // Converts a global position to widget-local space, then to scene space.
+  // Used for all gesture events since globalPosition is always consistent.
+  Offset _globalToScene(Offset globalPos) {
+    final box = context.findRenderObject() as RenderBox;
+    return _toScene(box.globalToLocal(globalPos));
   }
 
-  Offset _snapOffset(Offset offset) =>
-      Offset(_snap(offset.dx), _snap(offset.dy));
-
-  /// Always returns [SystemMouseCursors.none] when any custom PNG cursor
-  /// should be visible — including during active drags so the OS cursor
-  /// never reappears mid-gesture.
-  MouseCursor _getCursor() {
-    if (_showRotateCursor || _isRotating) return SystemMouseCursors.none;
-    if (_showResizeCursor || _isResizing) return SystemMouseCursors.none;
-    if (_showMoveCursor || _isDragging) return SystemMouseCursors.none;
-    return SystemMouseCursors.none;
+  // Converts a global position to widget-local space for the cursor overlay.
+  Offset _globalToLocal(Offset globalPos) {
+    final box = context.findRenderObject() as RenderBox;
+    return box.globalToLocal(globalPos);
   }
 
-  /// Updates all three hover-cursor flags based on where the pointer is.
-  void _updateHoverCursorFlags(Offset scenePos) {
-    _showRotateCursor = false;
-    _showResizeCursor = false;
-    _showMoveCursor = false;
+  // Snap helpers
 
-    // 1️⃣ Check handles only for selected item
-    if (selectedItem != null) {
-      if (_isOnRotateHandle(selectedItem!, scenePos)) {
-        _showRotateCursor = true;
-        return;
-      }
+  double _snap(double value) =>
+      enableSnap ? (value / gridSize).round() * gridSize : value;
 
-      if (_isOnResizeHandle(selectedItem!, scenePos)) {
-        _showResizeCursor = true;
-        return;
-      }
-    }
+  Offset _snapOffset(Offset o) => Offset(_snap(o.dx), _snap(o.dy));
 
-    // 2️⃣ Check if hovering ANY furniture item
-    for (var item in furnitureItems.reversed) {
-      if (_isInsideRotated(item, scenePos)) {
-        _showMoveCursor = true;
-        return;
-      }
-    }
-
-    // 3️⃣ Otherwise nothing special (canvas cursor will show)
-  }
-
-  /// Which asset path to use for the overlay, if any.
-  String? get _activeCursorAsset {
-    if (_showRotateCursor || _isRotating)
-      return 'assets/cursors/rotate_cursor.png';
-    if (_showResizeCursor || _isResizing)
-      return 'assets/cursors/expand_cursor.png';
-    if (_showMoveCursor || _isDragging) return 'assets/cursors/move_cursor.png';
-    if (_hoverScreenPosition != null) {
-      return 'assets/cursors/canvas_cursor.png';
-    }
-    return null;
-  }
+  // Geometry helpers
 
   Offset _toLocalRotatedSpace(FurnitureModel item, Offset scenePoint) {
     final center = Offset(
@@ -165,9 +145,83 @@ class RoomCanvasState extends State<RoomCanvas> {
     );
   }
 
+  bool _isInsideRotated(FurnitureModel item, Offset scenePoint) {
+    final local = _toLocalRotatedSpace(item, scenePoint);
+    return local.dx >= 0 &&
+        local.dx <= item.size.width &&
+        local.dy >= 0 &&
+        local.dy <= item.size.height;
+  }
+
+  bool _isOnResizeHandle(FurnitureModel item, Offset scenePoint) {
+    final local = _toLocalRotatedSpace(item, scenePoint);
+    return (local - Offset(item.size.width, item.size.height)).distance <= 18;
+  }
+
+  bool _isOnRotateHandle(FurnitureModel item, Offset scenePoint) {
+    final center = Offset(
+      item.position.dx + item.size.width / 2,
+      item.position.dy + item.size.height / 2,
+    );
+    final dist = item.size.height / 2 + 25;
+    final handle = Offset(
+      center.dx + dist * Math.cos(item.rotation - 1.5708),
+      center.dy + dist * Math.sin(item.rotation - 1.5708),
+    );
+    return (scenePoint - handle).distance <= 35;
+  }
+
+  bool _isOnAnyHandle(Offset scenePos) {
+    if (selectedItem == null) return false;
+    return _isOnRotateHandle(selectedItem!, scenePos) ||
+        _isOnResizeHandle(selectedItem!, scenePos);
+  }
+
+  // Cursor helpers
+
+  // Decides which PNG to show as the cursor overlay.
+  // Returns null when no custom cursor is needed.
+  String? get _activeCursorAsset {
+    if (_showRotateCursor || _isRotating)
+      return 'assets/cursors/rotate_cursor.png';
+    if (_showResizeCursor || _isResizing)
+      return 'assets/cursors/expand_cursor.png';
+    if (_showMoveCursor || _isDragging) return 'assets/cursors/move_cursor.png';
+    if (_hoverScreenPosition != null) return 'assets/cursors/canvas_cursor.png';
+    return null;
+  }
+
+  // Updates which custom cursor flag should be active based on where the pointer is.
+  void _updateCursorFlags(Offset scenePos) {
+    _showRotateCursor = false;
+    _showResizeCursor = false;
+    _showMoveCursor = false;
+
+    if (selectedItem != null) {
+      if (_isOnRotateHandle(selectedItem!, scenePos)) {
+        _showRotateCursor = true;
+        return;
+      }
+      if (_isOnResizeHandle(selectedItem!, scenePos)) {
+        _showResizeCursor = true;
+        return;
+      }
+    }
+
+    for (final item in furnitureItems.reversed) {
+      if (_isInsideRotated(item, scenePos)) {
+        _showMoveCursor = true;
+        return;
+      }
+    }
+  }
+
+  // Context menu
+
   void _showContextMenu(Offset globalPosition) async {
     if (selectedItem == null) return;
-    final result = await showMenu(
+
+    final result = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
         globalPosition.dx,
@@ -175,12 +229,13 @@ class RoomCanvasState extends State<RoomCanvas> {
         globalPosition.dx,
         globalPosition.dy,
       ),
-      items: [
-        const PopupMenuItem(value: 'delete', child: Text('Delete')),
-        const PopupMenuItem(value: 'duplicate', child: Text('Duplicate')),
-        const PopupMenuItem(value: 'rotate', child: Text('Rotate 90°')),
+      items: const [
+        PopupMenuItem(value: 'delete', child: Text('Delete')),
+        PopupMenuItem(value: 'duplicate', child: Text('Duplicate')),
+        PopupMenuItem(value: 'rotate', child: Text('Rotate 90')),
       ],
     );
+
     if (result == 'delete') {
       setState(() {
         furnitureItems.removeWhere((i) => selectedItems.contains(i));
@@ -205,16 +260,45 @@ class RoomCanvasState extends State<RoomCanvas> {
     }
   }
 
-  bool _isTappingHandle(Offset scenePos) {
-    if (selectedItem == null) return false;
-    return _isOnRotateHandle(selectedItem!, scenePos) ||
-        _isOnResizeHandle(selectedItem!, scenePos);
+  // Furniture defaults
+
+  Size _defaultSize(FurnitureType type) {
+    switch (type) {
+      case FurnitureType.chair:
+        return const Size(60, 60);
+      case FurnitureType.table:
+        return const Size(120, 80);
+      case FurnitureType.sofa:
+        return const Size(150, 70);
+    }
   }
+
+  Color _defaultColor(FurnitureType type) {
+    switch (type) {
+      case FurnitureType.chair:
+        return Colors.blueGrey;
+      case FurnitureType.table:
+        return Colors.brown;
+      case FurnitureType.sofa:
+        return Colors.green;
+    }
+  }
+
+  FurnitureModel _newItem({required Offset position, Size? size}) =>
+      FurnitureModel(
+        id: DateTime.now().toString(),
+        type: widget.selectedType,
+        position: _snapOffset(position),
+        size: size ?? _defaultSize(widget.selectedType),
+        color: _defaultColor(widget.selectedType),
+      );
+
+  // Build
 
   @override
   Widget build(BuildContext context) {
-    final String? cursorAsset = _activeCursorAsset;
-    final bool showOverlay =
+    final cursorAsset = _activeCursorAsset;
+    final showCursorOverlay =
         cursorAsset != null && _hoverScreenPosition != null;
 
     return RawKeyboardListener(
@@ -232,18 +316,18 @@ class RoomCanvasState extends State<RoomCanvas> {
         }
       },
       child: MouseRegion(
-        cursor: _getCursor(),
+        cursor: SystemMouseCursors.none,
         onHover: (event) {
           final scene = _toScene(event.localPosition);
           setState(() {
-            _hoverPosition = scene;
+            _hoverScenePosition = scene;
             _hoverScreenPosition = event.localPosition;
-            _updateHoverCursorFlags(scene);
+            _updateCursorFlags(scene);
           });
         },
         onExit: (_) {
           setState(() {
-            _hoverPosition = null;
+            _hoverScenePosition = null;
             _hoverScreenPosition = null;
             _showRotateCursor = false;
             _showResizeCursor = false;
@@ -252,45 +336,46 @@ class RoomCanvasState extends State<RoomCanvas> {
         },
         child: Stack(
           children: [
-            // ── Main canvas ─────────────────────────────────────────────
             InteractiveViewer(
               transformationController: _transformationController,
               boundaryMargin: const EdgeInsets.all(1000),
-              minScale: 0.5,
-              maxScale: 3,
+              minScale: 0.3,
+              maxScale: 3.0,
               panEnabled: widget.currentMode == MouseMode.hand,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
 
                 onTapDown: (details) {
                   if (widget.currentMode != MouseMode.select) return;
+                  final scenePos = _globalToScene(details.globalPosition);
+                  if (_isOnAnyHandle(scenePos)) return;
 
-                  Offset _getScenePosition(Offset globalPosition) {
-                    final renderBox = context.findRenderObject() as RenderBox;
-                    final local = renderBox.globalToLocal(globalPosition);
-                    return _toScene(local);
-                  }
-
-                  final scenePos = _getScenePosition(details.globalPosition);
-
-                  if (_isTappingHandle(scenePos)) return;
-
-                  for (var item in furnitureItems.reversed) {
+                  for (final item in furnitureItems.reversed) {
                     if (_isInsideRotated(item, scenePos)) {
                       setState(() {
                         if (HardwareKeyboard.instance.isControlPressed) {
+                          // Ctrl held: toggle this item in or out of the selection.
                           selectedItems.contains(item)
                               ? selectedItems.remove(item)
                               : selectedItems.add(item);
+                          selectedItem = item;
+                        } else if (selectedItems.contains(item)) {
+                          // Tapping an already-selected item with no Ctrl.
+                          // Keep the whole group so dragging moves all of them.
+                          selectedItem = item;
                         } else {
-                          selectedItems.clear();
-                          selectedItems.add(item);
+                          // Tapping a different unselected item — replace selection.
+                          selectedItems
+                            ..clear()
+                            ..add(item);
+                          selectedItem = item;
                         }
-                        selectedItem = item;
                       });
                       return;
                     }
                   }
+
+                  // Tapped empty space — clear everything.
                   setState(() {
                     selectedItems.clear();
                     selectedItem = null;
@@ -298,45 +383,23 @@ class RoomCanvasState extends State<RoomCanvas> {
                 },
 
                 onTapUp: (details) {
-                  Offset _getScenePosition(Offset globalPosition) {
-                    final renderBox = context.findRenderObject() as RenderBox;
-                    final local = renderBox.globalToLocal(globalPosition);
-                    return _toScene(local);
-                  }
-
-                  final scenePos = _getScenePosition(details.globalPosition);
-
                   if (widget.currentMode != MouseMode.draw) return;
-
-                  setState(() {
-                    furnitureItems.add(
-                      FurnitureModel(
-                        id: DateTime.now().toString(),
-                        type: widget.selectedType,
-                        position: _snapOffset(scenePos),
-                        size: _getSize(widget.selectedType),
-                        color: _getColor(widget.selectedType),
-                      ),
-                    );
-                  });
+                  final scenePos = _globalToScene(details.globalPosition);
+                  setState(
+                    () => furnitureItems.add(_newItem(position: scenePos)),
+                  );
                 },
 
                 onSecondaryTapDown: (details) {
-                  Offset _getScenePosition(Offset globalPosition) {
-                    final renderBox = context.findRenderObject() as RenderBox;
-                    final local = renderBox.globalToLocal(globalPosition);
-                    return _toScene(local);
-                  }
-
-                  final scenePos = _getScenePosition(details.globalPosition);
-
-                  for (var item in furnitureItems.reversed) {
+                  final scenePos = _globalToScene(details.globalPosition);
+                  for (final item in furnitureItems.reversed) {
                     if (_isInsideRotated(item, scenePos)) {
                       setState(() {
                         selectedItem = item;
                         if (!selectedItems.contains(item)) {
-                          selectedItems.clear();
-                          selectedItems.add(item);
+                          selectedItems
+                            ..clear()
+                            ..add(item);
                         }
                       });
                       _showContextMenu(details.globalPosition);
@@ -346,7 +409,8 @@ class RoomCanvasState extends State<RoomCanvas> {
                 },
 
                 onPanStart: (details) {
-                  // ✋ HAND MODE
+                  // Hand mode: InteractiveViewer handles the actual panning.
+                  // We just track state so the canvas cursor stays active.
                   if (widget.currentMode == MouseMode.hand) {
                     setState(() {
                       _isPanningCanvas = true;
@@ -355,22 +419,12 @@ class RoomCanvasState extends State<RoomCanvas> {
                     return;
                   }
 
-                  Offset _getScenePosition(Offset globalPosition) {
-                    final renderBox = context.findRenderObject() as RenderBox;
-                    final local = renderBox.globalToLocal(globalPosition);
-                    return _toScene(local);
-                  }
-
-                  final scenePos = _getScenePosition(details.globalPosition);
+                  final scenePos = _globalToScene(details.globalPosition);
 
                   if (selectedItem != null &&
                       _isOnRotateHandle(selectedItem!, scenePos)) {
                     setState(() {
                       _isRotating = true;
-                      _isResizing = false;
-                      _isDragging = false;
-                      _isPanningCanvas = false;
-                      // Lock the overlay to rotate PNG for the whole gesture
                       _showRotateCursor = true;
                       _showResizeCursor = false;
                       _showMoveCursor = false;
@@ -382,9 +436,6 @@ class RoomCanvasState extends State<RoomCanvas> {
                       _isOnResizeHandle(selectedItem!, scenePos)) {
                     setState(() {
                       _isResizing = true;
-                      _isRotating = false;
-                      _isDragging = false;
-                      _isPanningCanvas = false;
                       _showResizeCursor = true;
                       _showRotateCursor = false;
                       _showMoveCursor = false;
@@ -392,172 +443,117 @@ class RoomCanvasState extends State<RoomCanvas> {
                     return;
                   }
 
-                  for (var item in furnitureItems.reversed) {
+                  for (final item in furnitureItems.reversed) {
                     if (_isInsideRotated(item, scenePos)) {
                       setState(() {
+                        // If the item is already selected, keep the group.
+                        // If it is new, replace the selection.
                         if (!selectedItems.contains(item)) {
                           if (!HardwareKeyboard.instance.isControlPressed) {
                             selectedItems.clear();
                           }
                           selectedItems.add(item);
                         }
-
                         selectedItem = item;
-
                         _isDragging = true;
-                        _isRotating = false;
-                        _isResizing = false;
-                        _isPanningCanvas = false;
-
                         _showMoveCursor = true;
                         _showRotateCursor = false;
                         _showResizeCursor = false;
                       });
-
                       _dragStart = scenePos;
                       return;
                     }
                   }
 
-                  // If clicking empty space → start selection box
-                  bool clickedOnObject = false;
-                  for (var item in furnitureItems) {
-                    if (_isInsideRotated(item, scenePos)) {
-                      clickedOnObject = true;
-                      break;
+                  // Nothing was hit — start a marquee or draw-drag.
+                  setState(() {
+                    _isSelectingBox = true;
+                    _selectionStart = scenePos;
+                    _selectionCurrent = scenePos;
+                    if (widget.currentMode == MouseMode.select) {
+                      selectedItems.clear();
+                      selectedItem = null;
                     }
-                  }
-
-                  if (!clickedOnObject &&
-                      (widget.currentMode == MouseMode.select ||
-                          widget.currentMode == MouseMode.draw)) {
-                    setState(() {
-                      _isSelectingBox = true;
-                      _selectionStart = scenePos;
-                      _selectionCurrent = scenePos;
-
-                      if (widget.currentMode == MouseMode.select) {
-                        selectedItems.clear();
-                        selectedItem = null;
-                      }
-                    });
-
-                    return;
-                  }
+                  });
                 },
 
                 onPanUpdate: (details) {
-                  Offset _getScenePosition(Offset globalPosition) {
-                    final renderBox = context.findRenderObject() as RenderBox;
-                    final local = renderBox.globalToLocal(globalPosition);
-                    return _toScene(local);
-                  }
+                  final scenePos = _globalToScene(details.globalPosition);
+                  // localPos is computed once and used inside every setState call
+                  // so the cursor overlay image follows the pointer every frame.
+                  final localPos = _globalToLocal(details.globalPosition);
 
-                  final scenePos = _getScenePosition(details.globalPosition);
-
-                  // Keep overlay tracking the pointer during any drag
-                  final widgetLocal = _globalToWidgetLocal(
-                    details.globalPosition,
-                  );
-
-                  // ── MARQUEE (Select OR Draw Mode) ─────────────────────
-                  if ((widget.currentMode == MouseMode.select ||
-                          widget.currentMode == MouseMode.draw) &&
-                      _isSelectingBox &&
-                      _selectionStart != null) {
+                  if (_isSelectingBox && _selectionStart != null) {
                     setState(() {
                       _selectionCurrent = scenePos;
-
-                      // update cursor overlay position
-                      _hoverScreenPosition = widgetLocal;
+                      _hoverScreenPosition = localPos;
                     });
-
                     return;
                   }
 
-                  // ── ROTATE ─────────────────────────────────────────────
                   if (_isRotating && selectedItem != null) {
                     final center = Offset(
                       selectedItem!.position.dx + selectedItem!.size.width / 2,
                       selectedItem!.position.dy + selectedItem!.size.height / 2,
                     );
-                    final angle =
-                        Math.atan2(
-                          scenePos.dy - center.dy,
-                          scenePos.dx - center.dx,
-                        ) +
-                        1.5708;
                     setState(() {
-                      selectedItem!.rotation = angle;
-                      _hoverScreenPosition = widgetLocal;
+                      selectedItem!.rotation =
+                          Math.atan2(
+                            scenePos.dy - center.dy,
+                            scenePos.dx - center.dx,
+                          ) +
+                          1.5708;
+                      _hoverScreenPosition = localPos;
                     });
                     return;
                   }
 
-                  // ── RESIZE ─────────────────────────────────────────────
                   if (_isResizing && selectedItem != null) {
                     final local = _toLocalRotatedSpace(selectedItem!, scenePos);
-
-                    double newWidth = local.dx.clamp(40, 800);
-                    double newHeight = local.dy.clamp(40, 800);
-
+                    double w = local.dx.clamp(40.0, 800.0);
+                    double h = local.dy.clamp(40.0, 800.0);
                     if (snapResizeEnabled) {
-                      newWidth = _snap(newWidth);
-                      newHeight = _snap(newHeight);
+                      w = _snap(w);
+                      h = _snap(h);
                     }
-
                     setState(() {
-                      selectedItem!.size = Size(newWidth, newHeight);
-                      _hoverScreenPosition = widgetLocal;
+                      selectedItem!.size = Size(w, h);
+                      _hoverScreenPosition = localPos;
                     });
-
                     return;
                   }
 
-                  // ── DRAG OBJECT(S) ──────────────────────────────────────
                   if (_isDragging &&
                       selectedItems.isNotEmpty &&
                       _dragStart != null) {
                     final delta = scenePos - _dragStart!;
-
                     setState(() {
-                      for (var item in selectedItems) {
+                      for (final item in selectedItems) {
                         item.position += delta;
                       }
-
-                      _hoverScreenPosition = widgetLocal;
+                      _hoverScreenPosition = localPos;
                     });
-
                     _dragStart = scenePos;
                     return;
                   }
 
-                  // ── PAN CANVAS ──────────────────────────────────────────
+                  // Canvas pan: setState is required so the cursor overlay
+                  // rebuilds and the PNG image follows the pointer.
                   if (_isPanningCanvas && _dragStart != null) {
-                    final delta = details.globalPosition - _dragStart!;
-
-                    final matrix = _transformationController.value.clone();
-                    matrix.translate(delta.dx, delta.dy);
-                    final scale = _getScale();
-
+                    final scale = _transformationController.value
+                        .getMaxScaleOnAxis();
                     _transformationController.value =
                         _transformationController.value.clone()..translate(
                           details.delta.dx / scale,
                           details.delta.dy / scale,
                         );
-
                     _dragStart = details.globalPosition;
-
-                    setState(() {
-                      _hoverScreenPosition = _globalToWidgetLocal(
-                        details.globalPosition,
-                      );
-                    });
+                    setState(() => _hoverScreenPosition = localPos);
                   }
                 },
 
                 onPanEnd: (_) {
-                  // 🟩 DRAW MODE — create object from drag size
+                  // Draw mode: finalise the dragged rectangle as a new item.
                   if (widget.currentMode == MouseMode.draw &&
                       _selectionStart != null &&
                       _selectionCurrent != null) {
@@ -565,34 +561,22 @@ class RoomCanvasState extends State<RoomCanvas> {
                       _selectionStart!,
                       _selectionCurrent!,
                     );
-
                     if (rect.width.abs() > 10 && rect.height.abs() > 10) {
                       setState(() {
                         furnitureItems.add(
-                          FurnitureModel(
-                            id: DateTime.now().toString(),
-                            type: widget.selectedType,
-                            position: _snapOffset(rect.topLeft),
+                          _newItem(
+                            position: rect.topLeft,
                             size: Size(
-                              _snap(rect.size.width.abs()),
-                              _snap(rect.size.height.abs()),
+                              _snap(rect.width.abs()),
+                              _snap(rect.height.abs()),
                             ),
-                            color: _getColor(widget.selectedType),
                           ),
                         );
                       });
                     }
-
-                    setState(() {
-                      _isSelectingBox = false;
-                      _selectionStart = null;
-                      _selectionCurrent = null;
-                    });
-
-                    return;
                   }
 
-                  // ── FINISH MARQUEE SELECTION ──────────────────────────
+                  // Select mode: finalise the marquee and select overlapping items.
                   if (widget.currentMode == MouseMode.select &&
                       _isSelectingBox &&
                       _selectionStart != null &&
@@ -601,43 +585,50 @@ class RoomCanvasState extends State<RoomCanvas> {
                       _selectionStart!,
                       _selectionCurrent!,
                     );
-
                     setState(() {
-                      selectedItems.clear();
-
-                      for (var item in furnitureItems) {
-                        final itemRect = Rect.fromLTWH(
-                          item.position.dx,
-                          item.position.dy,
-                          item.size.width,
-                          item.size.height,
+                      selectedItems = furnitureItems.where((item) {
+                        return rect.overlaps(
+                          Rect.fromLTWH(
+                            item.position.dx,
+                            item.position.dy,
+                            item.size.width,
+                            item.size.height,
+                          ),
                         );
-
-                        if (rect.overlaps(itemRect)) {
-                          selectedItems.add(item);
-                        }
-                      }
-
+                      }).toList();
                       selectedItem = selectedItems.isNotEmpty
                           ? selectedItems.last
                           : null;
-
-                      _isSelectingBox = false;
-                      _selectionStart = null;
-                      _selectionCurrent = null;
                     });
-
-                    return;
                   }
 
-                  // Reset states
+                  // Snap every selected item to the grid at the end of a drag.
+                  // All items must be snapped — not just selectedItem — so that
+                  // no single item ends up offset from the others after the drop.
+                  if (selectedItems.isNotEmpty) {
+                    setState(() {
+                      for (final item in selectedItems) {
+                        item.position = _snapOffset(item.position);
+                        item.size = Size(
+                          _snap(item.size.width).clamp(40.0, 800.0),
+                          _snap(item.size.height).clamp(40.0, 800.0),
+                        );
+                      }
+                    });
+                  }
+
                   setState(() {
                     _isRotating = false;
                     _isDragging = false;
                     _isResizing = false;
                     _isPanningCanvas = false;
+                    _isSelectingBox = false;
+                    _selectionStart = null;
+                    _selectionCurrent = null;
+                    _showRotateCursor = false;
+                    _showResizeCursor = false;
+                    _showMoveCursor = false;
                   });
-
                   _dragStart = null;
                 },
 
@@ -647,13 +638,11 @@ class RoomCanvasState extends State<RoomCanvas> {
                       painter: RoomPainter(furnitureItems, selectedItems),
                       size: Size.infinite,
                     ),
-
-                    // 🟦 Marquee inside scene space
                     if (_isSelectingBox &&
                         _selectionStart != null &&
                         _selectionCurrent != null)
                       CustomPaint(
-                        painter: _SelectionPainter(
+                        painter: MarqueePainter(
                           _selectionStart!,
                           _selectionCurrent!,
                         ),
@@ -664,10 +653,17 @@ class RoomCanvasState extends State<RoomCanvas> {
               ),
             ),
 
-            // ── Custom cursor overlay ────────────────────────────────────
-            // One Positioned widget handles all three cursor images.
-            // IgnorePointer ensures the image never swallows mouse events.
-            if (showOverlay)
+            // Full-coverage invisible MouseRegion that keeps the OS cursor hidden
+            // even when the pointer is over InteractiveViewer's own internal
+            // MouseRegion, which would otherwise override our none setting.
+            Positioned.fill(
+              child: IgnorePointer(
+                child: MouseRegion(cursor: SystemMouseCursors.none),
+              ),
+            ),
+
+            // The PNG cursor image, centred on the current pointer position.
+            if (showCursorOverlay)
               Positioned(
                 left: _hoverScreenPosition!.dx - _cursorSize / 2,
                 top: _hoverScreenPosition!.dy - _cursorSize / 2,
@@ -687,54 +683,6 @@ class RoomCanvasState extends State<RoomCanvas> {
       ),
     );
   }
-
-  bool _isInsideRotated(FurnitureModel item, Offset point) {
-    final local = _toLocalRotatedSpace(item, point);
-    return local.dx >= 0 &&
-        local.dx <= item.size.width &&
-        local.dy >= 0 &&
-        local.dy <= item.size.height;
-  }
-
-  bool _isOnResizeHandle(FurnitureModel item, Offset point) {
-    final local = _toLocalRotatedSpace(item, point);
-    return (local - Offset(item.size.width, item.size.height)).distance <= 18;
-  }
-
-  bool _isOnRotateHandle(FurnitureModel item, Offset point) {
-    final center = Offset(
-      item.position.dx + item.size.width / 2,
-      item.position.dy + item.size.height / 2,
-    );
-    final dist = item.size.height / 2 + 25;
-    final handle = Offset(
-      center.dx + dist * Math.cos(item.rotation - 1.5708),
-      center.dy + dist * Math.sin(item.rotation - 1.5708),
-    );
-    return (point - handle).distance <= 35;
-  }
-
-  Size _getSize(FurnitureType type) {
-    switch (type) {
-      case FurnitureType.chair:
-        return const Size(60, 60);
-      case FurnitureType.table:
-        return const Size(120, 80);
-      case FurnitureType.sofa:
-        return const Size(150, 70);
-    }
-  }
-
-  Color _getColor(FurnitureType type) {
-    switch (type) {
-      case FurnitureType.chair:
-        return Colors.blueGrey;
-      case FurnitureType.table:
-        return Colors.brown;
-      case FurnitureType.sofa:
-        return Colors.green;
-    }
-  }
 }
 
 class RoomPainter extends CustomPainter {
@@ -745,11 +693,12 @@ class RoomPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint();
+    final itemPaint = Paint();
 
     final gridPaint = Paint()
       ..color = Colors.grey.withOpacity(0.15)
       ..strokeWidth = 1;
+
     for (double x = 0; x < size.width; x += 20) {
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
     }
@@ -757,7 +706,7 @@ class RoomPainter extends CustomPainter {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
     }
 
-    for (var item in furnitureItems) {
+    for (final item in furnitureItems) {
       canvas.save();
       canvas.translate(
         item.position.dx + item.size.width / 2,
@@ -766,13 +715,14 @@ class RoomPainter extends CustomPainter {
       canvas.rotate(item.rotation);
       canvas.translate(-item.size.width / 2, -item.size.height / 2);
 
-      paint.color = item.color;
+      itemPaint.color = item.color;
       canvas.drawRect(
         Rect.fromLTWH(0, 0, item.size.width, item.size.height),
-        paint,
+        itemPaint,
       );
 
       if (selectedItems.contains(item)) {
+        // Line connecting the item to the rotate handle
         canvas.drawLine(
           Offset(item.size.width / 2, 0),
           Offset(item.size.width / 2, -25),
@@ -780,11 +730,13 @@ class RoomPainter extends CustomPainter {
             ..color = Colors.blue.withOpacity(0.4)
             ..strokeWidth = 2,
         );
+        // Rotate handle
         canvas.drawCircle(
           Offset(item.size.width / 2, -25),
           12,
           Paint()..color = Colors.blue,
         );
+        // Resize handle
         canvas.drawCircle(
           Offset(item.size.width, item.size.height),
           12,
@@ -800,25 +752,23 @@ class RoomPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
-class _SelectionPainter extends CustomPainter {
+class MarqueePainter extends CustomPainter {
   final Offset start;
-  final Offset current;
+  final Offset end;
 
-  _SelectionPainter(this.start, this.current);
+  MarqueePainter(this.start, this.end);
 
   @override
   void paint(Canvas canvas, Size size) {
-    final rect = Rect.fromPoints(start, current);
-
-    final fillPaint = Paint()..color = Colors.blue.withOpacity(0.15);
-
-    final borderPaint = Paint()
-      ..color = Colors.blue
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-
-    canvas.drawRect(rect, fillPaint);
-    canvas.drawRect(rect, borderPaint);
+    final rect = Rect.fromPoints(start, end);
+    canvas.drawRect(rect, Paint()..color = Colors.blue.withOpacity(0.15));
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..color = Colors.blue
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
   }
 
   @override
