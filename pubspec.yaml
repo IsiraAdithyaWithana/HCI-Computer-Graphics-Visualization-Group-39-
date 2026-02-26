@@ -63,6 +63,9 @@ flutter:
     - assets/cursors/expand_cursor.png
     - assets/cursors/move_cursor.png
     - assets/cursors/canvas_cursor.png
+    - assets/models/chair.glb
+    - assets/models/table.glb
+    - assets/models/sofa.glb
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
