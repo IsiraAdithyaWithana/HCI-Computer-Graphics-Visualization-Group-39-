@@ -3,6 +3,7 @@ import 'package:furniture_visualizer/widgets/mouse_tool_sidebar.dart';
 import '../widgets/room_canvas.dart';
 import '../models/furniture_model.dart';
 import '3d_preview_screen.dart';
+import 'realistic_3d_screen.dart';
 
 class Editor2DScreen extends StatefulWidget {
   const Editor2DScreen({super.key});
@@ -16,6 +17,34 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   FurnitureType _selectedType = FurnitureType.chair;
 
   final GlobalKey<RoomCanvasState> _canvasKey = GlobalKey<RoomCanvasState>();
+
+  void _openRealistic3D() {
+    final items = _canvasKey.currentState?.furnitureItems ?? [];
+    if (items.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Add some furniture first.')),
+      );
+      return;
+    }
+
+    double maxX = 0, maxY = 0;
+    for (final item in items) {
+      final r = item.position.dx + item.size.width;
+      final b = item.position.dy + item.size.height;
+      if (r > maxX) maxX = r;
+      if (b > maxY) maxY = b;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => Realistic3DScreen(
+          furniture: List.from(items),
+          roomWidth: maxX + 80,
+          roomDepth: maxY + 80,
+        ),
+      ),
+    );
+  }
 
   void _toggleResizeSnap() {
     _canvasKey.currentState?.toggleResizeSnap();
@@ -175,6 +204,21 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                         foregroundColor: Colors.white,
                       ),
                       onPressed: _openPreview3D,
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.auto_awesome, size: 18),
+                      label: const Text('Realistic 3D'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6366F1),
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: _openRealistic3D,
                     ),
                   ),
                 ),

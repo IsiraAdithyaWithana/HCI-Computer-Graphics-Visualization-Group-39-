@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Room Viewer</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #0a0a1a;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #loading-screen {
+      position: fixed;
+      inset: 0;
+      background: #0a0a1a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      gap: 20px;
+    }
+
+    .spinner {
+      width: 44px;
+      height: 44px;
+      border: 3px solid rgba(99, 102, 241, 0.2);
+      border-top-color: #6366f1;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    #loading-text {
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 15px;
+    }
+
+    #progress-bar-wrap {
+      width: 200px;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    #progress-bar {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #6366f1, #818cf8);
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+
+    #info-bar {
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 24px;
+      padding: 8px 20px;
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 12px;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div id="loading-screen">
+    <div class="spinner"></div>
+    <div id="loading-text">Loading 3D viewer…</div>
+    <div id="progress-bar-wrap">
+      <div id="progress-bar"></div>
+    </div>
+  </div>
+
+  <div id="info-bar">
+    🖱 Left drag to orbit &nbsp;·&nbsp; Scroll to zoom &nbsp;·&nbsp; Right drag to pan
+  </div>
+
+  <!-- Local JS files — served by Flutter's shelf server, no internet needed -->
+  <script src="three.min.js"></script>
+  <script src="OrbitControls.js"></script>
+  <script src="GLTFLoader.js"></script>
+
+  <script>
+    (function () {
+      'use strict';
+
+      // Send 'ready' to Flutter via webview_windows message bridge
+      function notifyReady() {
+        try {
+          if (window.chrome && window.chrome.webview) {
+            window.chrome.webview.postMessage('ready');
+          }
+        } catch (e) {
+          console.warn('postMessage failed:', e);
+        }
+      }
+
+      // ── Renderer ─────────────────────────────────────────────────────────────
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.outputEncoding = THREE.sRGBEncoding;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.1;
+      document.body.appendChild(renderer.domElement);
+
+      // ── Scene ─────────────────────────────────────────────────────────────────
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0d0d20);
+      scene.fog = new THREE.FogExp2(0x0d0d20, 0.018);
+
+      // ── Camera ────────────────────────────────────────────────────────────────
+      const camera = new THREE.PerspectiveCamera(
+        45, window.innerWidth / window.innerHeight, 0.1, 200
+      );
+      camera.position.set(12, 9, 12);
+
+      // ── Controls ──────────────────────────────────────────────────────────────
+      const controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.06;
+      controls.minDistance = 1.5;
+      controls.maxDistance = 40;
+      controls.target.set(5, 0, 5);
+      controls.update();
+
+      // ── Lighting ──────────────────────────────────────────────────────────────
+      scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+      scene.add(new THREE.HemisphereLight(0xfff4e0, 0x3a3a5c, 0.5));
+
+      const sun = new THREE.DirectionalLight(0xfff8f0, 1.4);
+      sun.position.set(12, 18, 10);
+      sun.castShadow = true;
+      sun.shadow.mapSize.set(2048, 2048);
+      sun.shadow.camera.near = 0.5;
+      sun.shadow.camera.far = 80;
+      sun.shadow.camera.left = sun.shadow.camera.bottom = -20;
+      sun.shadow.camera.right = sun.shadow.camera.top = 20;
+      sun.shadow.bias = -0.0005;
+      scene.add(sun);
+
+      const fill = new THREE.DirectionalLight(0x8eb3ff, 0.25);
+      fill.position.set(-6, 4, -6);
+      scene.add(fill);
+
+      // ── Room ──────────────────────────────────────────────────────────────────
+      const roomGroup = new THREE.Group();
+      scene.add(roomGroup);
+
+      function buildRoom(rw, rd) {
+        while (roomGroup.children.length) roomGroup.remove(roomGroup.children[0]);
+
+        const WALL_H = 3.6;
+
+        // Floor
+        const floor = new THREE.Mesh(
+          new THREE.PlaneGeometry(rw, rd),
+          new THREE.MeshLambertMaterial({ color: 0xc8b89a })
+        );
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.set(rw / 2, 0, rd / 2);
+        floor.receiveShadow = true;
+        roomGroup.add(floor);
+
+        // Floor grid
+        const grid = new THREE.GridHelper(
+          Math.max(rw, rd) * 1.1, 20, 0x8a7560, 0x6b5c4a
+        );
+        grid.position.set(rw / 2, 0.002, rd / 2);
+        roomGroup.add(grid);
+
+        // Back wall
+        const wallMat = new THREE.MeshLambertMaterial({
+          color: 0xe8e2d9, side: THREE.BackSide
+        });
+        const backWall = new THREE.Mesh(
+          new THREE.PlaneGeometry(rw, WALL_H), wallMat
+        );
+        backWall.position.set(rw / 2, WALL_H / 2, 0);
+        backWall.receiveShadow = true;
+        roomGroup.add(backWall);
+
+        // Left wall
+        const leftWall = new THREE.Mesh(
+          new THREE.PlaneGeometry(rd, WALL_H), wallMat.clone()
+        );
+        leftWall.rotation.y = Math.PI / 2;
+        leftWall.position.set(0, WALL_H / 2, rd / 2);
+        leftWall.receiveShadow = true;
+        roomGroup.add(leftWall);
+
+        // Ceiling
+        const ceil = new THREE.Mesh(
+          new THREE.PlaneGeometry(rw, rd),
+          new THREE.MeshLambertMaterial({ color: 0xf5f0ea, side: THREE.BackSide })
+        );
+        ceil.rotation.x = Math.PI / 2;
+        ceil.position.set(rw / 2, WALL_H, rd / 2);
+        roomGroup.add(ceil);
+
+        // Baseboard
+        const baseM = new THREE.MeshLambertMaterial({ color: 0xcfc5b8 });
+        const b1 = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.1, 0.04), baseM);
+        b1.position.set(rw / 2, 0.05, 0.02);
+        roomGroup.add(b1);
+        const b2 = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.1, rd), baseM.clone());
+        b2.position.set(0.02, 0.05, rd / 2);
+        roomGroup.add(b2);
+
+        // Ceiling light
+        const lightFit = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.18, 0.22, 0.06, 16),
+          new THREE.MeshLambertMaterial({ color: 0xf0ece6 })
+        );
+        lightFit.position.set(rw / 2, WALL_H - 0.03, rd / 2);
+        roomGroup.add(lightFit);
+
+        const pl = new THREE.PointLight(0xffe8c8, 0.55, 14, 2);
+        pl.position.set(rw / 2, WALL_H - 0.1, rd / 2);
+        roomGroup.add(pl);
+
+        // Update shadow camera
+        sun.shadow.camera.left = -(rw + 4);
+        sun.shadow.camera.right = rw + 4;
+        sun.shadow.camera.top = rd + 4;
+        sun.shadow.camera.bottom = -(rd + 4);
+        sun.shadow.camera.updateProjectionMatrix();
+
+        controls.target.set(rw / 2, 0.5, rd / 2);
+        camera.position.set(rw / 2 + rw * 0.9, rw * 0.75, rd / 2 + rd * 0.9);
+        controls.update();
+      }
+
+      // ── GLB model loading ─────────────────────────────────────────────────────
+      const loader = new THREE.GLTFLoader();
+      const modelBank = {};
+      let loadedCount = 0;
+      const MODEL_NAMES = ['chair', 'table', 'sofa'];
+
+      function setProgress(pct, text) {
+        document.getElementById('progress-bar').style.width = pct + '%';
+        if (text) document.getElementById('loading-text').textContent = text;
+      }
+
+      function preloadModels() {
+        MODEL_NAMES.forEach((name, i) => {
+          loader.load(
+            name + '.glb',
+            (gltf) => {
+              modelBank[name] = gltf.scene;
+              loadedCount++;
+              setProgress(
+                (loadedCount / MODEL_NAMES.length) * 100,
+                'Loaded ' + name + ' (' + loadedCount + '/' + MODEL_NAMES.length + ')'
+              );
+              if (loadedCount === MODEL_NAMES.length) onAllLoaded();
+            },
+            (xhr) => {
+              if (xhr.lengthComputable) {
+                const p = ((i + xhr.loaded / xhr.total) / MODEL_NAMES.length) * 100;
+                setProgress(p);
+              }
+            },
+            (err) => {
+              console.warn('GLB load warning for ' + name, err);
+              loadedCount++;
+              if (loadedCount === MODEL_NAMES.length) onAllLoaded();
+            }
+          );
+        });
+      }
+
+      function onAllLoaded() {
+        document.getElementById('loading-screen').style.display = 'none';
+        notifyReady();
+      }
+
+      // ── Furniture ─────────────────────────────────────────────────────────────
+      const furnitureGroup = new THREE.Group();
+      scene.add(furnitureGroup);
+
+      const HEIGHTS = { chair: 0.9, table: 0.75, sofa: 0.85 };
+      const FALLBACK_COLORS = { chair: 0x8B6F47, table: 0x6B4423, sofa: 0x4A6FA5 };
+
+      function placeModel(type, cx, cz, rotation, w2d, d2d, roomScale) {
+        const tw = w2d * roomScale;
+        const td = d2d * roomScale;
+        const th = HEIGHTS[type] || 0.8;
+        const template = modelBank[type];
+        let obj;
+
+        if (template) {
+          obj = template.clone();
+          obj.traverse(child => {
+            if (child.isMesh) {
+              child.castShadow = true;
+              child.receiveShadow = true;
+            }
+          });
+          const box = new THREE.Box3().setFromObject(obj);
+          const size = box.getSize(new THREE.Vector3());
+          const s = Math.min(tw / (size.x || 1), td / (size.z || 1));
+          obj.scale.setScalar(s);
+          const box2 = new THREE.Box3().setFromObject(obj);
+          obj.position.y = -box2.min.y;
+        } else {
+          // Fallback box if GLB failed
+          const geo = new THREE.BoxGeometry(tw, th, td);
+          const mat = new THREE.MeshLambertMaterial({
+            color: FALLBACK_COLORS[type] || 0x888888
+          });
+          obj = new THREE.Mesh(geo, mat);
+          obj.position.y = th / 2;
+          obj.castShadow = true;
+          obj.receiveShadow = true;
+        }
+
+        obj.position.x = cx;
+        obj.position.z = cz;
+        obj.rotation.y = -rotation;
+        return obj;
+      }
+
+      // ── Called by Flutter ─────────────────────────────────────────────────────
+      window.loadFurniture = function (dataStr) {
+        try {
+          const data = JSON.parse(dataStr);
+          const items = data.items;
+          const roomPixW = data.roomWidth;
+          const roomPixD = data.roomDepth;
+
+          const TARGET = 12;
+          const roomScale = TARGET / Math.max(roomPixW, roomPixD);
+          const rw = roomPixW * roomScale;
+          const rd = roomPixD * roomScale;
+
+          buildRoom(rw, rd);
+
+          while (furnitureGroup.children.length) {
+            furnitureGroup.remove(furnitureGroup.children[0]);
+          }
+
+          items.forEach(item => {
+            const cx = (item.x + item.width / 2) * roomScale;
+            const cz = (item.y + item.height / 2) * roomScale;
+            furnitureGroup.add(
+              placeModel(item.type, cx, cz, item.rotation,
+                item.width, item.height, roomScale)
+            );
+          });
+
+          console.log('Placed ' + items.length + ' items');
+        } catch (e) {
+          console.error('loadFurniture error:', e);
+        }
+      };
+
+      // ── Resize ────────────────────────────────────────────────────────────────
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      // ── Render loop ───────────────────────────────────────────────────────────
+      (function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+      })();
+
+      // ── Start ─────────────────────────────────────────────────────────────────
+      buildRoom(10, 10);
+      preloadModels();
+
+    })();
+  </script>
+</body>
+
+</html>

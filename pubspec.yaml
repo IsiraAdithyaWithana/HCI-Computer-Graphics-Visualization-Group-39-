@@ -30,6 +30,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  webview_windows: ^0.2.2
+  shelf: ^1.4.1
+  shelf_static: ^1.1.2
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -66,6 +69,10 @@ flutter:
     - assets/models/chair.glb
     - assets/models/table.glb
     - assets/models/sofa.glb
+    - assets/viewer/room_viewer.html
+    - assets/viewer/three.min.js
+    - assets/viewer/OrbitControls.js
+    - assets/viewer/GLTFLoader.js
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
