@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_windows/webview_windows.dart';
@@ -24,84 +23,60 @@ class Realistic3DScreen extends StatefulWidget {
 class _Realistic3DScreenState extends State<Realistic3DScreen> {
   final WebviewController _controller = WebviewController();
 
-  String _statusText = 'Starting local server…';
-  bool _showOverlay = true;
+  bool _sceneReady = false;
   bool _hasError = false;
-  bool _dataSent = false; // guard so we only send once
-
-  StreamSubscription? _msgSub;
-  Timer? _fallbackTimer;
+  String _statusText = 'Starting…';
 
   @override
   void initState() {
     super.initState();
-    _boot();
+    // Must run after first frame so Webview() widget is in the render tree.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _boot());
   }
 
   @override
   void dispose() {
-    _msgSub?.cancel();
-    _fallbackTimer?.cancel();
     _controller.dispose();
     super.dispose();
   }
 
   Future<void> _boot() async {
     try {
-      setState(() => _statusText = 'Copying 3D assets…');
-      final baseUrl = await AssetServer.start();
-
       setState(() => _statusText = 'Initialising WebView…');
       await _controller.initialize();
 
-      // Listen for 'ready' from window.chrome.webview.postMessage in the HTML
-      _msgSub = _controller.webMessage.listen((msg) {
-        final text = msg.toString();
-        if (text.contains('ready') && !_dataSent) {
-          _sendFurnitureData();
-        }
-      });
+      setState(() => _statusText = 'Copying 3D assets…');
+      final baseUrl = await AssetServer.start();
+      debugPrint('[3D] Server: $baseUrl');
 
-      setState(() => _statusText = 'Loading 3D viewer…');
-      await _controller.loadUrl('$baseUrl/room_viewer.html');
+      final url = _buildUrl(baseUrl);
+      setState(() => _statusText = 'Loading 3D scene…');
+      await _controller.loadUrl(url);
 
-      setState(() => _showOverlay = false);
-
-      // Fallback: if the 'ready' message is missed for any reason,
-      // send furniture data after 4 seconds anyway.
-      _fallbackTimer = Timer(const Duration(seconds: 4), () {
-        if (!_dataSent) {
-          debugPrint('3D viewer: fallback timer fired, sending data');
-          _sendFurnitureData();
-        }
-      });
-    } catch (e) {
+      // Hide Flutter overlay — Three.js loading spinner inside WebView takes over
+      setState(() => _sceneReady = true);
+    } catch (e, st) {
+      debugPrint('[3D] Error: $e\n$st');
       setState(() {
-        _statusText = 'Error: $e';
         _hasError = true;
+        _statusText = 'Error: $e';
       });
     }
   }
 
-  void _sendFurnitureData() {
-    if (_dataSent) return;
-    _dataSent = true;
-
-    final items = widget.furniture.map((item) {
-      final hex = item.color.value
-          .toRadixString(16)
-          .padLeft(8, '0')
-          .substring(2);
-      return {
-        'type': item.type.name,
-        'x': item.position.dx,
-        'y': item.position.dy,
-        'width': item.size.width,
-        'height': item.size.height,
-        'rotation': item.rotation,
-        'color': '#$hex',
-      };
-    }).toList();
+  String _buildUrl(String baseUrl) {
+    final items = widget.furniture
+        .map(
+          (f) => {
+            'type': f.type.name,
+            'x': f.position.dx,
+            'y': f.position.dy,
+            'width': f.size.width,
+            'height': f.size.height,
+            'rotation': f.rotation,
+          },
+        )
+        .toList();
 
     final payload = jsonEncode({
       'items': items,
@@ -109,10 +84,8 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
       'roomDepth': widget.roomDepth,
     });
 
-    // Double-encode so the string arrives safely inside the JS function call
-    final jsCall = 'window.loadFurniture(${jsonEncode(payload)})';
-    _controller.executeScript(jsCall);
-    debugPrint('3D viewer: sent ${items.length} furniture items');
+    final encoded = base64Url.encode(utf8.encode(payload));
+    return '$baseUrl/room_viewer.html?d=$encoded';
   }
 
   @override
@@ -125,20 +98,23 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
       ),
       body: Stack(
         children: [
-          // WebView is always in the tree so it keeps rendering
-          Webview(_controller),
+          // ── THE FIX ────────────────────────────────────────────────────────
+          // Webview inside a Stack gets *loose* constraints and defaults to
+          // zero size → black screen.  Positioned.fill gives it *tight*
+          // constraints that match the full Stack area, so it actually renders.
+          Positioned.fill(child: Webview(_controller)),
 
-          // Overlay hides the WebView until it is ready
-          if (_showOverlay)
-            _LoadingOverlay(message: _statusText, hasError: _hasError),
+          // Flutter overlay while booting
+          if (!_sceneReady)
+            Positioned.fill(
+              child: _Overlay(message: _statusText, hasError: _hasError),
+            ),
         ],
       ),
     );
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sub-widgets
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _AppBar extends StatelessWidget {
@@ -151,11 +127,7 @@ class _AppBar extends StatelessWidget {
       decoration: const BoxDecoration(
         color: Color(0xFF0F0F2A),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black54,
-            blurRadius: 10,
-            offset: Offset(0, 2),
-          ),
+          BoxShadow(color: Colors.black54, blurRadius: 8, offset: Offset(0, 2)),
         ],
       ),
       child: SafeArea(
@@ -169,26 +141,24 @@ class _AppBar extends StatelessWidget {
                 size: 20,
               ),
               onPressed: () => Navigator.of(context).pop(),
-              tooltip: 'Back to editor',
             ),
-            const SizedBox(width: 2),
+            const SizedBox(width: 4),
             const Text(
               'Realistic 3D View',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 17,
                 fontWeight: FontWeight.w600,
-                letterSpacing: 0.2,
               ),
             ),
             const Spacer(),
-            _Badge(
+            _Chip(
               icon: Icons.chair_outlined,
               label: '$itemCount item${itemCount == 1 ? '' : 's'}',
               color: Colors.indigo,
             ),
-            const SizedBox(width: 10),
-            _Badge(
+            const SizedBox(width: 8),
+            _Chip(
               icon: Icons.threesixty,
               label: 'Drag to orbit',
               color: Colors.teal,
@@ -201,11 +171,11 @@ class _AppBar extends StatelessWidget {
   }
 }
 
-class _Badge extends StatelessWidget {
+class _Chip extends StatelessWidget {
   final IconData icon;
   final String label;
   final Color color;
-  const _Badge({required this.icon, required this.label, required this.color});
+  const _Chip({required this.icon, required this.label, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -214,7 +184,7 @@ class _Badge extends StatelessWidget {
       decoration: BoxDecoration(
         color: color.withOpacity(0.18),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.45)),
+        border: Border.all(color: color.withOpacity(0.4)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -235,10 +205,10 @@ class _Badge extends StatelessWidget {
   }
 }
 
-class _LoadingOverlay extends StatelessWidget {
+class _Overlay extends StatelessWidget {
   final String message;
   final bool hasError;
-  const _LoadingOverlay({required this.message, required this.hasError});
+  const _Overlay({required this.message, required this.hasError});
 
   @override
   Widget build(BuildContext context) {
@@ -261,7 +231,7 @@ class _LoadingOverlay extends StatelessWidget {
               const Icon(
                 Icons.error_outline,
                 color: Colors.redAccent,
-                size: 44,
+                size: 48,
               ),
             const SizedBox(height: 20),
             Text(
@@ -269,7 +239,7 @@ class _LoadingOverlay extends StatelessWidget {
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: hasError
-                    ? Colors.redAccent.withOpacity(0.85)
+                    ? Colors.redAccent
                     : Colors.white.withOpacity(0.65),
                 fontSize: 14,
               ),
@@ -277,7 +247,7 @@ class _LoadingOverlay extends StatelessWidget {
             if (!hasError) ...[
               const SizedBox(height: 8),
               Text(
-                'Loading Three.js + GLB models…',
+                'Three.js + GLB models loading…',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.3),
                   fontSize: 12,
