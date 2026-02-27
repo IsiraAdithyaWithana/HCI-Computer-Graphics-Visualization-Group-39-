@@ -16,10 +16,13 @@
       overflow: hidden;
       width: 100vw;
       height: 100vh;
+      touch-action: none;
+      /* let JS handle all touch/pointer events */
     }
 
     canvas {
       display: block;
+      touch-action: none;
     }
 
     #loading {
@@ -77,25 +80,27 @@
       transition: width 0.25s;
     }
 
-    #hint {
+    /* Controls legend bottom-left */
+    #controls {
       position: fixed;
       bottom: 14px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.5);
+      left: 14px;
+      background: rgba(0, 0, 0, 0.55);
       border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 20px;
-      padding: 6px 18px;
-      color: rgba(255, 255, 255, 0.4);
-      font: 11px sans-serif;
+      border-radius: 10px;
+      padding: 10px 14px;
+      color: rgba(255, 255, 255, 0.5);
+      font: 11px/1.8 sans-serif;
       pointer-events: none;
-      white-space: nowrap;
+    }
+
+    #controls b {
+      color: rgba(255, 255, 255, 0.75);
     }
   </style>
 </head>
 
 <body>
-
   <div id="loading">
     <div class="spinner"></div>
     <div id="load-text">Starting…</div>
@@ -103,25 +108,26 @@
       <div id="load-bar"></div>
     </div>
   </div>
-  <div id="hint">Left-drag · Scroll zoom · Right-drag pan</div>
+
+  <div id="controls">
+    <b>Mouse</b><br>
+    Left-drag → Orbit &nbsp;·&nbsp; Scroll → Zoom &nbsp;·&nbsp; Right-drag → Pan<br>
+    <b>Touchpad</b><br>
+    1-finger drag → Orbit &nbsp;·&nbsp; Pinch → Zoom &nbsp;·&nbsp; 2-finger drag → Pan<br>
+    <b>Keyboard</b><br>
+    W/S → Zoom &nbsp;·&nbsp; A/D → Rotate &nbsp;·&nbsp; Arrows → Pan
+  </div>
 
   <script>
     var bank = {};
-
-    function setStatus(text, pct) {
-      var el = document.getElementById('load-text');
-      if (el) el.textContent = text;
-      if (pct !== undefined) {
-        var bar = document.getElementById('load-bar');
-        if (bar) bar.style.width = pct + '%';
-      }
+    function setStatus(t, p) {
+      var el = document.getElementById('load-text'); if (el) el.textContent = t;
+      if (p !== undefined) { var b = document.getElementById('load-bar'); if (b) b.style.width = p + '%'; }
     }
-
     function hideLoading() {
       var el = document.getElementById('loading');
       if (el) { el.classList.add('hidden'); setTimeout(function () { el.style.display = 'none'; }, 600); }
     }
-
     function getPayload() {
       try {
         var raw = new URLSearchParams(window.location.search).get('d');
@@ -129,8 +135,6 @@
         return JSON.parse(atob(raw.replace(/-/g, '+').replace(/_/g, '/')));
       } catch (e) { return null; }
     }
-
-    // ── Load JS scripts one at a time ─────────────────────────────────────────
     function loadScript(src, cb) {
       var s = document.createElement('script');
       s.src = src + '?t=' + Date.now();
@@ -144,17 +148,14 @@
       setStatus('Loading controls…', 20);
       loadScript('OrbitControls.js', function () {
         setStatus('Loading GLTF loader…', 35);
-        loadScript('GLTFLoader.js', function () {
-          setTimeout(boot, 60);
-        });
+        loadScript('GLTFLoader.js', function () { setTimeout(boot, 60); });
       });
     });
 
-    // ─────────────────────────────────────────────────────────────────────────────
     function boot() {
       if (typeof THREE === 'undefined') { setStatus('Error: Three.js failed'); return; }
 
-      // ── Renderer ───────────────────────────────────────────────────────────
+      // ── Renderer ──────────────────────────────────────────────────────────────
       var renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.setSize(window.innerWidth, window.innerHeight);
@@ -162,152 +163,202 @@
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.outputEncoding = THREE.sRGBEncoding;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.1;
+      renderer.toneMappingExposure = 1.05;
       document.body.appendChild(renderer.domElement);
 
-      // ── Scene / Camera / Controls ──────────────────────────────────────────
+      // ── Scene / Camera ────────────────────────────────────────────────────────
       var scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x0d0d20);
-      scene.fog = new THREE.FogExp2(0x0d0d20, 0.014);
+      scene.background = new THREE.Color(0x1a1a2e);
+      var camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
+      camera.position.set(12, 8, 14);
 
-      var camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
-      camera.position.set(12, 9, 12);
-
+      // ── OrbitControls ─────────────────────────────────────────────────────────
       var controls = new THREE.OrbitControls(camera, renderer.domElement);
-      controls.enableDamping = true; controls.dampingFactor = 0.07;
-      controls.minDistance = 1.5; controls.maxDistance = 50;
-      controls.target.set(6, 0.5, 6); controls.update();
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.07;
+      controls.minDistance = 1;
+      controls.maxDistance = 40;
+      controls.maxPolarAngle = Math.PI * 0.88;
+      controls.zoomSpeed = 1.2;
+      controls.rotateSpeed = 0.8;
+      controls.panSpeed = 0.8;
+      // Enable all mouse buttons: left=rotate, middle=zoom, right=pan
+      controls.mouseButtons = {
+        LEFT: THREE.MOUSE.ROTATE,
+        MIDDLE: THREE.MOUSE.DOLLY,
+        RIGHT: THREE.MOUSE.PAN
+      };
+      // Touch: one finger = rotate, two fingers = pan+zoom
+      controls.touches = {
+        ONE: THREE.TOUCH.ROTATE,
+        TWO: THREE.TOUCH.DOLLY_PAN
+      };
+      controls.update();
 
-      // ── Lights ─────────────────────────────────────────────────────────────
-      scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-      scene.add(new THREE.HemisphereLight(0xfff4e0, 0x3a3a5c, 0.5));
-      var sun = new THREE.DirectionalLight(0xfffaf0, 1.4);
-      sun.position.set(10, 18, 8); sun.castShadow = true;
+      // ── FIX: Intercept wheel events on the canvas so touchpad scroll zooms ───
+      // WebView2 sometimes consumes wheel events before Three.js sees them.
+      // We re-dispatch them with preventDefault to force OrbitControls to handle them.
+      renderer.domElement.addEventListener('wheel', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }, { passive: false });
+
+      // ── Keyboard controls ─────────────────────────────────────────────────────
+      var keys = {};
+      window.addEventListener('keydown', function (e) { keys[e.key] = true; });
+      window.addEventListener('keyup', function (e) { keys[e.key] = false; });
+
+      function handleKeys() {
+        var speed = 0.05;
+        if (keys['w'] || keys['W']) controls.dollyIn(1 + speed);
+        if (keys['s'] || keys['S']) controls.dollyOut(1 + speed);
+        if (keys['a'] || keys['A']) { controls.rotateLeft(speed); }
+        if (keys['d'] || keys['D']) { controls.rotateLeft(-speed); }
+        if (keys['ArrowLeft']) controls.truck(-speed * 2, 0);
+        if (keys['ArrowRight']) controls.truck(speed * 2, 0);
+        if (keys['ArrowUp']) controls.truck(0, -speed * 2);
+        if (keys['ArrowDown']) controls.truck(0, speed * 2);
+      }
+
+      // ── Lights ────────────────────────────────────────────────────────────────
+      scene.add(new THREE.AmbientLight(0xfff5e8, 0.55));
+      scene.add(new THREE.HemisphereLight(0xfff0d0, 0x6a5a40, 0.4));
+      var sun = new THREE.DirectionalLight(0xfff8f0, 1.2);
+      sun.position.set(8, 14, 6); sun.castShadow = true;
       sun.shadow.mapSize.set(2048, 2048);
-      sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 100;
-      sun.shadow.camera.left = sun.shadow.camera.bottom = -30;
-      sun.shadow.camera.right = sun.shadow.camera.top = 30;
-      sun.shadow.bias = -0.0005;
+      sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 60;
+      sun.shadow.camera.left = sun.shadow.camera.bottom = -20;
+      sun.shadow.camera.right = sun.shadow.camera.top = 20;
+      sun.shadow.bias = -0.001;
       scene.add(sun);
-      var fill = new THREE.DirectionalLight(0x8eb3ff, 0.25);
-      fill.position.set(-8, 5, -8); scene.add(fill);
+      var fill = new THREE.DirectionalLight(0xc8d8ff, 0.3);
+      fill.position.set(-6, 8, -6); scene.add(fill);
 
+      // ── Room ──────────────────────────────────────────────────────────────────
       var roomGroup = new THREE.Group(); scene.add(roomGroup);
 
       function buildRoom(rw, rd) {
         while (roomGroup.children.length) roomGroup.remove(roomGroup.children[0]);
-        var WH = 3.5;
-        var floor = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd),
-          new THREE.MeshLambertMaterial({ color: 0xc8b89a }));
+        var WH = 3.2;
+        var floorMat = new THREE.MeshLambertMaterial({ color: 0xd4c4a8 });
+        var wallMat = new THREE.MeshLambertMaterial({ color: 0xf0ebe2 });
+        var ceilMat = new THREE.MeshLambertMaterial({ color: 0xfaf8f4 });
+        var trimMat = new THREE.MeshLambertMaterial({ color: 0xe8e0d4 });
+
+        // Floor
+        var floor = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd), floorMat);
         floor.rotation.x = -Math.PI / 2; floor.position.set(rw / 2, 0, rd / 2);
         floor.receiveShadow = true; roomGroup.add(floor);
-        roomGroup.add(new THREE.GridHelper(Math.max(rw, rd) * 1.1, 20, 0x9a8870, 0x7a6a58));
-        var wm = new THREE.MeshLambertMaterial({ color: 0xede8e0, side: THREE.BackSide });
-        var bw = new THREE.Mesh(new THREE.PlaneGeometry(rw, WH), wm);
-        bw.position.set(rw / 2, WH / 2, 0); bw.receiveShadow = true; roomGroup.add(bw);
-        var lw = new THREE.Mesh(new THREE.PlaneGeometry(rd, WH), wm.clone());
-        lw.rotation.y = Math.PI / 2; lw.position.set(0, WH / 2, rd / 2); lw.receiveShadow = true; roomGroup.add(lw);
-        var ceil = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd),
-          new THREE.MeshLambertMaterial({ color: 0xf8f5f0, side: THREE.BackSide }));
+
+        // Floor grid (exact room size)
+        var gridDiv = Math.round(Math.max(rw, rd) * 2);
+        var grid = new THREE.GridHelper(Math.max(rw, rd), gridDiv, 0xb0a090, 0xc8b89a);
+        grid.position.set(rw / 2, 0.002, rd / 2);
+        grid.scale.set(rw / Math.max(rw, rd), 1, rd / Math.max(rw, rd));
+        roomGroup.add(grid);
+
+        // 4 walls
+        function addWall(geo, pos, rotY) {
+          var m = new THREE.Mesh(geo, wallMat.clone());
+          m.position.copy(pos); if (rotY) m.rotation.y = rotY;
+          m.receiveShadow = true; roomGroup.add(m);
+        }
+        addWall(new THREE.PlaneGeometry(rw, WH), new THREE.Vector3(rw / 2, WH / 2, 0), 0);
+        addWall(new THREE.PlaneGeometry(rw, WH), new THREE.Vector3(rw / 2, WH / 2, rd), Math.PI);
+        addWall(new THREE.PlaneGeometry(rd, WH), new THREE.Vector3(0, WH / 2, rd / 2), Math.PI / 2);
+        addWall(new THREE.PlaneGeometry(rd, WH), new THREE.Vector3(rw, WH / 2, rd / 2), -Math.PI / 2);
+
+        // Ceiling
+        var ceil = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd), ceilMat);
         ceil.rotation.x = Math.PI / 2; ceil.position.set(rw / 2, WH, rd / 2); roomGroup.add(ceil);
-        var bm = new THREE.MeshLambertMaterial({ color: 0xd4ccbf });
-        var s1 = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.1, 0.04), bm);
-        s1.position.set(rw / 2, 0.05, 0.02); roomGroup.add(s1);
-        var s2 = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.1, rd), bm.clone());
-        s2.position.set(0.02, 0.05, rd / 2); roomGroup.add(s2);
-        var lf = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.2, 0.06, 16),
-          new THREE.MeshLambertMaterial({ color: 0xf0ece6 }));
-        lf.position.set(rw / 2, WH - 0.04, rd / 2); roomGroup.add(lf);
-        var pl = new THREE.PointLight(0xffe8c8, 0.5, 18, 2);
-        pl.position.set(rw / 2, WH - 0.1, rd / 2); roomGroup.add(pl);
-        sun.shadow.camera.left = -(rw + 5); sun.shadow.camera.right = rw + 5;
-        sun.shadow.camera.top = rd + 5; sun.shadow.camera.bottom = -(rd + 5);
+
+        // Baseboard on all 4 walls
+        var bh = 0.08, bd = 0.02;
+        function addBoard(geo, pos) {
+          var m = new THREE.Mesh(geo, trimMat.clone());
+          m.position.copy(pos); roomGroup.add(m);
+        }
+        addBoard(new THREE.BoxGeometry(rw, bh, bd), new THREE.Vector3(rw / 2, bh / 2, bd / 2));
+        addBoard(new THREE.BoxGeometry(rw, bh, bd), new THREE.Vector3(rw / 2, bh / 2, rd - bd / 2));
+        addBoard(new THREE.BoxGeometry(bd, bh, rd), new THREE.Vector3(bd / 2, bh / 2, rd / 2));
+        addBoard(new THREE.BoxGeometry(bd, bh, rd), new THREE.Vector3(rw - bd / 2, bh / 2, rd / 2));
+
+        // Ceiling cornice
+        var ch = 0.05, cd = 0.04;
+        var cornMat = new THREE.MeshLambertMaterial({ color: 0xe8e4de });
+        function addCornice(geo, pos) {
+          var m = new THREE.Mesh(geo, cornMat.clone()); m.position.copy(pos); roomGroup.add(m);
+        }
+        addCornice(new THREE.BoxGeometry(rw, ch, cd), new THREE.Vector3(rw / 2, WH - ch / 2, cd / 2));
+        addCornice(new THREE.BoxGeometry(rw, ch, cd), new THREE.Vector3(rw / 2, WH - ch / 2, rd - cd / 2));
+        addCornice(new THREE.BoxGeometry(cd, ch, rd), new THREE.Vector3(cd / 2, WH - ch / 2, rd / 2));
+        addCornice(new THREE.BoxGeometry(cd, ch, rd), new THREE.Vector3(rw - cd / 2, WH - ch / 2, rd / 2));
+
+        // Ceiling light
+        var lf = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.05, 20),
+          new THREE.MeshLambertMaterial({ color: 0xffffff }));
+        lf.position.set(rw / 2, WH - 0.025, rd / 2); roomGroup.add(lf);
+        var pl = new THREE.PointLight(0xffe8c0, 0.7, rw * 2.5, 1.8);
+        pl.position.set(rw / 2, WH - 0.15, rd / 2); roomGroup.add(pl);
+
+        sun.shadow.camera.left = -(rw + 3); sun.shadow.camera.right = rw + 3;
+        sun.shadow.camera.top = rd + 3; sun.shadow.camera.bottom = -(rd + 3);
         sun.shadow.camera.updateProjectionMatrix();
-        controls.target.set(rw / 2, 0.5, rd / 2);
-        camera.position.set(rw / 2 + rw * 0.9, rw * 0.7, rd / 2 + rd * 0.9);
+
+        var roomMax = Math.max(rw, rd);
+        controls.target.set(rw / 2, WH * 0.35, rd / 2);
+        camera.position.set(rw / 2 + roomMax * .85, roomMax * .6, rd / 2 + roomMax * .95);
         controls.update();
       }
 
-      // Render loop starts now — room will appear behind loading overlay
-      (function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
+      // Render loop
+      (function loop() {
+        requestAnimationFrame(loop);
+        handleKeys();
+        controls.update();
+        renderer.render(scene, camera);
+      })();
 
-      // ── Sequential model loader — avoids r128 parallel-load stall ────────────
+      // ── Sequential GLB loader ─────────────────────────────────────────────────
       var TARGET_HEIGHT = { chair: 0.90, table: 0.75, sofa: 0.85 };
       var FALLBACK_COLOR = { chair: 0x8B6F47, table: 0x5C3A1E, sofa: 0x4A6FA5 };
       var MODEL_NAMES = ['chair', 'table', 'sofa'];
-      var TIMEOUT_MS = 5000; // 5 s per model before giving up
+      var TIMEOUT_MS = 5000;
 
-      // Create a FRESH GLTFLoader for every model — avoids shared-loader queuing
       function loadOneModel(name, index, onDone) {
-        var pct = 50 + (index / MODEL_NAMES.length) * 40;
-        setStatus('Loading ' + name + '… (' + (index + 1) + '/3)', pct);
-
-        var finished = false;
-        var timer = setTimeout(function () {
-          if (finished) return;
-          finished = true;
-          console.warn(name + ' timed out — using box fallback');
-          onDone();
-        }, TIMEOUT_MS);
-
-        // ── NEW: one dedicated loader per model ────────────────────────────────
-        var singleLoader = new THREE.GLTFLoader();
-        singleLoader.load(
-          name + '.glb',
-          function (gltf) {
-            if (finished) return;
-            finished = true;
-            clearTimeout(timer);
-            bank[name] = gltf.scene;
-            console.log('Loaded ' + name);
-            onDone();
-          },
+        setStatus('Loading ' + name + '… (' + (index + 1) + '/3)', 50 + (index / MODEL_NAMES.length) * 40);
+        var done = false;
+        var timer = setTimeout(function () { if (done) return; done = true; console.warn(name + ' timeout'); onDone(); }, TIMEOUT_MS);
+        var sl = new THREE.GLTFLoader();
+        sl.load(name + '.glb',
+          function (gltf) { if (done) return; done = true; clearTimeout(timer); bank[name] = gltf.scene; console.log('Loaded ' + name); onDone(); },
           null,
-          function (err) {
-            if (finished) return;
-            finished = true;
-            clearTimeout(timer);
-            console.warn(name + ' error:', err);
-            onDone();
-          }
+          function (err) { if (done) return; done = true; clearTimeout(timer); console.warn(name + ' err:', err); onDone(); }
         );
       }
 
-      // Load chair → table → sofa one after another
-      function loadSequential(index) {
-        if (index >= MODEL_NAMES.length) {
-          onAllModelsReady();
-          return;
-        }
-        loadOneModel(MODEL_NAMES[index], index, function () {
-          loadSequential(index + 1);
-        });
+      function loadSeq(i) {
+        if (i >= MODEL_NAMES.length) { onReady(); return; }
+        loadOneModel(MODEL_NAMES[i], i, function () { loadSeq(i + 1); });
       }
 
-      function onAllModelsReady() {
+      function onReady() {
         setStatus('Building scene…', 95);
         var payload = getPayload();
-        if (!payload || !payload.items) {
-          buildRoom(10, 10);
-          hideLoading();
-          return;
-        }
+        if (!payload || !payload.items) { buildRoom(10, 10); hideLoading(); return; }
         var TARGET = 12;
-        var roomScale = TARGET / Math.max(payload.roomWidth, payload.roomDepth);
-        buildRoom(payload.roomWidth * roomScale, payload.roomDepth * roomScale);
-
+        var rs = TARGET / Math.max(payload.roomWidth, payload.roomDepth);
+        buildRoom(payload.roomWidth * rs, payload.roomDepth * rs);
         var fg = new THREE.Group(); scene.add(fg);
-        payload.items.forEach(function (item) { fg.add(placeItem(item, roomScale)); });
-        console.log('Scene ready — ' + payload.items.length + ' items');
+        payload.items.forEach(function (item) { fg.add(placeItem(item, rs)); });
+        console.log('Ready — ' + payload.items.length + ' items');
         setStatus('Done!', 100);
         hideLoading();
       }
 
-      function placeItem(item, roomScale) {
-        var tw = item.width * roomScale;
-        var td = item.height * roomScale;
-        var cx = (item.x + item.width / 2) * roomScale;
-        var cz = (item.y + item.height / 2) * roomScale;
+      function placeItem(item, rs) {
+        var tw = item.width * rs, td = item.height * rs;
+        var cx = (item.x + item.width / 2) * rs, cz = (item.y + item.height / 2) * rs;
         var obj, tmpl = bank[item.type];
         if (tmpl) {
           obj = tmpl.clone();
@@ -321,10 +372,8 @@
           obj.position.y = -box2.min.y;
         } else {
           var h = TARGET_HEIGHT[item.type] || 0.8;
-          obj = new THREE.Mesh(
-            new THREE.BoxGeometry(tw, h, td),
-            new THREE.MeshLambertMaterial({ color: FALLBACK_COLOR[item.type] || 0x888888 })
-          );
+          obj = new THREE.Mesh(new THREE.BoxGeometry(tw, h, td),
+            new THREE.MeshLambertMaterial({ color: FALLBACK_COLOR[item.type] || 0x888888 }));
           obj.position.y = h / 2; obj.castShadow = true; obj.receiveShadow = true;
         }
         obj.position.x = cx; obj.position.z = cz; obj.rotation.y = -(item.rotation || 0);
@@ -337,8 +386,7 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
       });
 
-      // ── Kick off ──────────────────────────────────────────────────────────────
-      loadSequential(0);
+      loadSeq(0);
     }
   </script>
 </body>

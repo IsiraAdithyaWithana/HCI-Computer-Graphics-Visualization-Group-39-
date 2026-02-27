@@ -18,72 +18,65 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
 
   final GlobalKey<RoomCanvasState> _canvasKey = GlobalKey<RoomCanvasState>();
 
+  // ── Room dimensions in metres (1 m = 100 canvas pixels) ────────────────
+  double _roomWidthM = 6.0; // 6 m default
+  double _roomDepthM = 5.0; // 5 m default
+
+  static const double _minRoomM = 3.0;
+  static const double _maxRoomM = 15.0;
+  // 1 metre == this many canvas pixels
+  static const double _mPerPx = 100.0;
+
+  double get _roomWidthPx => _roomWidthM * _mPerPx;
+  double get _roomDepthPx => _roomDepthM * _mPerPx;
+
+  // ── 3D launchers ────────────────────────────────────────────────────────
+
   void _openRealistic3D() {
     final items = _canvasKey.currentState?.furnitureItems ?? [];
     if (items.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Add some furniture first.')),
-      );
+      _snack('Add some furniture first.');
       return;
     }
-
-    double maxX = 0, maxY = 0;
-    for (final item in items) {
-      final r = item.position.dx + item.size.width;
-      final b = item.position.dy + item.size.height;
-      if (r > maxX) maxX = r;
-      if (b > maxY) maxY = b;
-    }
-
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => Realistic3DScreen(
           furniture: List.from(items),
-          roomWidth: maxX + 80,
-          roomDepth: maxY + 80,
+          roomWidth: _roomWidthPx,
+          roomDepth: _roomDepthPx,
         ),
       ),
     );
   }
+
+  void _openPreview3D() {
+    final items = _canvasKey.currentState?.furnitureItems ?? [];
+    if (items.isEmpty) {
+      _snack('Add some furniture first.');
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => Preview3DScreen(
+          furniture: List.from(items),
+          roomWidth: _roomWidthPx,
+          roomDepth: _roomDepthPx,
+        ),
+      ),
+    );
+  }
+
+  void _snack(String msg) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+
+  // ── Canvas helpers ───────────────────────────────────────────────────────
 
   void _toggleResizeSnap() {
     _canvasKey.currentState?.toggleResizeSnap();
     setState(() {});
   }
 
-  void _openPreview3D() {
-    final items = _canvasKey.currentState?.furnitureItems ?? [];
-
-    if (items.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Add some furniture first.')),
-      );
-      return;
-    }
-
-    double maxX = 0, maxY = 0;
-    for (final item in items) {
-      final right = item.position.dx + item.size.width;
-      final bottom = item.position.dy + item.size.height;
-      if (right > maxX) maxX = right;
-      if (bottom > maxY) maxY = bottom;
-    }
-
-    const padding = 80.0;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => Preview3DScreen(
-          furniture: List.from(items),
-          roomWidth: maxX + padding,
-          roomDepth: maxY + padding,
-        ),
-      ),
-    );
-  }
-
-  // Reads the current zoom level from the canvas via the GlobalKey.
   double get _canvasZoom => _canvasKey.currentState?.currentZoom ?? 1.0;
-
   String get _zoomLabel => '${(_canvasZoom * 100).round()}%';
 
   void _setZoom(double value) {
@@ -115,9 +108,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             onPressed: () {
               final json = _canvasKey.currentState?.exportToJson();
               debugPrint(json);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Layout exported to console.')),
-              );
+              _snack('Layout exported to console.');
             },
           ),
           IconButton(
@@ -126,21 +117,9 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             onPressed: () {
               const sampleJson = '''
               [
-                {
-                  "id": "1", "type": "chair",
-                  "x": 100, "y": 100, "width": 60, "height": 60,
-                  "color": 4280391411, "rotation": 0
-                },
-                {
-                  "id": "2", "type": "table",
-                  "x": 220, "y": 100, "width": 120, "height": 80,
-                  "color": 4285290483, "rotation": 0
-                },
-                {
-                  "id": "3", "type": "sofa",
-                  "x": 100, "y": 240, "width": 150, "height": 70,
-                  "color": 4278222848, "rotation": 0
-                }
+                {"id":"1","type":"chair","x":100,"y":100,"width":60,"height":60,"color":4280391411,"rotation":0},
+                {"id":"2","type":"table","x":220,"y":100,"width":120,"height":80,"color":4285290483,"rotation":0},
+                {"id":"3","type":"sofa","x":100,"y":240,"width":150,"height":70,"color":4278222848,"rotation":0}
               ]
               ''';
               _canvasKey.currentState?.loadFromJson(sampleJson);
@@ -150,54 +129,130 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       ),
       body: Row(
         children: [
-          // Tool mode sidebar
+          // ── Tool mode sidebar ──────────────────────────────────────────────
           MouseToolSidebar(
             currentMode: _currentMode,
             onModeChanged: (mode) => setState(() => _currentMode = mode),
           ),
 
-          // Furniture picker
+          // ── Left panel: furniture picker + room size controls ─────────────
           Container(
-            width: 200,
+            width: 210,
             color: Colors.grey[200],
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // ── Furniture section ──────────────────────────────────────
                 const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
                   child: Text(
                     'Furniture',
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                   ),
                 ),
-                ListTile(
-                  leading: const Icon(Icons.chair),
-                  title: const Text('Chair'),
+                _FurnitureTile(
+                  icon: Icons.chair,
+                  label: 'Chair',
                   selected: _selectedType == FurnitureType.chair,
                   onTap: () =>
                       setState(() => _selectedType = FurnitureType.chair),
                 ),
-                ListTile(
-                  leading: const Icon(Icons.table_restaurant),
-                  title: const Text('Table'),
+                _FurnitureTile(
+                  icon: Icons.table_restaurant,
+                  label: 'Table',
                   selected: _selectedType == FurnitureType.table,
                   onTap: () =>
                       setState(() => _selectedType = FurnitureType.table),
                 ),
-                ListTile(
-                  leading: const Icon(Icons.weekend),
-                  title: const Text('Sofa'),
+                _FurnitureTile(
+                  icon: Icons.weekend,
+                  label: 'Sofa',
                   selected: _selectedType == FurnitureType.sofa,
                   onTap: () =>
                       setState(() => _selectedType = FurnitureType.sofa),
                 ),
-                const Divider(),
+
+                const Divider(height: 1),
+
+                // ── Room Size section ──────────────────────────────────────
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: Row(
+                    children: [
+                      Icon(Icons.square_foot, size: 15, color: Colors.black54),
+                      SizedBox(width: 6),
+                      Text(
+                        'Room Size',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                _RoomSlider(
+                  label: 'Width',
+                  value: _roomWidthM,
+                  min: _minRoomM,
+                  max: _maxRoomM,
+                  onChanged: (v) => setState(() => _roomWidthM = v),
+                ),
+                _RoomSlider(
+                  label: 'Depth',
+                  value: _roomDepthM,
+                  min: _minRoomM,
+                  max: _maxRoomM,
+                  onChanged: (v) => setState(() => _roomDepthM = v),
+                ),
+
+                // Dimension display chip
                 Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(14, 2, 14, 10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.indigo.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Colors.indigo.withOpacity(0.25),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.straighten,
+                          size: 13,
+                          color: Colors.indigo,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${_roomWidthM.toStringAsFixed(1)} m  ×  ${_roomDepthM.toStringAsFixed(1)} m',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.indigo,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const Divider(height: 1),
+
+                // ── View 3D buttons ────────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
                   child: SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      icon: const Icon(Icons.view_in_ar, size: 18),
+                      icon: const Icon(Icons.view_in_ar, size: 17),
                       label: const Text('View 3D'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.indigo,
@@ -208,11 +263,11 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
                   child: SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      icon: const Icon(Icons.auto_awesome, size: 18),
+                      icon: const Icon(Icons.auto_awesome, size: 17),
                       label: const Text('Realistic 3D'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF6366F1),
@@ -226,7 +281,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             ),
           ),
 
-          // Canvas area — Stack so we can overlay the zoom control
+          // ── Canvas area ────────────────────────────────────────────────────
           Expanded(
             child: Stack(
               children: [
@@ -234,9 +289,11 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                   key: _canvasKey,
                   selectedType: _selectedType,
                   currentMode: _currentMode,
+                  roomWidthPx: _roomWidthPx,
+                  roomDepthPx: _roomDepthPx,
                 ),
 
-                // Zoom control — bottom right of canvas area
+                // Zoom control — bottom right
                 Positioned(
                   right: 16,
                   bottom: 16,
@@ -259,7 +316,104 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared zoom control widget — same used in 3D screen.
+// Furniture list tile
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _FurnitureTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _FurnitureTile({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      dense: true,
+      leading: Icon(icon, size: 20),
+      title: Text(label, style: const TextStyle(fontSize: 13)),
+      selected: selected,
+      selectedTileColor: Colors.indigo.withOpacity(0.1),
+      onTap: onTap,
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Room dimension slider row
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _RoomSlider extends StatelessWidget {
+  final String label;
+  final double value;
+  final double min;
+  final double max;
+  final ValueChanged<double> onChanged;
+
+  const _RoomSlider({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 2, 14, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+              Text(
+                '${value.toStringAsFixed(1)} m',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: SliderThemeData(
+              trackHeight: 2.5,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+              activeTrackColor: Colors.indigo,
+              inactiveTrackColor: Colors.grey.shade300,
+              thumbColor: Colors.indigo,
+              overlayColor: Colors.indigo.withOpacity(0.12),
+            ),
+            child: Slider(
+              value: value,
+              min: min,
+              max: max,
+              divisions: ((max - min) * 2).round(), // 0.5 m steps
+              onChanged: onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Zoom control widget
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _ZoomControl extends StatelessWidget {
@@ -286,7 +440,7 @@ class _ZoomControl extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.92),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade300, width: 1),
+        border: Border.all(color: Colors.grey.shade300),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.12),
@@ -329,7 +483,6 @@ class _ZoomControl extends StatelessWidget {
             onTap: () => onChanged((zoom + 0.1).clamp(min, max)),
           ),
           const SizedBox(width: 8),
-          // Label — tap to reset to 100%
           GestureDetector(
             onTap: onReset,
             child: Container(

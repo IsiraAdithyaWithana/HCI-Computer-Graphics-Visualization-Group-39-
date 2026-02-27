@@ -9,11 +9,15 @@ enum MouseMode { select, hand, draw }
 class RoomCanvas extends StatefulWidget {
   final FurnitureType selectedType;
   final MouseMode currentMode;
+  final double roomWidthPx;
+  final double roomDepthPx;
 
   const RoomCanvas({
     super.key,
     required this.selectedType,
     required this.currentMode,
+    this.roomWidthPx = 600,
+    this.roomDepthPx = 500,
   });
 
   @override
@@ -30,29 +34,33 @@ class RoomCanvasState extends State<RoomCanvas> {
   bool _isDragging = false;
   bool _isResizing = false;
   bool _isPanningCanvas = false;
-
   bool _isSelectingBox = false;
   Offset? _selectionStart;
   Offset? _selectionCurrent;
 
-  Offset? _hoverScreenPosition;
-  Offset? _hoverScenePosition;
-  bool _showRotateCursor = false;
-  bool _showResizeCursor = false;
-  bool _showMoveCursor = false;
+  // Cursor state via ValueNotifier — updating these never repaints furniture.
+  final _cursorPos = ValueNotifier<Offset?>(null);
+  final _cursorAsset = ValueNotifier<String?>(
+    'assets/cursors/canvas_cursor.png',
+  );
+  bool _isRotatingLive = false;
+  bool _isResizingLive = false;
+  bool _isDraggingLive = false;
 
   final double gridSize = 20;
   bool enableSnap = true;
   bool snapResizeEnabled = true;
-
   static const double _cursorSize = 32;
+
+  // Large virtual canvas — feels like infinite grey space when panning
+  static const double _canvasW = 5000;
+  static const double _canvasH = 4000;
 
   final TransformationController _transformationController =
       TransformationController();
   final FocusNode _focusNode = FocusNode();
 
   // ── Public API ─────────────────────────────────────────────────────────────
-
   bool get isSnapResizeEnabled => snapResizeEnabled;
   void toggleResizeSnap() =>
       setState(() => snapResizeEnabled = !snapResizeEnabled);
@@ -67,13 +75,10 @@ class RoomCanvasState extends State<RoomCanvas> {
     final centre = box != null
         ? Offset(box.size.width / 2, box.size.height / 2)
         : Offset.zero;
-
-    final updated = current.clone()
+    _transformationController.value = current.clone()
       ..translate(centre.dx, centre.dy)
       ..scale(ratio)
       ..translate(-centre.dx, -centre.dy);
-
-    _transformationController.value = updated;
     setState(() {});
   }
 
@@ -91,7 +96,6 @@ class RoomCanvasState extends State<RoomCanvas> {
   }
 
   // ── Coordinate helpers ─────────────────────────────────────────────────────
-
   Offset _toScene(Offset screenPos) => MatrixUtils.transformPoint(
     Matrix4.inverted(_transformationController.value),
     screenPos,
@@ -102,113 +106,100 @@ class RoomCanvasState extends State<RoomCanvas> {
     return _toScene(box.globalToLocal(globalPos));
   }
 
-  Offset _globalToLocal(Offset globalPos) {
-    final box = context.findRenderObject() as RenderBox;
-    return box.globalToLocal(globalPos);
-  }
-
-  // ── Snap helpers ───────────────────────────────────────────────────────────
-
-  double _snap(double value) =>
-      enableSnap ? (value / gridSize).round() * gridSize : value;
-
+  // ── Snap ──────────────────────────────────────────────────────────────────
+  double _snap(double v) => enableSnap ? (v / gridSize).round() * gridSize : v;
   Offset _snapOffset(Offset o) => Offset(_snap(o.dx), _snap(o.dy));
 
-  // ── Geometry helpers ───────────────────────────────────────────────────────
-
-  Offset _toLocalRotatedSpace(FurnitureModel item, Offset scenePoint) {
-    final center = Offset(
+  // ── Geometry ──────────────────────────────────────────────────────────────
+  Offset _localRotated(FurnitureModel item, Offset p) {
+    final c = Offset(
       item.position.dx + item.size.width / 2,
       item.position.dy + item.size.height / 2,
     );
-    final dx = scenePoint.dx - center.dx;
-    final dy = scenePoint.dy - center.dy;
-    final cosR = Math.cos(-item.rotation);
-    final sinR = Math.sin(-item.rotation);
+    final dx = p.dx - c.dx;
+    final dy = p.dy - c.dy;
+    final cos = Math.cos(-item.rotation);
+    final sin = Math.sin(-item.rotation);
     return Offset(
-      dx * cosR - dy * sinR + item.size.width / 2,
-      dx * sinR + dy * cosR + item.size.height / 2,
+      dx * cos - dy * sin + item.size.width / 2,
+      dx * sin + dy * cos + item.size.height / 2,
     );
   }
 
-  bool _isInsideRotated(FurnitureModel item, Offset scenePoint) {
-    final local = _toLocalRotatedSpace(item, scenePoint);
-    return local.dx >= 0 &&
-        local.dx <= item.size.width &&
-        local.dy >= 0 &&
-        local.dy <= item.size.height;
+  bool _inside(FurnitureModel item, Offset p) {
+    final l = _localRotated(item, p);
+    return l.dx >= 0 &&
+        l.dx <= item.size.width &&
+        l.dy >= 0 &&
+        l.dy <= item.size.height;
   }
 
-  bool _isOnResizeHandle(FurnitureModel item, Offset scenePoint) {
-    final local = _toLocalRotatedSpace(item, scenePoint);
-    return (local - Offset(item.size.width, item.size.height)).distance <= 18;
+  bool _onResize(FurnitureModel item, Offset p) {
+    final l = _localRotated(item, p);
+    return (l - Offset(item.size.width, item.size.height)).distance <= 18;
   }
 
-  bool _isOnRotateHandle(FurnitureModel item, Offset scenePoint) {
-    final center = Offset(
+  bool _onRotate(FurnitureModel item, Offset p) {
+    final c = Offset(
       item.position.dx + item.size.width / 2,
       item.position.dy + item.size.height / 2,
     );
     final dist = item.size.height / 2 + 25;
-    final handle = Offset(
-      center.dx + dist * Math.cos(item.rotation - 1.5708),
-      center.dy + dist * Math.sin(item.rotation - 1.5708),
+    final h = Offset(
+      c.dx + dist * Math.cos(item.rotation - 1.5708),
+      c.dy + dist * Math.sin(item.rotation - 1.5708),
     );
-    return (scenePoint - handle).distance <= 35;
+    return (p - h).distance <= 35;
   }
 
-  bool _isOnAnyHandle(Offset scenePos) {
-    if (selectedItem == null) return false;
-    return _isOnRotateHandle(selectedItem!, scenePos) ||
-        _isOnResizeHandle(selectedItem!, scenePos);
-  }
+  bool _onAnyHandle(Offset p) =>
+      selectedItem != null &&
+      (_onRotate(selectedItem!, p) || _onResize(selectedItem!, p));
 
-  // ── Cursor helpers ─────────────────────────────────────────────────────────
-
-  String? get _activeCursorAsset {
-    if (_showRotateCursor || _isRotating)
-      return 'assets/cursors/rotate_cursor.png';
-    if (_showResizeCursor || _isResizing)
-      return 'assets/cursors/expand_cursor.png';
-    if (_showMoveCursor || _isDragging) return 'assets/cursors/move_cursor.png';
-    if (_hoverScreenPosition != null) return 'assets/cursors/canvas_cursor.png';
-    return null;
-  }
-
-  void _updateCursorFlags(Offset scenePos) {
-    _showRotateCursor = false;
-    _showResizeCursor = false;
-    _showMoveCursor = false;
-
+  // ── Cursor (ValueNotifier = zero furniture-repaint on hover) ─────────────
+  void _updateCursor(Offset scenePos, Offset localPos) {
+    _cursorPos.value = localPos;
+    if (_isRotatingLive) {
+      _cursorAsset.value = 'assets/cursors/rotate_cursor.png';
+      return;
+    }
+    if (_isResizingLive) {
+      _cursorAsset.value = 'assets/cursors/expand_cursor.png';
+      return;
+    }
+    if (_isDraggingLive) {
+      _cursorAsset.value = 'assets/cursors/move_cursor.png';
+      return;
+    }
     if (selectedItem != null) {
-      if (_isOnRotateHandle(selectedItem!, scenePos)) {
-        _showRotateCursor = true;
+      if (_onRotate(selectedItem!, scenePos)) {
+        _cursorAsset.value = 'assets/cursors/rotate_cursor.png';
         return;
       }
-      if (_isOnResizeHandle(selectedItem!, scenePos)) {
-        _showResizeCursor = true;
+      if (_onResize(selectedItem!, scenePos)) {
+        _cursorAsset.value = 'assets/cursors/expand_cursor.png';
         return;
       }
     }
     for (final item in furnitureItems.reversed) {
-      if (_isInsideRotated(item, scenePos)) {
-        _showMoveCursor = true;
+      if (_inside(item, scenePos)) {
+        _cursorAsset.value = 'assets/cursors/move_cursor.png';
         return;
       }
     }
+    _cursorAsset.value = 'assets/cursors/canvas_cursor.png';
   }
 
-  // ── Context menu ───────────────────────────────────────────────────────────
-
-  void _showContextMenu(Offset globalPosition) async {
+  // ── Context menu ──────────────────────────────────────────────────────────
+  void _showContextMenu(Offset globalPos) async {
     if (selectedItem == null) return;
     final result = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
-        globalPosition.dx,
-        globalPosition.dy,
-        globalPosition.dx,
-        globalPosition.dy,
+        globalPos.dx,
+        globalPos.dy,
+        globalPos.dx,
+        globalPos.dy,
       ),
       items: const [
         PopupMenuItem(value: 'delete', child: Text('Delete')),
@@ -216,7 +207,6 @@ class RoomCanvasState extends State<RoomCanvas> {
         PopupMenuItem(value: 'rotate', child: Text('Rotate 90°')),
       ],
     );
-
     if (result == 'delete') {
       setState(() {
         furnitureItems.removeWhere((i) => selectedItems.contains(i));
@@ -241,10 +231,9 @@ class RoomCanvasState extends State<RoomCanvas> {
     }
   }
 
-  // ── Furniture defaults ─────────────────────────────────────────────────────
-
-  Size _defaultSize(FurnitureType type) {
-    switch (type) {
+  // ── Defaults ──────────────────────────────────────────────────────────────
+  Size _defaultSize(FurnitureType t) {
+    switch (t) {
       case FurnitureType.chair:
         return const Size(60, 60);
       case FurnitureType.table:
@@ -254,8 +243,8 @@ class RoomCanvasState extends State<RoomCanvas> {
     }
   }
 
-  Color _defaultColor(FurnitureType type) {
-    switch (type) {
+  Color _defaultColor(FurnitureType t) {
+    switch (t) {
       case FurnitureType.chair:
         return const Color(0xFF8B6F47);
       case FurnitureType.table:
@@ -275,13 +264,8 @@ class RoomCanvasState extends State<RoomCanvas> {
       );
 
   // ── Build ──────────────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
-    final cursorAsset = _activeCursorAsset;
-    final showCursorOverlay =
-        cursorAsset != null && _hoverScreenPosition != null;
-
     return RawKeyboardListener(
       focusNode: _focusNode,
       autofocus: true,
@@ -299,40 +283,38 @@ class RoomCanvasState extends State<RoomCanvas> {
       child: MouseRegion(
         cursor: SystemMouseCursors.none,
         onHover: (event) {
-          final scene = _toScene(event.localPosition);
-          setState(() {
-            _hoverScenePosition = scene;
-            _hoverScreenPosition = event.localPosition;
-            _updateCursorFlags(scene);
-          });
+          // ValueNotifier update only — furniture CustomPaint NOT redrawn
+          _updateCursor(_toScene(event.localPosition), event.localPosition);
         },
         onExit: (_) {
-          setState(() {
-            _hoverScenePosition = null;
-            _hoverScreenPosition = null;
-            _showRotateCursor = false;
-            _showResizeCursor = false;
-            _showMoveCursor = false;
-          });
+          _cursorPos.value = null;
+          _cursorAsset.value = null;
         },
         child: Stack(
           children: [
+            // ── InteractiveViewer ──────────────────────────────────────────
             InteractiveViewer(
               transformationController: _transformationController,
-              boundaryMargin: const EdgeInsets.all(1000),
+              boundaryMargin: const EdgeInsets.all(2000),
               minScale: 0.3,
               maxScale: 3.0,
               panEnabled: widget.currentMode == MouseMode.hand,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
-
+                // ── KEY FIX: onTapDown fires INSTANTLY, no 300ms wait ──────
                 onTapDown: (details) {
-                  if (widget.currentMode != MouseMode.select) return;
                   final scenePos = _globalToScene(details.globalPosition);
-                  if (_isOnAnyHandle(scenePos)) return;
-
+                  // Draw mode → place immediately
+                  if (widget.currentMode == MouseMode.draw) {
+                    setState(
+                      () => furnitureItems.add(_newItem(position: scenePos)),
+                    );
+                    return;
+                  }
+                  if (widget.currentMode != MouseMode.select) return;
+                  if (_onAnyHandle(scenePos)) return;
                   for (final item in furnitureItems.reversed) {
-                    if (_isInsideRotated(item, scenePos)) {
+                    if (_inside(item, scenePos)) {
                       setState(() {
                         if (HardwareKeyboard.instance.isControlPressed) {
                           selectedItems.contains(item)
@@ -356,19 +338,10 @@ class RoomCanvasState extends State<RoomCanvas> {
                     selectedItem = null;
                   });
                 },
-
-                onTapUp: (details) {
-                  if (widget.currentMode != MouseMode.draw) return;
-                  final scenePos = _globalToScene(details.globalPosition);
-                  setState(
-                    () => furnitureItems.add(_newItem(position: scenePos)),
-                  );
-                },
-
                 onSecondaryTapDown: (details) {
                   final scenePos = _globalToScene(details.globalPosition);
                   for (final item in furnitureItems.reversed) {
-                    if (_isInsideRotated(item, scenePos)) {
+                    if (_inside(item, scenePos)) {
                       setState(() {
                         selectedItem = item;
                         if (!selectedItems.contains(item)) {
@@ -382,40 +355,27 @@ class RoomCanvasState extends State<RoomCanvas> {
                     }
                   }
                 },
-
                 onPanStart: (details) {
                   if (widget.currentMode == MouseMode.hand) {
-                    setState(() {
-                      _isPanningCanvas = true;
-                      _dragStart = details.globalPosition;
-                    });
+                    setState(() => _isPanningCanvas = true);
+                    _dragStart = details.globalPosition;
                     return;
                   }
-                  final scenePos = _globalToScene(details.globalPosition);
-
-                  if (selectedItem != null &&
-                      _isOnRotateHandle(selectedItem!, scenePos)) {
-                    setState(() {
-                      _isRotating = true;
-                      _showRotateCursor = true;
-                      _showResizeCursor = false;
-                      _showMoveCursor = false;
-                    });
+                  final s = _globalToScene(details.globalPosition);
+                  if (selectedItem != null && _onRotate(selectedItem!, s)) {
+                    setState(() => _isRotating = true);
+                    _isRotatingLive = true;
+                    _cursorAsset.value = 'assets/cursors/rotate_cursor.png';
                     return;
                   }
-                  if (selectedItem != null &&
-                      _isOnResizeHandle(selectedItem!, scenePos)) {
-                    setState(() {
-                      _isResizing = true;
-                      _showResizeCursor = true;
-                      _showRotateCursor = false;
-                      _showMoveCursor = false;
-                    });
+                  if (selectedItem != null && _onResize(selectedItem!, s)) {
+                    setState(() => _isResizing = true);
+                    _isResizingLive = true;
+                    _cursorAsset.value = 'assets/cursors/expand_cursor.png';
                     return;
                   }
-
                   for (final item in furnitureItems.reversed) {
-                    if (_isInsideRotated(item, scenePos)) {
+                    if (_inside(item, s)) {
                       setState(() {
                         if (!selectedItems.contains(item)) {
                           if (!HardwareKeyboard.instance.isControlPressed)
@@ -424,79 +384,64 @@ class RoomCanvasState extends State<RoomCanvas> {
                         }
                         selectedItem = item;
                         _isDragging = true;
-                        _showMoveCursor = true;
-                        _showRotateCursor = false;
-                        _showResizeCursor = false;
                       });
-                      _dragStart = scenePos;
+                      _isDraggingLive = true;
+                      _cursorAsset.value = 'assets/cursors/move_cursor.png';
+                      _dragStart = s;
                       return;
                     }
                   }
-
                   setState(() {
                     _isSelectingBox = true;
-                    _selectionStart = scenePos;
-                    _selectionCurrent = scenePos;
+                    _selectionStart = s;
+                    _selectionCurrent = s;
                     if (widget.currentMode == MouseMode.select) {
                       selectedItems.clear();
                       selectedItem = null;
                     }
                   });
                 },
-
                 onPanUpdate: (details) {
-                  final scenePos = _globalToScene(details.globalPosition);
-                  final localPos = _globalToLocal(details.globalPosition);
-
+                  final s = _globalToScene(details.globalPosition);
+                  _cursorPos.value = (context.findRenderObject() as RenderBox?)
+                      ?.globalToLocal(details.globalPosition);
                   if (_isSelectingBox && _selectionStart != null) {
-                    setState(() {
-                      _selectionCurrent = scenePos;
-                      _hoverScreenPosition = localPos;
-                    });
+                    setState(() => _selectionCurrent = s);
                     return;
                   }
                   if (_isRotating && selectedItem != null) {
-                    final center = Offset(
+                    final c = Offset(
                       selectedItem!.position.dx + selectedItem!.size.width / 2,
                       selectedItem!.position.dy + selectedItem!.size.height / 2,
                     );
-                    setState(() {
-                      selectedItem!.rotation =
-                          Math.atan2(
-                            scenePos.dy - center.dy,
-                            scenePos.dx - center.dx,
-                          ) +
-                          1.5708;
-                      _hoverScreenPosition = localPos;
-                    });
+                    setState(
+                      () => selectedItem!.rotation =
+                          Math.atan2(s.dy - c.dy, s.dx - c.dx) + 1.5708,
+                    );
                     return;
                   }
                   if (_isResizing && selectedItem != null) {
-                    final local = _toLocalRotatedSpace(selectedItem!, scenePos);
-                    double w = local.dx.clamp(40.0, 800.0);
-                    double h = local.dy.clamp(40.0, 800.0);
+                    final l = _localRotated(selectedItem!, s);
+                    double w = l.dx.clamp(40.0, 800.0);
+                    double h = l.dy.clamp(40.0, 800.0);
                     if (snapResizeEnabled) {
                       w = _snap(w);
                       h = _snap(h);
                     }
-                    setState(() {
-                      selectedItem!.size = Size(w, h);
-                      _hoverScreenPosition = localPos;
-                    });
+                    setState(() => selectedItem!.size = Size(w, h));
                     return;
                   }
                   if (_isDragging &&
                       selectedItems.isNotEmpty &&
                       _dragStart != null) {
-                    final delta = scenePos - _dragStart!;
+                    final delta = s - _dragStart!;
                     setState(() {
                       for (final item in selectedItems) item.position += delta;
-                      _hoverScreenPosition = localPos;
                     });
-                    _dragStart = scenePos;
+                    _dragStart = s;
                     return;
                   }
-                  if (_isPanningCanvas && _dragStart != null) {
+                  if (_isPanningCanvas) {
                     final scale = _transformationController.value
                         .getMaxScaleOnAxis();
                     _transformationController.value =
@@ -504,13 +449,11 @@ class RoomCanvasState extends State<RoomCanvas> {
                           details.delta.dx / scale,
                           details.delta.dy / scale,
                         );
-                    _dragStart = details.globalPosition;
-                    setState(() => _hoverScreenPosition = localPos);
                   }
                 },
-
                 onPanEnd: (_) {
                   if (widget.currentMode == MouseMode.draw &&
+                      _isSelectingBox &&
                       _selectionStart != null &&
                       _selectionCurrent != null) {
                     final rect = Rect.fromPoints(
@@ -518,8 +461,8 @@ class RoomCanvasState extends State<RoomCanvas> {
                       _selectionCurrent!,
                     );
                     if (rect.width.abs() > 10 && rect.height.abs() > 10) {
-                      setState(() {
-                        furnitureItems.add(
+                      setState(
+                        () => furnitureItems.add(
                           _newItem(
                             position: rect.topLeft,
                             size: Size(
@@ -527,8 +470,8 @@ class RoomCanvasState extends State<RoomCanvas> {
                               _snap(rect.height.abs()),
                             ),
                           ),
-                        );
-                      });
+                        ),
+                      );
                     }
                   }
                   if (widget.currentMode == MouseMode.select &&
@@ -569,62 +512,75 @@ class RoomCanvasState extends State<RoomCanvas> {
                     });
                   }
                   setState(() {
-                    _isRotating = false;
-                    _isDragging = false;
-                    _isResizing = false;
-                    _isPanningCanvas = false;
-                    _isSelectingBox = false;
-                    _selectionStart = null;
-                    _selectionCurrent = null;
-                    _showRotateCursor = false;
-                    _showResizeCursor = false;
-                    _showMoveCursor = false;
+                    _isRotating = _isDragging = _isResizing = _isPanningCanvas =
+                        _isSelectingBox = false;
+                    _selectionStart = _selectionCurrent = null;
                   });
+                  _isRotatingLive = _isResizingLive = _isDraggingLive = false;
                   _dragStart = null;
+                  _cursorAsset.value = 'assets/cursors/canvas_cursor.png';
                 },
-
-                child: Stack(
-                  children: [
-                    CustomPaint(
-                      painter: RoomPainter(furnitureItems, selectedItems),
-                      size: Size.infinite,
-                    ),
-                    if (_isSelectingBox &&
-                        _selectionStart != null &&
-                        _selectionCurrent != null)
-                      CustomPaint(
-                        painter: MarqueePainter(
-                          _selectionStart!,
-                          _selectionCurrent!,
+                child: SizedBox(
+                  width: _canvasW,
+                  height: _canvasH,
+                  // RepaintBoundary: furniture layer never repaints on hover
+                  child: RepaintBoundary(
+                    child: Stack(
+                      children: [
+                        CustomPaint(
+                          painter: RoomPainter(
+                            furnitureItems: furnitureItems,
+                            selectedItems: selectedItems,
+                            roomWidth: widget.roomWidthPx,
+                            roomDepth: widget.roomDepthPx,
+                            canvasW: _canvasW,
+                            canvasH: _canvasH,
+                          ),
+                          size: const Size(_canvasW, _canvasH),
                         ),
-                        size: Size.infinite,
-                      ),
-                  ],
-                ),
-              ),
-            ),
-
-            Positioned.fill(
-              child: IgnorePointer(
-                child: MouseRegion(cursor: SystemMouseCursors.none),
-              ),
-            ),
-
-            if (showCursorOverlay)
-              Positioned(
-                left: _hoverScreenPosition!.dx - _cursorSize / 2,
-                top: _hoverScreenPosition!.dy - _cursorSize / 2,
-                width: _cursorSize,
-                height: _cursorSize,
-                child: IgnorePointer(
-                  child: Image.asset(
-                    cursorAsset!,
-                    width: _cursorSize,
-                    height: _cursorSize,
-                    fit: BoxFit.contain,
+                        if (_isSelectingBox &&
+                            _selectionStart != null &&
+                            _selectionCurrent != null)
+                          CustomPaint(
+                            painter: MarqueePainter(
+                              _selectionStart!,
+                              _selectionCurrent!,
+                            ),
+                            size: const Size(_canvasW, _canvasH),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ),
+            ),
+            // ── Cursor overlay — only this rebuilds on hover ───────────────
+            ValueListenableBuilder<Offset?>(
+              valueListenable: _cursorPos,
+              builder: (_, pos, __) {
+                if (pos == null) return const SizedBox.shrink();
+                return ValueListenableBuilder<String?>(
+                  valueListenable: _cursorAsset,
+                  builder: (_, asset, __) {
+                    if (asset == null) return const SizedBox.shrink();
+                    return Positioned(
+                      left: pos.dx - _cursorSize / 2,
+                      top: pos.dy - _cursorSize / 2,
+                      width: _cursorSize,
+                      height: _cursorSize,
+                      child: IgnorePointer(
+                        child: Image.asset(
+                          asset,
+                          width: _cursorSize,
+                          height: _cursorSize,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
           ],
         ),
       ),
@@ -633,27 +589,87 @@ class RoomCanvasState extends State<RoomCanvas> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RoomPainter — draws furniture as recognisable 2D shapes, not plain boxes.
-// ─────────────────────────────────────────────────────────────────────────────
-
 class RoomPainter extends CustomPainter {
   final List<FurnitureModel> furnitureItems;
   final List<FurnitureModel> selectedItems;
+  final double roomWidth, roomDepth, canvasW, canvasH;
 
-  RoomPainter(this.furnitureItems, this.selectedItems);
+  const RoomPainter({
+    required this.furnitureItems,
+    required this.selectedItems,
+    required this.roomWidth,
+    required this.roomDepth,
+    required this.canvasW,
+    required this.canvasH,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    // ── Grid ────────────────────────────────────────────────────────────────
-    final gridPaint = Paint()
-      ..color = Colors.grey.withOpacity(0.13)
-      ..strokeWidth = 1;
-    for (double x = 0; x < size.width; x += 20)
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
-    for (double y = 0; y < size.height; y += 20)
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+    // Grey infinite background
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, canvasW, canvasH),
+      Paint()..color = const Color(0xFFBABCC4),
+    );
 
-    // ── Furniture ────────────────────────────────────────────────────────────
+    final rr = Rect.fromLTWH(0, 0, roomWidth, roomDepth);
+
+    // White room floor
+    canvas.drawRect(rr, Paint()..color = const Color(0xFFFAF8F5));
+
+    // Grid confined to room
+    canvas.save();
+    canvas.clipRect(rr);
+    final gp = Paint()
+      ..color = Colors.grey.withOpacity(0.22)
+      ..strokeWidth = 1;
+    for (double x = 0; x <= roomWidth; x += 20)
+      canvas.drawLine(Offset(x, 0), Offset(x, roomDepth), gp);
+    for (double y = 0; y <= roomDepth; y += 20)
+      canvas.drawLine(Offset(0, y), Offset(roomWidth, y), gp);
+    canvas.restore();
+
+    // Shadow under room
+    canvas.drawRect(
+      rr.inflate(2),
+      Paint()
+        ..color = Colors.black.withOpacity(0.18)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
+    );
+
+    // Wall border
+    canvas.drawRect(
+      rr,
+      Paint()
+        ..color = const Color(0xFF4A4A5A)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 8,
+    );
+
+    // Corner dots
+    final cp = Paint()..color = const Color(0xFF4A4A5A);
+    for (final c in [
+      Offset(0, 0),
+      Offset(roomWidth, 0),
+      Offset(0, roomDepth),
+      Offset(roomWidth, roomDepth),
+    ])
+      canvas.drawCircle(c, 5, cp);
+
+    // Dimension labels
+    _dimLabel(
+      canvas,
+      '${(roomWidth / 100).toStringAsFixed(1)} m',
+      Offset(roomWidth / 2, roomDepth + 20),
+      false,
+    );
+    _dimLabel(
+      canvas,
+      '${(roomDepth / 100).toStringAsFixed(1)} m',
+      Offset(roomWidth + 20, roomDepth / 2),
+      true,
+    );
+
+    // Furniture
     for (final item in furnitureItems) {
       canvas.save();
       canvas.translate(
@@ -662,38 +678,32 @@ class RoomPainter extends CustomPainter {
       );
       canvas.rotate(item.rotation);
       canvas.translate(-item.size.width / 2, -item.size.height / 2);
-
       switch (item.type) {
         case FurnitureType.chair:
-          _drawChair(canvas, item);
+          _chair(canvas, item);
           break;
         case FurnitureType.table:
-          _drawTable(canvas, item);
+          _table(canvas, item);
           break;
         case FurnitureType.sofa:
-          _drawSofa(canvas, item);
+          _sofa(canvas, item);
           break;
       }
-
-      // ── Selection handles ─────────────────────────────────────────────────
       if (selectedItems.contains(item)) {
-        // Selection border
         canvas.drawRect(
           Rect.fromLTWH(-2, -2, item.size.width + 4, item.size.height + 4),
           Paint()
-            ..color = Colors.blue.withOpacity(0.7)
+            ..color = Colors.blue.withOpacity(.7)
             ..style = PaintingStyle.stroke
             ..strokeWidth = 2,
         );
-        // Rotate handle stem
         canvas.drawLine(
           Offset(item.size.width / 2, 0),
           Offset(item.size.width / 2, -25),
           Paint()
-            ..color = Colors.blue.withOpacity(0.5)
+            ..color = Colors.blue.withOpacity(.5)
             ..strokeWidth = 1.5,
         );
-        // Rotate handle circle
         canvas.drawCircle(
           Offset(item.size.width / 2, -25),
           10,
@@ -707,7 +717,6 @@ class RoomPainter extends CustomPainter {
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1.5,
         );
-        // Resize handle
         canvas.drawCircle(
           Offset(item.size.width, item.size.height),
           10,
@@ -722,310 +731,242 @@ class RoomPainter extends CustomPainter {
             ..strokeWidth = 1.5,
         );
       }
-
       canvas.restore();
     }
   }
 
-  // ── Chair: seat rectangle + back bar + 4 leg dots ─────────────────────────
-  void _drawChair(Canvas canvas, FurnitureModel item) {
+  void _dimLabel(Canvas canvas, String t, Offset pos, bool rot) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: t,
+        style: const TextStyle(
+          color: Color(0xFF44445A),
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    canvas.save();
+    canvas.translate(pos.dx, pos.dy);
+    if (rot) canvas.rotate(-Math.pi / 2);
+    tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
+    canvas.restore();
+  }
+
+  void _chair(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
     final c = item.color;
-
-    final seatPaint = Paint()..color = c;
-    final darkPaint = Paint()..color = _darken(c, 0.3);
-    final shadowPaint = Paint()..color = Colors.black.withOpacity(0.15);
-    final outlinePaint = Paint()
-      ..color = _darken(c, 0.45)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2;
-
-    // Drop shadow
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(3, 3, w, h),
         const Radius.circular(4),
       ),
-      shadowPaint,
+      Paint()..color = Colors.black.withOpacity(.15),
     );
-
-    // Back rest (top 22% of height)
-    final backH = h * 0.22;
+    final bH = h * .22;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, backH),
+        Rect.fromLTWH(0, 0, w, bH),
         const Radius.circular(3),
       ),
-      darkPaint,
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, backH),
-        const Radius.circular(3),
-      ),
-      outlinePaint,
-    );
-
-    // Seat (remaining 78%)
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, backH, w, h - backH),
-        const Radius.circular(3),
-      ),
-      seatPaint,
+      Paint()..color = _dk(c, .3),
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, backH, w, h - backH),
+        Rect.fromLTWH(0, bH, w, h - bH),
         const Radius.circular(3),
       ),
-      outlinePaint,
+      Paint()..color = c,
     );
-
-    // Seat cushion line
-    canvas.drawLine(
-      Offset(w * 0.1, backH + (h - backH) * 0.5),
-      Offset(w * 0.9, backH + (h - backH) * 0.5),
-      Paint()
-        ..color = _darken(c, 0.15)
-        ..strokeWidth = 1.0,
-    );
-
-    // Four legs (small filled circles at corners)
-    final legR = w * 0.07;
-    final legPaint = Paint()..color = _darken(c, 0.5);
-    for (final pos in [
-      Offset(w * 0.12, h * 0.85),
-      Offset(w * 0.88, h * 0.85),
-      Offset(w * 0.12, h * 0.97),
-      Offset(w * 0.88, h * 0.97),
-    ]) {
-      canvas.drawCircle(pos, legR, legPaint);
-    }
-
-    // Label
-    _drawLabel(canvas, 'CHAIR', w, h, c);
-  }
-
-  // ── Table: surface + 4 corner legs + grain lines ─────────────────────────
-  void _drawTable(Canvas canvas, FurnitureModel item) {
-    final w = item.size.width;
-    final h = item.size.height;
-    final c = item.color;
-
-    final topPaint = Paint()..color = c;
-    final legPaint = Paint()..color = _darken(c, 0.35);
-    final shadowPaint = Paint()..color = Colors.black.withOpacity(0.15);
-    final outlinePaint = Paint()
-      ..color = _darken(c, 0.4)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2;
-
-    // Drop shadow
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(4, 4, w, h),
-        const Radius.circular(3),
-      ),
-      shadowPaint,
-    );
-
-    // Leg insets (small rectangles at each corner)
-    final legW = w * 0.10;
-    final legH = h * 0.14;
-    for (final pos in [
-      Offset(0, 0),
-      Offset(w - legW, 0),
-      Offset(0, h - legH),
-      Offset(w - legW, h - legH),
-    ]) {
-      canvas.drawRect(Rect.fromLTWH(pos.dx, pos.dy, legW, legH), legPaint);
-    }
-
-    // Table surface
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(legW * 0.3, legH * 0.3, w - legW * 0.6, h - legH * 0.6),
-        const Radius.circular(3),
-      ),
-      topPaint,
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(legW * 0.3, legH * 0.3, w - legW * 0.6, h - legH * 0.6),
-        const Radius.circular(3),
-      ),
-      outlinePaint,
-    );
-
-    // Wood grain lines
-    final grainPaint = Paint()
-      ..color = _darken(c, 0.1)
-      ..strokeWidth = 0.8;
-    for (int i = 1; i < 4; i++) {
-      final y = h * 0.2 + (h * 0.6 / 4) * i;
-      canvas.drawLine(
-        Offset(legW * 0.5, y),
-        Offset(w - legW * 0.5, y),
-        grainPaint,
+    for (final r in [
+      Rect.fromLTWH(0, 0, w, bH),
+      Rect.fromLTWH(0, bH, w, h - bH),
+    ])
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(r, const Radius.circular(3)),
+        Paint()
+          ..color = _dk(c, .45)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2,
       );
-    }
-
-    _drawLabel(canvas, 'TABLE', w, h, c);
+    canvas.drawLine(
+      Offset(w * .1, bH + (h - bH) * .5),
+      Offset(w * .9, bH + (h - bH) * .5),
+      Paint()
+        ..color = _dk(c, .15)
+        ..strokeWidth = 1,
+    );
+    final lp = Paint()..color = _dk(c, .5);
+    for (final p in [
+      Offset(w * .12, h * .85),
+      Offset(w * .88, h * .85),
+      Offset(w * .12, h * .97),
+      Offset(w * .88, h * .97),
+    ])
+      canvas.drawCircle(p, w * .07, lp);
+    _lbl(canvas, 'CHAIR', w, h);
   }
 
-  // ── Sofa: base + 2 armrests + back rest + 3 cushions ─────────────────────
-  void _drawSofa(Canvas canvas, FurnitureModel item) {
+  void _table(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
     final c = item.color;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(4, 4, w, h),
+        const Radius.circular(3),
+      ),
+      Paint()..color = Colors.black.withOpacity(.15),
+    );
+    final lW = w * .10;
+    final lH = h * .14;
+    final lp = Paint()..color = _dk(c, .35);
+    for (final p in [
+      Offset(0, 0),
+      Offset(w - lW, 0),
+      Offset(0, h - lH),
+      Offset(w - lW, h - lH),
+    ])
+      canvas.drawRect(Rect.fromLTWH(p.dx, p.dy, lW, lH), lp);
+    final sr = Rect.fromLTWH(lW * .3, lH * .3, w - lW * .6, h - lH * .6);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(sr, const Radius.circular(3)),
+      Paint()..color = c,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(sr, const Radius.circular(3)),
+      Paint()
+        ..color = _dk(c, .4)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2,
+    );
+    final gp = Paint()
+      ..color = _dk(c, .1)
+      ..strokeWidth = .8;
+    for (int i = 1; i < 4; i++) {
+      final y = h * .2 + (h * .6 / 4) * i;
+      canvas.drawLine(Offset(lW * .5, y), Offset(w - lW * .5, y), gp);
+    }
+    _lbl(canvas, 'TABLE', w, h);
+  }
 
-    final basePaint = Paint()..color = _darken(c, 0.2);
-    final seatPaint = Paint()..color = c;
-    final armPaint = Paint()..color = _darken(c, 0.3);
-    final shadowPaint = Paint()..color = Colors.black.withOpacity(0.15);
-    final outlinePaint = Paint()
-      ..color = _darken(c, 0.45)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2;
-
-    // Drop shadow
+  void _sofa(Canvas canvas, FurnitureModel item) {
+    final w = item.size.width;
+    final h = item.size.height;
+    final c = item.color;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(4, 4, w, h),
         const Radius.circular(5),
       ),
-      shadowPaint,
+      Paint()..color = Colors.black.withOpacity(.15),
     );
-
-    // Base rectangle (full size)
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(0, 0, w, h),
         const Radius.circular(5),
       ),
-      basePaint,
+      Paint()..color = _dk(c, .2),
     );
-
-    // Back rest (top 28%)
-    final backH = h * 0.28;
+    final bH = h * .28;
+    final aW = w * .10;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, backH),
+        Rect.fromLTWH(0, 0, w, bH),
         const Radius.circular(5),
       ),
-      armPaint,
+      Paint()..color = _dk(c, .3),
     );
-
-    // Left armrest
-    final armW = w * 0.10;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, backH, armW, h - backH),
+        Rect.fromLTWH(0, bH, aW, h - bH),
         const Radius.circular(3),
       ),
-      armPaint,
+      Paint()..color = _dk(c, .3),
     );
-
-    // Right armrest
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(w - armW, backH, armW, h - backH),
+        Rect.fromLTWH(w - aW, bH, aW, h - bH),
         const Radius.circular(3),
       ),
-      armPaint,
+      Paint()..color = _dk(c, .3),
     );
-
-    // Seat area
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(armW, backH, w - armW * 2, h - backH),
+        Rect.fromLTWH(aW, bH, w - aW * 2, h - bH),
         const Radius.circular(3),
       ),
-      seatPaint,
+      Paint()..color = c,
     );
-
-    // Three cushion dividers
-    final seatW = w - armW * 2;
-    final divPaint = Paint()
-      ..color = _darken(c, 0.2)
+    final sW = w - aW * 2;
+    final dp = Paint()
+      ..color = _dk(c, .2)
       ..strokeWidth = 1.2;
     canvas.drawLine(
-      Offset(armW + seatW / 3, backH + 4),
-      Offset(armW + seatW / 3, h - 4),
-      divPaint,
+      Offset(aW + sW / 3, bH + 4),
+      Offset(aW + sW / 3, h - 4),
+      dp,
     );
     canvas.drawLine(
-      Offset(armW + seatW * 2 / 3, backH + 4),
-      Offset(armW + seatW * 2 / 3, h - 4),
-      divPaint,
+      Offset(aW + sW * 2 / 3, bH + 4),
+      Offset(aW + sW * 2 / 3, h - 4),
+      dp,
     );
-
-    // Outer outline
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(0, 0, w, h),
         const Radius.circular(5),
       ),
-      outlinePaint,
+      Paint()
+        ..color = _dk(c, .45)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2,
     );
-
-    _drawLabel(canvas, 'SOFA', w, h, c);
+    _lbl(canvas, 'SOFA', w, h);
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  Color _dk(Color c, double a) => Color.fromARGB(
+    c.alpha,
+    (c.red * (1 - a)).round().clamp(0, 255),
+    (c.green * (1 - a)).round().clamp(0, 255),
+    (c.blue * (1 - a)).round().clamp(0, 255),
+  );
 
-  Color _darken(Color color, double amount) {
-    return Color.fromARGB(
-      color.alpha,
-      (color.red * (1 - amount)).round().clamp(0, 255),
-      (color.green * (1 - amount)).round().clamp(0, 255),
-      (color.blue * (1 - amount)).round().clamp(0, 255),
-    );
-  }
-
-  void _drawLabel(
-    Canvas canvas,
-    String text,
-    double w,
-    double h,
-    Color baseColor,
-  ) {
+  void _lbl(Canvas canvas, String text, double w, double h) {
     final tp = TextPainter(
       text: TextSpan(
         text: text,
         style: TextStyle(
-          color: Colors.white.withOpacity(0.75),
-          fontSize: (w * 0.13).clamp(8.0, 13.0),
+          color: Colors.white.withOpacity(.75),
+          fontSize: (w * .13).clamp(8.0, 13.0),
           fontWeight: FontWeight.bold,
-          letterSpacing: 0.5,
-          shadows: [Shadow(color: Colors.black38, blurRadius: 2)],
+          letterSpacing: .5,
+          shadows: const [Shadow(color: Colors.black38, blurRadius: 2)],
         ),
       ),
       textDirection: TextDirection.ltr,
     )..layout(maxWidth: w);
-
     tp.paint(canvas, Offset(w / 2 - tp.width / 2, h / 2 - tp.height / 2));
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  bool shouldRepaint(covariant RoomPainter old) =>
+      old.roomWidth != roomWidth ||
+      old.roomDepth != roomDepth ||
+      old.furnitureItems != furnitureItems ||
+      old.selectedItems != selectedItems;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MarqueePainter
-// ─────────────────────────────────────────────────────────────────────────────
-
 class MarqueePainter extends CustomPainter {
-  final Offset start;
-  final Offset end;
-  MarqueePainter(this.start, this.end);
-
+  final Offset start, end;
+  const MarqueePainter(this.start, this.end);
   @override
   void paint(Canvas canvas, Size size) {
     final rect = Rect.fromPoints(start, end);
-    canvas.drawRect(rect, Paint()..color = Colors.blue.withOpacity(0.12));
+    canvas.drawRect(rect, Paint()..color = Colors.blue.withOpacity(.10));
     canvas.drawRect(
       rect,
       Paint()
@@ -1036,5 +977,6 @@ class MarqueePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  bool shouldRepaint(covariant MarqueePainter old) =>
+      old.start != start || old.end != end;
 }
