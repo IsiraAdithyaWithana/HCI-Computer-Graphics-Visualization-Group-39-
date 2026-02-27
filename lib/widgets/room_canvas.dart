@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/furniture_model.dart';
@@ -49,6 +50,13 @@ class RoomCanvasState extends State<RoomCanvas> {
 
   // Draw-mode: saved on onTapDown, cleared by onPanStart so drag never also creates a point-item
   Offset? _drawTapPos;
+
+  // Trackpad state
+  double _trackpadLastScale = 1.0;
+  bool _isTrackpadActive =
+      false; // blocks GestureDetector pan during touchpad gestures
+  Offset _trackpadFocal =
+      Offset.zero; // fixed focal point captured at gesture start
 
   final double gridSize = 20;
   bool enableSnap = true;
@@ -293,329 +301,426 @@ class RoomCanvasState extends State<RoomCanvas> {
           _cursorPos.value = null;
           _cursorAsset.value = null;
         },
-        child: Stack(
-          children: [
-            // ── InteractiveViewer ──────────────────────────────────────────
-            ColoredBox(
-              color: const Color(
-                0xFFBABCC4,
-              ), // same grey as the canvas background
-              child: InteractiveViewer(
-                transformationController: _transformationController,
-                boundaryMargin: const EdgeInsets.all(2000),
-                minScale: 0.3,
-                maxScale: 3.0,
-                panEnabled: widget.currentMode == MouseMode.hand,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  // onTapDown fires instantly (no 300ms wait).
-                  // Draw mode: save position and wait for onTapUp.
-                  // If a pan starts first, onPanStart clears _drawTapPos so
-                  // the point-item is never created, only the marquee item is.
-                  onTapDown: (details) {
-                    final scenePos = _globalToScene(details.globalPosition);
-                    if (widget.currentMode == MouseMode.draw) {
-                      // Just save — don't create yet. onTapUp will create if no
-                      // pan started; onPanStart will clear this if drag begins.
-                      _drawTapPos = scenePos;
-                      return;
-                    }
-                    if (widget.currentMode != MouseMode.select) return;
-                    if (_onAnyHandle(scenePos)) return;
-                    for (final item in furnitureItems.reversed) {
-                      if (_inside(item, scenePos)) {
-                        setState(() {
-                          if (HardwareKeyboard.instance.isControlPressed) {
-                            selectedItems.contains(item)
-                                ? selectedItems.remove(item)
-                                : selectedItems.add(item);
-                            selectedItem = item;
-                          } else if (selectedItems.contains(item)) {
-                            selectedItem = item;
-                          } else {
-                            selectedItems
-                              ..clear()
-                              ..add(item);
-                            selectedItem = item;
-                          }
-                        });
+        child: Listener(
+          onPointerSignal: _onPointerSignal,
+          onPointerPanZoomStart: _onTrackpadStart,
+          onPointerPanZoomUpdate: _onTrackpadUpdate,
+          onPointerPanZoomEnd: _onTrackpadEnd,
+          child: Stack(
+            children: [
+              // ── InteractiveViewer ──────────────────────────────────────────
+              ColoredBox(
+                color: const Color(
+                  0xFFBABCC4,
+                ), // same grey as the canvas background
+                child: InteractiveViewer(
+                  transformationController: _transformationController,
+                  boundaryMargin: const EdgeInsets.all(2000),
+                  minScale: 0.3,
+                  maxScale: 3.0,
+                  panEnabled: false, // handled manually in onPanUpdate
+                  scaleEnabled:
+                      false, // handled manually via Listener to avoid conflicts
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    // onTapDown fires instantly (no 300ms wait).
+                    // Draw mode: save position and wait for onTapUp.
+                    // If a pan starts first, onPanStart clears _drawTapPos so
+                    // the point-item is never created, only the marquee item is.
+                    onTapDown: (details) {
+                      final scenePos = _globalToScene(details.globalPosition);
+                      if (widget.currentMode == MouseMode.draw) {
+                        // Just save — don't create yet. onTapUp will create if no
+                        // pan started; onPanStart will clear this if drag begins.
+                        _drawTapPos = scenePos;
                         return;
                       }
-                    }
-                    setState(() {
-                      selectedItems.clear();
-                      selectedItem = null;
-                    });
-                  },
-                  // Draw mode single-click: create here only if no pan started.
-                  onTapUp: (details) {
-                    if (widget.currentMode == MouseMode.draw &&
-                        _drawTapPos != null) {
-                      setState(
-                        () => furnitureItems.add(
-                          _newItem(position: _drawTapPos!),
-                        ),
-                      );
+                      if (widget.currentMode != MouseMode.select) return;
+                      if (_onAnyHandle(scenePos)) return;
+                      for (final item in furnitureItems.reversed) {
+                        if (_inside(item, scenePos)) {
+                          setState(() {
+                            if (HardwareKeyboard.instance.isControlPressed) {
+                              selectedItems.contains(item)
+                                  ? selectedItems.remove(item)
+                                  : selectedItems.add(item);
+                              selectedItem = item;
+                            } else if (selectedItems.contains(item)) {
+                              selectedItem = item;
+                            } else {
+                              selectedItems
+                                ..clear()
+                                ..add(item);
+                              selectedItem = item;
+                            }
+                          });
+                          return;
+                        }
+                      }
+                      setState(() {
+                        selectedItems.clear();
+                        selectedItem = null;
+                      });
+                    },
+                    // Draw mode single-click: create here only if no pan started.
+                    onTapUp: (details) {
+                      if (widget.currentMode == MouseMode.draw &&
+                          _drawTapPos != null) {
+                        setState(
+                          () => furnitureItems.add(
+                            _newItem(position: _drawTapPos!),
+                          ),
+                        );
+                        _drawTapPos = null;
+                      }
+                    },
+                    onSecondaryTapDown: (details) {
+                      final scenePos = _globalToScene(details.globalPosition);
+                      for (final item in furnitureItems.reversed) {
+                        if (_inside(item, scenePos)) {
+                          setState(() {
+                            selectedItem = item;
+                            if (!selectedItems.contains(item)) {
+                              selectedItems
+                                ..clear()
+                                ..add(item);
+                            }
+                          });
+                          _showContextMenu(details.globalPosition);
+                          return;
+                        }
+                      }
+                    },
+                    onPanStart: (details) {
+                      // Ignore mouse-gesture pan events during touchpad gesture —
+                      // trackpad pan/zoom is handled entirely by the Listener above.
+                      if (_isTrackpadActive) return;
+                      // Cancel any pending draw-mode tap so dragging never ALSO
+                      // creates a point-item at the press position.
                       _drawTapPos = null;
-                    }
-                  },
-                  onSecondaryTapDown: (details) {
-                    final scenePos = _globalToScene(details.globalPosition);
-                    for (final item in furnitureItems.reversed) {
-                      if (_inside(item, scenePos)) {
-                        setState(() {
-                          selectedItem = item;
-                          if (!selectedItems.contains(item)) {
-                            selectedItems
-                              ..clear()
-                              ..add(item);
-                          }
-                        });
-                        _showContextMenu(details.globalPosition);
+                      if (widget.currentMode == MouseMode.hand) {
+                        setState(() => _isPanningCanvas = true);
+                        _dragStart = details.globalPosition;
                         return;
                       }
-                    }
-                  },
-                  onPanStart: (details) {
-                    // Cancel any pending draw-mode tap so dragging never ALSO
-                    // creates a point-item at the press position.
-                    _drawTapPos = null;
-                    if (widget.currentMode == MouseMode.hand) {
-                      setState(() => _isPanningCanvas = true);
-                      _dragStart = details.globalPosition;
-                      return;
-                    }
-                    final s = _globalToScene(details.globalPosition);
-                    if (selectedItem != null && _onRotate(selectedItem!, s)) {
-                      setState(() => _isRotating = true);
-                      _isRotatingLive = true;
-                      _cursorAsset.value = 'assets/cursors/rotate_cursor.png';
-                      return;
-                    }
-                    if (selectedItem != null && _onResize(selectedItem!, s)) {
-                      setState(() => _isResizing = true);
-                      _isResizingLive = true;
-                      _cursorAsset.value = 'assets/cursors/expand_cursor.png';
-                      return;
-                    }
-                    for (final item in furnitureItems.reversed) {
-                      if (_inside(item, s)) {
+                      final s = _globalToScene(details.globalPosition);
+                      if (selectedItem != null && _onRotate(selectedItem!, s)) {
+                        setState(() => _isRotating = true);
+                        _isRotatingLive = true;
+                        _cursorAsset.value = 'assets/cursors/rotate_cursor.png';
+                        return;
+                      }
+                      if (selectedItem != null && _onResize(selectedItem!, s)) {
+                        setState(() => _isResizing = true);
+                        _isResizingLive = true;
+                        _cursorAsset.value = 'assets/cursors/expand_cursor.png';
+                        return;
+                      }
+                      for (final item in furnitureItems.reversed) {
+                        if (_inside(item, s)) {
+                          setState(() {
+                            if (!selectedItems.contains(item)) {
+                              if (!HardwareKeyboard.instance.isControlPressed)
+                                selectedItems.clear();
+                              selectedItems.add(item);
+                            }
+                            selectedItem = item;
+                            _isDragging = true;
+                          });
+                          _isDraggingLive = true;
+                          _cursorAsset.value = 'assets/cursors/move_cursor.png';
+                          _dragStart = s;
+                          return;
+                        }
+                      }
+                      setState(() {
+                        _isSelectingBox = true;
+                        _selectionStart = s;
+                        _selectionCurrent = s;
+                        if (widget.currentMode == MouseMode.select) {
+                          selectedItems.clear();
+                          selectedItem = null;
+                        }
+                      });
+                      // Reset cursor so it doesn't stay stuck on move/rotate icon
+                      _cursorAsset.value = 'assets/cursors/canvas_cursor.png';
+                    },
+                    onPanUpdate: (details) {
+                      if (_isTrackpadActive) return;
+                      final s = _globalToScene(details.globalPosition);
+                      _cursorPos.value =
+                          (context.findRenderObject() as RenderBox?)
+                              ?.globalToLocal(details.globalPosition);
+                      if (_isSelectingBox && _selectionStart != null) {
+                        setState(() => _selectionCurrent = s);
+                        return;
+                      }
+                      if (_isRotating && selectedItem != null) {
+                        final c = Offset(
+                          selectedItem!.position.dx +
+                              selectedItem!.size.width / 2,
+                          selectedItem!.position.dy +
+                              selectedItem!.size.height / 2,
+                        );
+                        setState(
+                          () => selectedItem!.rotation =
+                              Math.atan2(s.dy - c.dy, s.dx - c.dx) + 1.5708,
+                        );
+                        return;
+                      }
+                      if (_isResizing && selectedItem != null) {
+                        final l = _localRotated(selectedItem!, s);
+                        double w = l.dx.clamp(40.0, 800.0);
+                        double h = l.dy.clamp(40.0, 800.0);
+                        if (snapResizeEnabled) {
+                          w = _snap(w);
+                          h = _snap(h);
+                        }
+                        setState(() => selectedItem!.size = Size(w, h));
+                        return;
+                      }
+                      if (_isDragging &&
+                          selectedItems.isNotEmpty &&
+                          _dragStart != null) {
+                        final delta = s - _dragStart!;
                         setState(() {
-                          if (!selectedItems.contains(item)) {
-                            if (!HardwareKeyboard.instance.isControlPressed)
-                              selectedItems.clear();
-                            selectedItems.add(item);
-                          }
-                          selectedItem = item;
-                          _isDragging = true;
+                          for (final item in selectedItems)
+                            item.position += delta;
                         });
-                        _isDraggingLive = true;
-                        _cursorAsset.value = 'assets/cursors/move_cursor.png';
                         _dragStart = s;
                         return;
                       }
-                    }
-                    setState(() {
-                      _isSelectingBox = true;
-                      _selectionStart = s;
-                      _selectionCurrent = s;
-                      if (widget.currentMode == MouseMode.select) {
-                        selectedItems.clear();
-                        selectedItem = null;
+                      if (_isPanningCanvas) {
+                        // details.delta is already in scene coordinates (Flutter divides
+                        // by scale during hit-testing for widgets inside InteractiveViewer).
+                        // Dividing by scale again was causing 0.5x movement when zoomed in
+                        // and 2x movement when zoomed out.
+                        _transformationController.value =
+                            _transformationController.value.clone()
+                              ..translate(details.delta.dx, details.delta.dy);
                       }
-                    });
-                    // Reset cursor so it doesn't stay stuck on move/rotate icon
-                    _cursorAsset.value = 'assets/cursors/canvas_cursor.png';
-                  },
-                  onPanUpdate: (details) {
-                    final s = _globalToScene(details.globalPosition);
-                    _cursorPos.value =
-                        (context.findRenderObject() as RenderBox?)
-                            ?.globalToLocal(details.globalPosition);
-                    if (_isSelectingBox && _selectionStart != null) {
-                      setState(() => _selectionCurrent = s);
-                      return;
-                    }
-                    if (_isRotating && selectedItem != null) {
-                      final c = Offset(
-                        selectedItem!.position.dx +
-                            selectedItem!.size.width / 2,
-                        selectedItem!.position.dy +
-                            selectedItem!.size.height / 2,
-                      );
-                      setState(
-                        () => selectedItem!.rotation =
-                            Math.atan2(s.dy - c.dy, s.dx - c.dx) + 1.5708,
-                      );
-                      return;
-                    }
-                    if (_isResizing && selectedItem != null) {
-                      final l = _localRotated(selectedItem!, s);
-                      double w = l.dx.clamp(40.0, 800.0);
-                      double h = l.dy.clamp(40.0, 800.0);
-                      if (snapResizeEnabled) {
-                        w = _snap(w);
-                        h = _snap(h);
-                      }
-                      setState(() => selectedItem!.size = Size(w, h));
-                      return;
-                    }
-                    if (_isDragging &&
-                        selectedItems.isNotEmpty &&
-                        _dragStart != null) {
-                      final delta = s - _dragStart!;
-                      setState(() {
-                        for (final item in selectedItems)
-                          item.position += delta;
-                      });
-                      _dragStart = s;
-                      return;
-                    }
-                    if (_isPanningCanvas) {
-                      final scale = _transformationController.value
-                          .getMaxScaleOnAxis();
-                      _transformationController.value =
-                          _transformationController.value.clone()..translate(
-                            details.delta.dx / scale,
-                            details.delta.dy / scale,
-                          );
-                    }
-                  },
-                  onPanEnd: (_) {
-                    if (widget.currentMode == MouseMode.draw &&
-                        _isSelectingBox &&
-                        _selectionStart != null &&
-                        _selectionCurrent != null) {
-                      final rect = Rect.fromPoints(
-                        _selectionStart!,
-                        _selectionCurrent!,
-                      );
-                      if (rect.width.abs() > 10 && rect.height.abs() > 10) {
-                        setState(
-                          () => furnitureItems.add(
-                            _newItem(
-                              position: rect.topLeft,
-                              size: Size(
-                                _snap(rect.width.abs()),
-                                _snap(rect.height.abs()),
-                              ),
-                            ),
-                          ),
+                    },
+                    onPanEnd: (_) {
+                      if (_isTrackpadActive) return;
+                      if (widget.currentMode == MouseMode.draw &&
+                          _isSelectingBox &&
+                          _selectionStart != null &&
+                          _selectionCurrent != null) {
+                        final rect = Rect.fromPoints(
+                          _selectionStart!,
+                          _selectionCurrent!,
                         );
-                      }
-                    }
-                    if (widget.currentMode == MouseMode.select &&
-                        _isSelectingBox &&
-                        _selectionStart != null &&
-                        _selectionCurrent != null) {
-                      final rect = Rect.fromPoints(
-                        _selectionStart!,
-                        _selectionCurrent!,
-                      );
-                      setState(() {
-                        selectedItems = furnitureItems
-                            .where(
-                              (item) => rect.overlaps(
-                                Rect.fromLTWH(
-                                  item.position.dx,
-                                  item.position.dy,
-                                  item.size.width,
-                                  item.size.height,
+                        if (rect.width.abs() > 10 && rect.height.abs() > 10) {
+                          setState(
+                            () => furnitureItems.add(
+                              _newItem(
+                                position: rect.topLeft,
+                                size: Size(
+                                  _snap(rect.width.abs()),
+                                  _snap(rect.height.abs()),
                                 ),
                               ),
-                            )
-                            .toList();
-                        selectedItem = selectedItems.isNotEmpty
-                            ? selectedItems.last
-                            : null;
-                      });
-                    }
-                    if (selectedItems.isNotEmpty) {
-                      setState(() {
-                        for (final item in selectedItems) {
-                          item.position = _snapOffset(item.position);
-                          item.size = Size(
-                            _snap(item.size.width).clamp(40.0, 800.0),
-                            _snap(item.size.height).clamp(40.0, 800.0),
+                            ),
                           );
                         }
+                      }
+                      if (widget.currentMode == MouseMode.select &&
+                          _isSelectingBox &&
+                          _selectionStart != null &&
+                          _selectionCurrent != null) {
+                        final rect = Rect.fromPoints(
+                          _selectionStart!,
+                          _selectionCurrent!,
+                        );
+                        setState(() {
+                          selectedItems = furnitureItems
+                              .where(
+                                (item) => rect.overlaps(
+                                  Rect.fromLTWH(
+                                    item.position.dx,
+                                    item.position.dy,
+                                    item.size.width,
+                                    item.size.height,
+                                  ),
+                                ),
+                              )
+                              .toList();
+                          selectedItem = selectedItems.isNotEmpty
+                              ? selectedItems.last
+                              : null;
+                        });
+                      }
+                      if (selectedItems.isNotEmpty) {
+                        setState(() {
+                          for (final item in selectedItems) {
+                            item.position = _snapOffset(item.position);
+                            item.size = Size(
+                              _snap(item.size.width).clamp(40.0, 800.0),
+                              _snap(item.size.height).clamp(40.0, 800.0),
+                            );
+                          }
+                        });
+                      }
+                      setState(() {
+                        _isRotating = _isDragging = _isResizing =
+                            _isPanningCanvas = _isSelectingBox = false;
+                        _selectionStart = _selectionCurrent = null;
                       });
-                    }
-                    setState(() {
-                      _isRotating = _isDragging = _isResizing =
-                          _isPanningCanvas = _isSelectingBox = false;
-                      _selectionStart = _selectionCurrent = null;
-                    });
-                    _isRotatingLive = _isResizingLive = _isDraggingLive = false;
-                    _dragStart = null;
-                    _cursorAsset.value = 'assets/cursors/canvas_cursor.png';
-                  },
-                  child: SizedBox(
-                    width: _canvasW,
-                    height: _canvasH,
-                    // RepaintBoundary: furniture layer never repaints on hover
-                    child: RepaintBoundary(
-                      child: Stack(
-                        children: [
-                          CustomPaint(
-                            painter: RoomPainter(
-                              furnitureItems: furnitureItems,
-                              selectedItems: selectedItems,
-                              roomWidth: widget.roomWidthPx,
-                              roomDepth: widget.roomDepthPx,
-                              canvasW: _canvasW,
-                              canvasH: _canvasH,
-                            ),
-                            size: const Size(_canvasW, _canvasH),
-                          ),
-                          if (_isSelectingBox &&
-                              _selectionStart != null &&
-                              _selectionCurrent != null)
+                      _isRotatingLive = _isResizingLive = _isDraggingLive =
+                          false;
+                      _dragStart = null;
+                      _cursorAsset.value = 'assets/cursors/canvas_cursor.png';
+                    },
+                    child: SizedBox(
+                      width: _canvasW,
+                      height: _canvasH,
+                      // RepaintBoundary: furniture layer never repaints on hover
+                      child: RepaintBoundary(
+                        child: Stack(
+                          children: [
                             CustomPaint(
-                              painter: MarqueePainter(
-                                _selectionStart!,
-                                _selectionCurrent!,
+                              painter: RoomPainter(
+                                furnitureItems: furnitureItems,
+                                selectedItems: selectedItems,
+                                roomWidth: widget.roomWidthPx,
+                                roomDepth: widget.roomDepthPx,
+                                canvasW: _canvasW,
+                                canvasH: _canvasH,
                               ),
                               size: const Size(_canvasW, _canvasH),
                             ),
-                        ],
+                            if (_isSelectingBox &&
+                                _selectionStart != null &&
+                                _selectionCurrent != null)
+                              CustomPaint(
+                                painter: MarqueePainter(
+                                  _selectionStart!,
+                                  _selectionCurrent!,
+                                ),
+                                size: const Size(_canvasW, _canvasH),
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ), // InteractiveViewer
-            ), // ColoredBox
-            // ── Cursor overlay — only this rebuilds on hover ───────────────
-            ValueListenableBuilder<Offset?>(
-              valueListenable: _cursorPos,
-              builder: (_, pos, __) {
-                if (pos == null) return const SizedBox.shrink();
-                return ValueListenableBuilder<String?>(
-                  valueListenable: _cursorAsset,
-                  builder: (_, asset, __) {
-                    if (asset == null) return const SizedBox.shrink();
-                    return Positioned(
-                      left: pos.dx - _cursorSize / 2,
-                      top: pos.dy - _cursorSize / 2,
-                      width: _cursorSize,
-                      height: _cursorSize,
-                      child: IgnorePointer(
-                        child: Image.asset(
-                          asset,
-                          width: _cursorSize,
-                          height: _cursorSize,
-                          fit: BoxFit.contain,
+                ), // InteractiveViewer
+              ), // ColoredBox
+              // ── Cursor overlay — only this rebuilds on hover ───────────────
+              ValueListenableBuilder<Offset?>(
+                valueListenable: _cursorPos,
+                builder: (_, pos, __) {
+                  if (pos == null) return const SizedBox.shrink();
+                  return ValueListenableBuilder<String?>(
+                    valueListenable: _cursorAsset,
+                    builder: (_, asset, __) {
+                      if (asset == null) return const SizedBox.shrink();
+                      return Positioned(
+                        left: pos.dx - _cursorSize / 2,
+                        top: pos.dy - _cursorSize / 2,
+                        width: _cursorSize,
+                        height: _cursorSize,
+                        child: IgnorePointer(
+                          child: Image.asset(
+                            asset,
+                            width: _cursorSize,
+                            height: _cursorSize,
+                            fit: BoxFit.contain,
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-          ],
-        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ], // Stack children
+          ), // Stack
+        ), // Listener
       ),
     );
+  }
+
+  // ── Mouse wheel zoom ───────────────────────────────────────────────────────
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is PointerScrollEvent) {
+      final factor = event.scrollDelta.dy < 0 ? 1.10 : 0.90;
+      _zoomAround(factor, event.localPosition);
+    }
+  }
+
+  // ── Touchpad: two-finger pan + pinch zoom ──────────────────────────────────
+  void _onTrackpadStart(PointerPanZoomStartEvent event) {
+    _trackpadLastScale = 1.0;
+    _isTrackpadActive = true;
+    // Capture the focal point NOW and keep it fixed for the whole gesture.
+    // event.localPosition is the pointer centroid — stable at gesture start.
+    _trackpadFocal = event.localPosition;
+    // Hide custom cursor during touchpad gesture
+    _cursorPos.value = null;
+    _cursorAsset.value = null;
+  }
+
+  void _onTrackpadUpdate(PointerPanZoomUpdateEvent event) {
+    // Two-finger drag → pan canvas
+    // Apply pan delta only — do NOT mix pan + zoom in same frame to avoid drift
+    if (event.panDelta != Offset.zero) {
+      final scale = _transformationController.value.getMaxScaleOnAxis();
+      _transformationController.value = _transformationController.value.clone()
+        ..translate(event.panDelta.dx / scale, event.panDelta.dy / scale);
+    }
+    // Pinch → zoom around the FIXED focal point captured at gesture start
+    if (event.scale > 0 && event.scale != _trackpadLastScale) {
+      final delta = event.scale / _trackpadLastScale;
+      _trackpadLastScale = event.scale;
+      // Use _trackpadFocal (fixed) not event.localPosition (drifts every frame)
+      _zoomAroundNoCursor(delta, _trackpadFocal);
+    }
+    setState(() {}); // refresh zoom % label in parent
+  }
+
+  void _onTrackpadEnd(PointerPanZoomEndEvent event) {
+    _isTrackpadActive = false;
+    _trackpadLastScale = 1.0;
+    _trackpadFocal = Offset.zero;
+    // Restore cursor — next onHover will set the exact position
+    _cursorAsset.value = 'assets/cursors/canvas_cursor.png';
+  }
+
+  // Scale the view by [factor] keeping [screenFocal] stationary.
+  // Used by mouse wheel — updates cursor normally.
+  void _zoomAround(double factor, Offset screenFocal) {
+    _zoomAroundNoCursor(factor, screenFocal);
+  }
+
+  // Same zoom math but does NOT touch _cursorPos.
+  // Used by touchpad pinch so the cursor overlay doesn't jump.
+  //
+  // Uses direct analytic formula — no matrix inversion needed:
+  //   viewport_point = scale * scene_point + translate
+  //   → scene_focal = (viewport_focal - translate) / scale
+  //   → new_translate = viewport_focal - new_scale * scene_focal
+  //                   = (1 - f) * viewport_focal + f * old_translate
+  // where f = new_scale / old_scale (the actual zoom factor after clamping).
+  void _zoomAroundNoCursor(double factor, Offset screenFocal) {
+    final current = _transformationController.value;
+    final scale = current.getMaxScaleOnAxis();
+    final clamped = (scale * factor).clamp(0.3, 3.0);
+    if ((clamped - scale).abs() < 0.0001) return;
+    final f = clamped / scale; // actual factor after clamping
+
+    // Read current translation directly from matrix storage (column-major: [12]=tx, [13]=ty)
+    final tx = current.storage[12];
+    final ty = current.storage[13];
+
+    // Compute new translation so screenFocal stays fixed
+    final newTx = (1.0 - f) * screenFocal.dx + f * tx;
+    final newTy = (1.0 - f) * screenFocal.dy + f * ty;
+
+    // Build a clean scale+translate matrix (no accumulated Z drift)
+    _transformationController.value = Matrix4.identity()
+      ..scale(clamped, clamped, 1.0)
+      ..setTranslationRaw(newTx, newTy, 0.0);
+    setState(() {});
   }
 }
 
