@@ -195,12 +195,63 @@
       };
       controls.update();
 
-      // ── FIX: Intercept wheel events on the canvas so touchpad scroll zooms ───
-      // WebView2 sometimes consumes wheel events before Three.js sees them.
-      // We re-dispatch them with preventDefault to force OrbitControls to handle them.
+      // ── Flutter touchpad bridge ───────────────────────────────────────────────
+      var _tpStartDist = 0;  // camera distance from target captured at gesture start
+      var _tpFocalX = 0, _tpFocalY = 0;
+
+      window._flutterTouchpad = function (type, x, y, scale, panDx, panDy) {
+
+        if (type === 'start') {
+          _tpStartDist = camera.position.distanceTo(controls.target);
+          _tpFocalX = x; _tpFocalY = y;
+          return;
+        }
+        if (type === 'end') {
+          _tpStartDist = 0;
+          return;
+        }
+
+        // type === 'update'
+        var dist = camera.position.distanceTo(controls.target);
+
+        // Decide gesture type: if scale has deviated >3% from 1.0 it's a pinch,
+        // otherwise treat as pure pan. Never mix both — pan during pinch = chaos.
+        var isPinch = Math.abs(scale - 1.0) > 0.03;
+
+        if (!isPinch && (panDx !== 0 || panDy !== 0)) {
+          // Pure two-finger pan
+          var panSpeed = dist * 0.004;
+          var right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
+          var up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
+          var delta = new THREE.Vector3()
+            .addScaledVector(right, -panDx * panSpeed)
+            .addScaledVector(up, panDy * panSpeed);
+          camera.position.add(delta);
+          controls.target.add(delta);
+        }
+
+        if (isPinch && _tpStartDist > 0) {
+          // Pinch zoom — cumulative scale from start, no per-frame drift
+          // scale>1 = fingers spreading = zoom in (smaller distance)
+          var newDist = Math.max(controls.minDistance,
+            Math.min(controls.maxDistance, _tpStartDist / scale));
+          var dir = camera.position.clone().sub(controls.target).normalize();
+          camera.position.copy(controls.target).addScaledVector(dir, newDist);
+        }
+
+        controls.update();
+      };
+
+      // ── Mouse scroll wheel → zoom (WebView2 does forward regular wheel events) ─
+      controls.enableZoom = false; // we handle zoom ourselves below
       renderer.domElement.addEventListener('wheel', function (e) {
         e.preventDefault();
-        e.stopPropagation();
+        var dist = camera.position.distanceTo(controls.target);
+        var factor = 1.0 + e.deltaY * 0.003;
+        var newD = Math.max(controls.minDistance, Math.min(controls.maxDistance, dist * factor));
+        var dir = camera.position.clone().sub(controls.target).normalize();
+        camera.position.copy(controls.target).addScaledVector(dir, newD);
+        controls.update();
       }, { passive: false });
 
       // ── Keyboard controls ─────────────────────────────────────────────────────
@@ -209,15 +260,58 @@
       window.addEventListener('keyup', function (e) { keys[e.key] = false; });
 
       function handleKeys() {
-        var speed = 0.05;
-        if (keys['w'] || keys['W']) controls.dollyIn(1 + speed);
-        if (keys['s'] || keys['S']) controls.dollyOut(1 + speed);
-        if (keys['a'] || keys['A']) { controls.rotateLeft(speed); }
-        if (keys['d'] || keys['D']) { controls.rotateLeft(-speed); }
-        if (keys['ArrowLeft']) controls.truck(-speed * 2, 0);
-        if (keys['ArrowRight']) controls.truck(speed * 2, 0);
-        if (keys['ArrowUp']) controls.truck(0, -speed * 2);
-        if (keys['ArrowDown']) controls.truck(0, speed * 2);
+        var anyKey = false;
+        for (var k in keys) { if (keys[k]) { anyKey = true; break; } }
+        if (!anyKey) return;
+
+        var dist = camera.position.distanceTo(controls.target);
+        var zSpeed = dist * 0.025;
+        var panSpeed = dist * 0.015;
+        var rotSpeed = 0.03;
+
+        // W/S zoom
+        if (keys['w'] || keys['W']) {
+          var dir = camera.position.clone().sub(controls.target).normalize();
+          var newD = Math.max(controls.minDistance, dist - zSpeed);
+          camera.position.copy(controls.target).addScaledVector(dir, newD);
+        }
+        if (keys['s'] || keys['S']) {
+          var dir2 = camera.position.clone().sub(controls.target).normalize();
+          var newD2 = Math.min(controls.maxDistance, dist + zSpeed);
+          camera.position.copy(controls.target).addScaledVector(dir2, newD2);
+        }
+
+        // A/D orbit around Y
+        if (keys['a'] || keys['A']) {
+          var o = camera.position.clone().sub(controls.target);
+          var c = Math.cos(rotSpeed), s = Math.sin(rotSpeed);
+          camera.position.set(
+            controls.target.x + o.x * c - o.z * s,
+            camera.position.y,
+            controls.target.z + o.x * s + o.z * c
+          );
+        }
+        if (keys['d'] || keys['D']) {
+          var o2 = camera.position.clone().sub(controls.target);
+          var c2 = Math.cos(-rotSpeed), s2 = Math.sin(-rotSpeed);
+          camera.position.set(
+            controls.target.x + o2.x * c2 - o2.z * s2,
+            camera.position.y,
+            controls.target.z + o2.x * s2 + o2.z * c2
+          );
+        }
+
+        // Arrow pan
+        if (keys['ArrowLeft'] || keys['ArrowRight'] || keys['ArrowUp'] || keys['ArrowDown']) {
+          var right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
+          var up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
+          if (keys['ArrowLeft']) { camera.position.addScaledVector(right, -panSpeed); controls.target.addScaledVector(right, -panSpeed); }
+          if (keys['ArrowRight']) { camera.position.addScaledVector(right, panSpeed); controls.target.addScaledVector(right, panSpeed); }
+          if (keys['ArrowUp']) { camera.position.addScaledVector(up, panSpeed); controls.target.addScaledVector(up, panSpeed); }
+          if (keys['ArrowDown']) { camera.position.addScaledVector(up, -panSpeed); controls.target.addScaledVector(up, -panSpeed); }
+        }
+
+        controls.update();
       }
 
       // ── Lights ────────────────────────────────────────────────────────────────

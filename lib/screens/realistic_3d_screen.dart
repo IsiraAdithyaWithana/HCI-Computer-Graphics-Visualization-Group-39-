@@ -98,11 +98,39 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
       ),
       body: Stack(
         children: [
-          // ── THE FIX ────────────────────────────────────────────────────────
-          // Webview inside a Stack gets *loose* constraints and defaults to
-          // zero size → black screen.  Positioned.fill gives it *tight*
-          // constraints that match the full Stack area, so it actually renders.
-          Positioned.fill(child: Webview(_controller)),
+          // ── WebView ────────────────────────────────────────────────────────
+          // Positioned.fill gives tight constraints so it doesn't collapse to 0x0.
+          // Listener intercepts PointerPanZoomEvents (touchpad two-finger gestures)
+          // which Flutter never forwards to native WebView2 -- we bridge them
+          // ourselves via executeScript so Three.js can react.
+          Positioned.fill(
+            child: Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerPanZoomStart: (e) {
+                if (!_sceneReady) return;
+                _controller.executeScript(
+                  'window._flutterTouchpad&&window._flutterTouchpad("start",'
+                  '${e.localPosition.dx},${e.localPosition.dy},1.0,0.0,0.0);',
+                );
+              },
+              onPointerPanZoomUpdate: (e) {
+                if (!_sceneReady) return;
+                _controller.executeScript(
+                  'window._flutterTouchpad&&window._flutterTouchpad("update",'
+                  '${e.localPosition.dx},${e.localPosition.dy},'
+                  '${e.scale},${e.panDelta.dx},${e.panDelta.dy});',
+                );
+              },
+              onPointerPanZoomEnd: (e) {
+                if (!_sceneReady) return;
+                _controller.executeScript(
+                  'window._flutterTouchpad&&window._flutterTouchpad("end",'
+                  '0,0,1.0,0.0,0.0);',
+                );
+              },
+              child: Webview(_controller),
+            ),
+          ),
 
           // Flutter overlay while booting
           if (!_sceneReady)
