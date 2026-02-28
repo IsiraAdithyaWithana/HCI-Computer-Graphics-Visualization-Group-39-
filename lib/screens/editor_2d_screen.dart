@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:furniture_visualizer/widgets/mouse_tool_sidebar.dart';
 import '../widgets/room_canvas.dart';
 import '../models/furniture_model.dart';
-import '3d_preview_screen.dart';
 import 'realistic_3d_screen.dart';
 
 class Editor2DScreen extends StatefulWidget {
@@ -18,10 +17,8 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
 
   final GlobalKey<RoomCanvasState> _canvasKey = GlobalKey<RoomCanvasState>();
 
-  // ── Room dimensions in metres (1 m = 100 canvas pixels) ────────────────
   double _roomWidthM = 6.0;
   double _roomDepthM = 5.0;
-
   static const double _minRoomM = 3.0;
   static const double _maxRoomM = 15.0;
   static const double _mPerPx = 100.0;
@@ -29,12 +26,8 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   double get _roomWidthPx => _roomWidthM * _mPerPx;
   double get _roomDepthPx => _roomDepthM * _mPerPx;
 
-  // ── Zoom — kept as state so label is always live ────────────────────────
   double _canvasZoom = 1.0;
-
   String get _zoomLabel => '${(_canvasZoom * 100).round()}%';
-
-  // ── 3D launchers ────────────────────────────────────────────────────────
 
   void _openRealistic3D() {
     final items = _canvasKey.currentState?.furnitureItems ?? [];
@@ -53,42 +46,18 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
     );
   }
 
-  void _openPreview3D() {
-    final items = _canvasKey.currentState?.furnitureItems ?? [];
-    if (items.isEmpty) {
-      _snack('Add some furniture first.');
-      return;
-    }
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => Preview3DScreen(
-          furniture: List.from(items),
-          roomWidth: _roomWidthPx,
-          roomDepth: _roomDepthPx,
-        ),
-      ),
-    );
-  }
-
   void _snack(String msg) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-
-  // ── Canvas helpers ───────────────────────────────────────────────────────
 
   void _toggleResizeSnap() {
     _canvasKey.currentState?.toggleResizeSnap();
     setState(() {});
   }
 
-  /// Called by RoomCanvas whenever zoom changes (wheel, pinch, or slider).
-  void _onZoomChanged(double zoom) {
-    setState(() => _canvasZoom = zoom);
-  }
+  void _onZoomChanged(double zoom) => setState(() => _canvasZoom = zoom);
 
   void _setZoom(double value) {
     _canvasKey.currentState?.setZoom(value);
-    // Canvas's setZoom calls onZoomChanged, but update immediately for
-    // the slider drag to feel instant.
     setState(() => _canvasZoom = value);
   }
 
@@ -101,21 +70,20 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
         title: const Text('2D Room Editor'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.auto_awesome),
+            tooltip: 'Realistic 3D View',
+            onPressed: _openRealistic3D,
+          ),
+          IconButton(
             icon: Icon(snapEnabled ? Icons.grid_on : Icons.crop_free),
             tooltip: 'Toggle resize snap',
             onPressed: _toggleResizeSnap,
           ),
           IconButton(
-            icon: const Icon(Icons.view_in_ar),
-            tooltip: 'Preview in 3D',
-            onPressed: _openPreview3D,
-          ),
-          IconButton(
             icon: const Icon(Icons.save),
             tooltip: 'Export to JSON',
             onPressed: () {
-              final json = _canvasKey.currentState?.exportToJson();
-              debugPrint(json);
+              debugPrint(_canvasKey.currentState?.exportToJson());
               _snack('Layout exported to console.');
             },
           ),
@@ -123,13 +91,10 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             icon: const Icon(Icons.folder_open),
             tooltip: 'Load from JSON',
             onPressed: () {
-              const sampleJson = '''
-              [
-                {"id":"1","type":"chair","x":100,"y":100,"width":60,"height":60,"color":4280391411,"rotation":0},
-                {"id":"2","type":"table","x":220,"y":100,"width":120,"height":80,"color":4285290483,"rotation":0},
-                {"id":"3","type":"sofa","x":100,"y":240,"width":150,"height":70,"color":4278222848,"rotation":0}
-              ]
-              ''';
+              const sampleJson =
+                  '[{"id":"1","type":"chair","x":100,"y":100,"width":60,"height":60,"color":4280391411,"rotation":0},'
+                  '{"id":"2","type":"table","x":220,"y":100,"width":120,"height":80,"color":4285290483,"rotation":0},'
+                  '{"id":"3","type":"sofa","x":100,"y":240,"width":150,"height":70,"color":4278222848,"rotation":0}]';
               _canvasKey.currentState?.loadFromJson(sampleJson);
             },
           ),
@@ -137,159 +102,28 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       ),
       body: Row(
         children: [
-          // ── Tool mode sidebar ──────────────────────────────────────────────
           MouseToolSidebar(
             currentMode: _currentMode,
             onModeChanged: (mode) => setState(() => _currentMode = mode),
           ),
 
-          // ── Left panel: furniture picker + room size controls ─────────────
-          Container(
-            width: 210,
-            color: Colors.grey[200],
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // ── Furniture section ──────────────────────────────────────
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
-                  child: Text(
-                    'Furniture',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                  ),
-                ),
-                _FurnitureTile(
-                  icon: Icons.chair,
-                  label: 'Chair',
-                  selected: _selectedType == FurnitureType.chair,
-                  onTap: () =>
-                      setState(() => _selectedType = FurnitureType.chair),
-                ),
-                _FurnitureTile(
-                  icon: Icons.table_restaurant,
-                  label: 'Table',
-                  selected: _selectedType == FurnitureType.table,
-                  onTap: () =>
-                      setState(() => _selectedType = FurnitureType.table),
-                ),
-                _FurnitureTile(
-                  icon: Icons.weekend,
-                  label: 'Sofa',
-                  selected: _selectedType == FurnitureType.sofa,
-                  onTap: () =>
-                      setState(() => _selectedType = FurnitureType.sofa),
-                ),
-
-                const Divider(height: 1),
-
-                // ── Room Size section ──────────────────────────────────────
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-                  child: Row(
-                    children: [
-                      Icon(Icons.square_foot, size: 15, color: Colors.black54),
-                      SizedBox(width: 6),
-                      Text(
-                        'Room Size',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                _RoomSlider(
-                  label: 'Width',
-                  value: _roomWidthM,
-                  min: _minRoomM,
-                  max: _maxRoomM,
-                  onChanged: (v) => setState(() => _roomWidthM = v),
-                ),
-                _RoomSlider(
-                  label: 'Depth',
-                  value: _roomDepthM,
-                  min: _minRoomM,
-                  max: _maxRoomM,
-                  onChanged: (v) => setState(() => _roomDepthM = v),
-                ),
-
-                // Dimension display chip
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 2, 14, 10),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.indigo.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: Colors.indigo.withOpacity(0.25),
-                      ),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.straighten,
-                          size: 13,
-                          color: Colors.indigo,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          '${_roomWidthM.toStringAsFixed(1)} m  ×  ${_roomDepthM.toStringAsFixed(1)} m',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.indigo,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                const Divider(height: 1),
-
-                // ── View 3D buttons ────────────────────────────────────────
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 6),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.view_in_ar, size: 17),
-                      label: const Text('View 3D'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.indigo,
-                        foregroundColor: Colors.white,
-                      ),
-                      onPressed: _openPreview3D,
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.auto_awesome, size: 17),
-                      label: const Text('Realistic 3D'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6366F1),
-                        foregroundColor: Colors.white,
-                      ),
-                      onPressed: _openRealistic3D,
-                    ),
-                  ),
-                ),
-              ],
+          // ── Left panel ─────────────────────────────────────────────────────
+          SizedBox(
+            width: 220,
+            child: _LeftPanel(
+              selectedType: _selectedType,
+              onTypeChanged: (t) => setState(() => _selectedType = t),
+              roomWidthM: _roomWidthM,
+              roomDepthM: _roomDepthM,
+              minRoomM: _minRoomM,
+              maxRoomM: _maxRoomM,
+              onWidthChanged: (v) => setState(() => _roomWidthM = v),
+              onDepthChanged: (v) => setState(() => _roomDepthM = v),
+              onRealistic3D: _openRealistic3D,
             ),
           ),
 
-          // ── Canvas area ────────────────────────────────────────────────────
+          // ── Canvas ──────────────────────────────────────────────────────────
           Expanded(
             child: Stack(
               children: [
@@ -299,10 +133,8 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                   currentMode: _currentMode,
                   roomWidthPx: _roomWidthPx,
                   roomDepthPx: _roomDepthPx,
-                  onZoomChanged: _onZoomChanged, // ← live zoom updates
+                  onZoomChanged: _onZoomChanged,
                 ),
-
-                // Zoom control — bottom right
                 Positioned(
                   right: 16,
                   bottom: 16,
@@ -325,44 +157,418 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Furniture list tile
+// Left panel — scrollable, with categorised furniture + room controls
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _FurnitureTile extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
+class _LeftPanel extends StatefulWidget {
+  final FurnitureType selectedType;
+  final ValueChanged<FurnitureType> onTypeChanged;
+  final double roomWidthM, roomDepthM, minRoomM, maxRoomM;
+  final ValueChanged<double> onWidthChanged, onDepthChanged;
+  final VoidCallback onRealistic3D;
 
-  const _FurnitureTile({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
+  const _LeftPanel({
+    required this.selectedType,
+    required this.onTypeChanged,
+    required this.roomWidthM,
+    required this.roomDepthM,
+    required this.minRoomM,
+    required this.maxRoomM,
+    required this.onWidthChanged,
+    required this.onDepthChanged,
+    required this.onRealistic3D,
   });
 
   @override
+  State<_LeftPanel> createState() => _LeftPanelState();
+}
+
+class _LeftPanelState extends State<_LeftPanel> {
+  // Track which category indices are expanded
+  final Set<int> _expanded = {0}; // Seating open by default
+
+  @override
   Widget build(BuildContext context) {
-    return ListTile(
-      dense: true,
-      leading: Icon(icon, size: 20),
-      title: Text(label, style: const TextStyle(fontSize: 13)),
-      selected: selected,
-      selectedTileColor: Colors.indigo.withOpacity(0.1),
-      onTap: onTap,
+    return Container(
+      color: Colors.grey[100],
+      child: Column(
+        children: [
+          // ── Header ──────────────────────────────────────────────────────────
+          Container(
+            width: double.infinity,
+            color: Colors.grey[200],
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+            child: Row(
+              children: [
+                const Icon(Icons.chair_alt, size: 15, color: Colors.black54),
+                const SizedBox(width: 6),
+                const Text(
+                  'Furniture',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+
+          // ── Category list (scrollable) ──────────────────────────────────────
+          Expanded(
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                // Categories
+                ...List.generate(kFurnitureCategories.length, (ci) {
+                  final cat = kFurnitureCategories[ci];
+                  final isOpen = _expanded.contains(ci);
+                  // Check if any item in this cat is selected
+                  final hasSelected = cat.items.any(
+                    (i) => i.type == widget.selectedType,
+                  );
+                  return _CategorySection(
+                    category: cat,
+                    isExpanded: isOpen,
+                    hasSelectedItem: hasSelected,
+                    selectedType: widget.selectedType,
+                    onToggle: () => setState(() {
+                      isOpen ? _expanded.remove(ci) : _expanded.add(ci);
+                    }),
+                    onItemTap: widget.onTypeChanged,
+                  );
+                }),
+
+                const Divider(height: 1, thickness: 1),
+
+                // ── Room Size ──────────────────────────────────────────────────
+                Container(
+                  color: Colors.grey[200],
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.square_foot,
+                        size: 15,
+                        color: Colors.black54,
+                      ),
+                      const SizedBox(width: 6),
+                      const Text(
+                        'Room Size',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _RoomSlider(
+                  label: 'Width',
+                  value: widget.roomWidthM,
+                  min: widget.minRoomM,
+                  max: widget.maxRoomM,
+                  onChanged: widget.onWidthChanged,
+                ),
+                _RoomSlider(
+                  label: 'Depth',
+                  value: widget.roomDepthM,
+                  min: widget.minRoomM,
+                  max: widget.maxRoomM,
+                  onChanged: widget.onDepthChanged,
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 2, 12, 10),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.indigo.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Colors.indigo.withOpacity(0.25),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.straighten,
+                          size: 13,
+                          color: Colors.indigo,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${widget.roomWidthM.toStringAsFixed(1)} m  ×  ${widget.roomDepthM.toStringAsFixed(1)} m',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.indigo,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const Divider(height: 1, thickness: 1),
+
+                // ── Realistic 3D button ────────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.auto_awesome, size: 17),
+                      label: const Text('Realistic 3D View'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF6366F1),
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: widget.onRealistic3D,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Room dimension slider — click the value label to type an exact number
+// Animated category section with 2-column item grid
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CategorySection extends StatelessWidget {
+  final FurnitureCategory category;
+  final bool isExpanded;
+  final bool hasSelectedItem;
+  final FurnitureType selectedType;
+  final VoidCallback onToggle;
+  final ValueChanged<FurnitureType> onItemTap;
+
+  const _CategorySection({
+    required this.category,
+    required this.isExpanded,
+    required this.hasSelectedItem,
+    required this.selectedType,
+    required this.onToggle,
+    required this.onItemTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final accentColor = category.color;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // ── Category header ──────────────────────────────────────────────────
+        InkWell(
+          onTap: onToggle,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: isExpanded
+                  ? accentColor.withOpacity(0.08)
+                  : Colors.transparent,
+              border: Border(
+                left: BorderSide(
+                  color: isExpanded ? accentColor : Colors.transparent,
+                  width: 3,
+                ),
+              ),
+            ),
+            child: Row(
+              children: [
+                // Category icon with colored background
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: accentColor.withOpacity(isExpanded ? 0.18 : 0.10),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Icon(category.icon, size: 15, color: accentColor),
+                ),
+                const SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    category.name,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: isExpanded
+                          ? FontWeight.w700
+                          : FontWeight.w500,
+                      color: isExpanded ? accentColor : Colors.black87,
+                    ),
+                  ),
+                ),
+                // Item count badge
+                if (!isExpanded)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: hasSelectedItem
+                          ? accentColor.withOpacity(0.15)
+                          : Colors.grey.shade200,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '${category.items.length}',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: hasSelectedItem ? accentColor : Colors.black54,
+                      ),
+                    ),
+                  ),
+                const SizedBox(width: 4),
+                // Chevron
+                AnimatedRotation(
+                  turns: isExpanded ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 200),
+                  child: Icon(
+                    Icons.keyboard_arrow_down,
+                    size: 16,
+                    color: isExpanded ? accentColor : Colors.black45,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // ── Animated item grid ───────────────────────────────────────────────
+        AnimatedCrossFade(
+          firstChild: const SizedBox.shrink(),
+          secondChild: _buildGrid(accentColor),
+          crossFadeState: isExpanded
+              ? CrossFadeState.showSecond
+              : CrossFadeState.showFirst,
+          duration: const Duration(milliseconds: 200),
+          sizeCurve: Curves.easeInOut,
+        ),
+
+        // Thin separator
+        const Divider(height: 1, thickness: 1, indent: 0, endIndent: 0),
+      ],
+    );
+  }
+
+  Widget _buildGrid(Color accentColor) {
+    return Container(
+      color: accentColor.withOpacity(0.04),
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 10),
+      child: GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          crossAxisSpacing: 6,
+          mainAxisSpacing: 6,
+          childAspectRatio: 2.2,
+        ),
+        itemCount: category.items.length,
+        itemBuilder: (_, i) {
+          final item = category.items[i];
+          final isSelected = item.type == selectedType;
+          return _FurnitureGridItem(
+            item: item,
+            isSelected: isSelected,
+            accentColor: accentColor,
+            onTap: () => onItemTap(item.type),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Individual grid item tile
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _FurnitureGridItem extends StatelessWidget {
+  final FurnitureCategoryItem item;
+  final bool isSelected;
+  final Color accentColor;
+  final VoidCallback onTap;
+
+  const _FurnitureGridItem({
+    required this.item,
+    required this.isSelected,
+    required this.accentColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        decoration: BoxDecoration(
+          color: isSelected ? accentColor.withOpacity(0.15) : Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? accentColor : Colors.grey.shade300,
+            width: isSelected ? 1.5 : 1,
+          ),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: accentColor.withOpacity(.2),
+                    blurRadius: 4,
+                    offset: const Offset(0, 1),
+                  ),
+                ]
+              : [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(.04),
+                    blurRadius: 2,
+                  ),
+                ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              item.icon,
+              size: 16,
+              color: isSelected ? accentColor : Colors.black54,
+            ),
+            const SizedBox(width: 5),
+            Flexible(
+              child: Text(
+                item.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  color: isSelected ? accentColor : Colors.black87,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Room dimension slider with tap-to-edit value
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _RoomSlider extends StatefulWidget {
   final String label;
-  final double value;
-  final double min;
-  final double max;
+  final double value, min, max;
   final ValueChanged<double> onChanged;
 
   const _RoomSlider({
@@ -379,52 +585,48 @@ class _RoomSlider extends StatefulWidget {
 
 class _RoomSliderState extends State<_RoomSlider> {
   bool _editing = false;
-  late final TextEditingController _textCtrl;
-  late final FocusNode _focusNode;
+  late final TextEditingController _ctrl;
+  late final FocusNode _focus;
 
   @override
   void initState() {
     super.initState();
-    _textCtrl = TextEditingController();
-    _focusNode = FocusNode();
-    _focusNode.addListener(() {
-      // Commit when focus leaves the field
-      if (!_focusNode.hasFocus && _editing) _commit();
-    });
+    _ctrl = TextEditingController();
+    _focus = FocusNode()
+      ..addListener(() {
+        if (!_focus.hasFocus && _editing) _commit();
+      });
   }
 
   @override
   void dispose() {
-    _textCtrl.dispose();
-    _focusNode.dispose();
+    _ctrl.dispose();
+    _focus.dispose();
     super.dispose();
   }
 
   void _startEditing() {
-    _textCtrl.text = widget.value.toStringAsFixed(1);
+    _ctrl.text = widget.value.toStringAsFixed(1);
     setState(() => _editing = true);
-    // Request focus after the TextField is built
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _focusNode.requestFocus();
-      _textCtrl.selection = TextSelection(
+      _focus.requestFocus();
+      _ctrl.selection = TextSelection(
         baseOffset: 0,
-        extentOffset: _textCtrl.text.length,
+        extentOffset: _ctrl.text.length,
       );
     });
   }
 
   void _commit() {
-    final parsed = double.tryParse(_textCtrl.text.replaceAll(',', '.'));
-    if (parsed != null) {
-      widget.onChanged(parsed.clamp(widget.min, widget.max));
-    }
+    final v = double.tryParse(_ctrl.text.replaceAll(',', '.'));
+    if (v != null) widget.onChanged(v.clamp(widget.min, widget.max));
     setState(() => _editing = false);
   }
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 2, 14, 0),
+      padding: const EdgeInsets.fromLTRB(12, 2, 12, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -435,14 +637,13 @@ class _RoomSliderState extends State<_RoomSlider> {
                 widget.label,
                 style: const TextStyle(fontSize: 12, color: Colors.black54),
               ),
-              // ── Tap-to-edit value ────────────────────────────────────────
               _editing
                   ? SizedBox(
                       width: 68,
                       height: 26,
                       child: TextField(
-                        controller: _textCtrl,
-                        focusNode: _focusNode,
+                        controller: _ctrl,
+                        focusNode: _focus,
                         style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
@@ -544,13 +745,11 @@ class _RoomSliderState extends State<_RoomSlider> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Zoom control widget
+// Zoom control
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _ZoomControl extends StatelessWidget {
-  final double zoom;
-  final double min;
-  final double max;
+  final double zoom, min, max;
   final String label;
   final ValueChanged<double> onChanged;
   final VoidCallback onReset;
@@ -643,22 +842,18 @@ class _ZoomControl extends StatelessWidget {
 class _IconBtn extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
-
   const _IconBtn({required this.icon, required this.onTap});
-
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 26,
-        height: 26,
-        decoration: BoxDecoration(
-          color: Colors.grey.shade200,
-          borderRadius: BorderRadius.circular(5),
-        ),
-        child: Icon(icon, color: Colors.grey.shade700, size: 16),
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      width: 26,
+      height: 26,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade200,
+        borderRadius: BorderRadius.circular(5),
       ),
-    );
-  }
+      child: Icon(icon, color: Colors.grey.shade700, size: 16),
+    ),
+  );
 }
