@@ -62,13 +62,33 @@ flutter:
 
   # To add assets to your application, add an assets section, like this:
   assets:
+  #PNGs
     - assets/cursors/rotate_cursor.png
     - assets/cursors/expand_cursor.png
     - assets/cursors/move_cursor.png
     - assets/cursors/canvas_cursor.png
+  #3d models
     - assets/models/chair.glb
     - assets/models/table.glb
     - assets/models/sofa.glb
+    - assets/models/rug.glb
+    - assets/models/tv_stand.glb
+    - assets/models/floor_lamp.glb
+    - assets/models/plant.glb
+    - assets/models/night_stand.glb
+    - assets/models/single_bed.glb
+    - assets/models/double_bed.glb
+    - assets/models/dresser.glb
+    - assets/models/cabinet.glb
+    - assets/models/book_shelf.glb
+    - assets/models/wardrobe.glb
+    - assets/models/side_table.glb
+    - assets/models/desk.glb
+    - assets/models/coffee_table.glb
+    - assets/models/stool.glb
+    - assets/models/bench.glb
+    - assets/models/arm_chair.glb
+  #HTML and JS files for the 3D viewer
     - assets/viewer/room_viewer.html
     - assets/viewer/three.min.js
     - assets/viewer/OrbitControls.js
