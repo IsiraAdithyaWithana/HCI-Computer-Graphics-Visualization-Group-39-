@@ -19,16 +19,20 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   final GlobalKey<RoomCanvasState> _canvasKey = GlobalKey<RoomCanvasState>();
 
   // ── Room dimensions in metres (1 m = 100 canvas pixels) ────────────────
-  double _roomWidthM = 6.0; // 6 m default
-  double _roomDepthM = 5.0; // 5 m default
+  double _roomWidthM = 6.0;
+  double _roomDepthM = 5.0;
 
   static const double _minRoomM = 3.0;
   static const double _maxRoomM = 15.0;
-  // 1 metre == this many canvas pixels
   static const double _mPerPx = 100.0;
 
   double get _roomWidthPx => _roomWidthM * _mPerPx;
   double get _roomDepthPx => _roomDepthM * _mPerPx;
+
+  // ── Zoom — kept as state so label is always live ────────────────────────
+  double _canvasZoom = 1.0;
+
+  String get _zoomLabel => '${(_canvasZoom * 100).round()}%';
 
   // ── 3D launchers ────────────────────────────────────────────────────────
 
@@ -76,12 +80,16 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
     setState(() {});
   }
 
-  double get _canvasZoom => _canvasKey.currentState?.currentZoom ?? 1.0;
-  String get _zoomLabel => '${(_canvasZoom * 100).round()}%';
+  /// Called by RoomCanvas whenever zoom changes (wheel, pinch, or slider).
+  void _onZoomChanged(double zoom) {
+    setState(() => _canvasZoom = zoom);
+  }
 
   void _setZoom(double value) {
     _canvasKey.currentState?.setZoom(value);
-    setState(() {});
+    // Canvas's setZoom calls onZoomChanged, but update immediately for
+    // the slider drag to feel instant.
+    setState(() => _canvasZoom = value);
   }
 
   @override
@@ -291,6 +299,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                   currentMode: _currentMode,
                   roomWidthPx: _roomWidthPx,
                   roomDepthPx: _roomDepthPx,
+                  onZoomChanged: _onZoomChanged, // ← live zoom updates
                 ),
 
                 // Zoom control — bottom right
@@ -346,10 +355,10 @@ class _FurnitureTile extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Room dimension slider row
+// Room dimension slider — click the value label to type an exact number
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _RoomSlider extends StatelessWidget {
+class _RoomSlider extends StatefulWidget {
   final String label;
   final double value;
   final double min;
@@ -365,6 +374,54 @@ class _RoomSlider extends StatelessWidget {
   });
 
   @override
+  State<_RoomSlider> createState() => _RoomSliderState();
+}
+
+class _RoomSliderState extends State<_RoomSlider> {
+  bool _editing = false;
+  late final TextEditingController _textCtrl;
+  late final FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _textCtrl = TextEditingController();
+    _focusNode = FocusNode();
+    _focusNode.addListener(() {
+      // Commit when focus leaves the field
+      if (!_focusNode.hasFocus && _editing) _commit();
+    });
+  }
+
+  @override
+  void dispose() {
+    _textCtrl.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _startEditing() {
+    _textCtrl.text = widget.value.toStringAsFixed(1);
+    setState(() => _editing = true);
+    // Request focus after the TextField is built
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusNode.requestFocus();
+      _textCtrl.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: _textCtrl.text.length,
+      );
+    });
+  }
+
+  void _commit() {
+    final parsed = double.tryParse(_textCtrl.text.replaceAll(',', '.'));
+    if (parsed != null) {
+      widget.onChanged(parsed.clamp(widget.min, widget.max));
+    }
+    setState(() => _editing = false);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 2, 14, 0),
@@ -375,17 +432,91 @@ class _RoomSlider extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                label,
+                widget.label,
                 style: const TextStyle(fontSize: 12, color: Colors.black54),
               ),
-              Text(
-                '${value.toStringAsFixed(1)} m',
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.black87,
-                ),
-              ),
+              // ── Tap-to-edit value ────────────────────────────────────────
+              _editing
+                  ? SizedBox(
+                      width: 68,
+                      height: 26,
+                      child: TextField(
+                        controller: _textCtrl,
+                        focusNode: _focusNode,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.indigo,
+                        ),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 5,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(5),
+                            borderSide: const BorderSide(color: Colors.indigo),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(5),
+                            borderSide: const BorderSide(
+                              color: Colors.indigo,
+                              width: 1.5,
+                            ),
+                          ),
+                          suffix: const Text(
+                            ' m',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.black45,
+                            ),
+                          ),
+                        ),
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        onSubmitted: (_) => _commit(),
+                      ),
+                    )
+                  : GestureDetector(
+                      onTap: _startEditing,
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.text,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                              color: Colors.indigo.withOpacity(0.35),
+                            ),
+                            color: Colors.indigo.withOpacity(0.05),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '${widget.value.toStringAsFixed(1)} m',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.indigo,
+                                ),
+                              ),
+                              const SizedBox(width: 3),
+                              const Icon(
+                                Icons.edit,
+                                size: 10,
+                                color: Colors.indigo,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
             ],
           ),
           SliderTheme(
@@ -399,11 +530,11 @@ class _RoomSlider extends StatelessWidget {
               overlayColor: Colors.indigo.withOpacity(0.12),
             ),
             child: Slider(
-              value: value,
-              min: min,
-              max: max,
-              divisions: ((max - min) * 2).round(), // 0.5 m steps
-              onChanged: onChanged,
+              value: widget.value,
+              min: widget.min,
+              max: widget.max,
+              divisions: ((widget.max - widget.min) * 2).round(),
+              onChanged: widget.onChanged,
             ),
           ),
         ],
