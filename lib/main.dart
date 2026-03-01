@@ -1,8 +1,15 @@
 import 'package:flutter/material.dart';
 import 'screens/login_screen.dart';
+import 'services/custom_furniture_registry.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Load saved custom furniture from disk before the UI starts.
+  // This reads %APPDATA%\furniture_visualizer\custom_furniture.json
+  // so all previously added GLB models appear in the sidebar immediately.
+  await CustomFurnitureRegistry.instance.load();
+
   runApp(const FurnitureApp());
 }
 

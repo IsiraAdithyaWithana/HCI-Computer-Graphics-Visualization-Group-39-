@@ -9,11 +9,16 @@ class Realistic3DScreen extends StatefulWidget {
   final double roomWidth;
   final double roomDepth;
 
+  /// Called when the user saves a resized furniture item in the 3D view.
+  /// [id] is the FurnitureModel.id, [scaleFactor] is the multiplier applied.
+  final void Function(String id, double scaleFactor)? onSizeUpdated;
+
   const Realistic3DScreen({
     super.key,
     required this.furniture,
     required this.roomWidth,
     required this.roomDepth,
+    this.onSizeUpdated,
   });
 
   @override
@@ -30,7 +35,6 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
   @override
   void initState() {
     super.initState();
-    // Must run after first frame so Webview() widget is in the render tree.
     WidgetsBinding.instance.addPostFrameCallback((_) => _boot());
   }
 
@@ -45,6 +49,23 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
       setState(() => _statusText = 'Initialising WebView…');
       await _controller.initialize();
 
+      // ── Listen for messages from the 3D viewer ──────────────────────────
+      _controller.webMessage.listen((msg) {
+        try {
+          final data = jsonDecode(msg) as Map<String, dynamic>;
+          if (data['type'] == 'sizeUpdate') {
+            final id = data['id'] as String?;
+            final scaleFactor = (data['scaleFactor'] as num?)?.toDouble();
+            if (id != null && scaleFactor != null) {
+              widget.onSizeUpdated?.call(id, scaleFactor);
+              debugPrint('[3D→Flutter] sizeUpdate id=$id scale=$scaleFactor');
+            }
+          }
+        } catch (e) {
+          debugPrint('[3D] webMessage parse error: $e');
+        }
+      });
+
       setState(() => _statusText = 'Copying 3D assets…');
       final baseUrl = await AssetServer.start();
       debugPrint('[3D] Server: $baseUrl');
@@ -53,7 +74,6 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
       setState(() => _statusText = 'Loading 3D scene…');
       await _controller.loadUrl(url);
 
-      // Hide Flutter overlay — Three.js loading spinner inside WebView takes over
       setState(() => _sceneReady = true);
     } catch (e, st) {
       debugPrint('[3D] Error: $e\n$st');
@@ -68,12 +88,17 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
     final items = widget.furniture
         .map(
           (f) => {
+            'id': f.id, // needed for sizeUpdate mapping
             'type': f.type.name,
             'x': f.position.dx,
             'y': f.position.dy,
             'width': f.size.width,
             'height': f.size.height,
             'rotation': f.rotation,
+            'scaleFactor': f.scaleFactor, // persisted 3D scale override
+            // ── Custom furniture: tell Three.js which GLB to load ──────────
+            if (f.glbOverride != null) 'glbFile': f.glbOverride,
+            if (f.labelOverride != null) 'label': f.labelOverride,
           },
         )
         .toList();
@@ -98,11 +123,6 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
       ),
       body: Stack(
         children: [
-          // ── WebView ────────────────────────────────────────────────────────
-          // Positioned.fill gives tight constraints so it doesn't collapse to 0x0.
-          // Listener intercepts PointerPanZoomEvents (touchpad two-finger gestures)
-          // which Flutter never forwards to native WebView2 -- we bridge them
-          // ourselves via executeScript so Three.js can react.
           Positioned.fill(
             child: Listener(
               behavior: HitTestBehavior.translucent,
@@ -131,8 +151,6 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
               child: Webview(_controller),
             ),
           ),
-
-          // Flutter overlay while booting
           if (!_sceneReady)
             Positioned.fill(
               child: _Overlay(message: _statusText, hasError: _hasError),

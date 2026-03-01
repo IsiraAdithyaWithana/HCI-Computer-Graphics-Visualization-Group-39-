@@ -95,6 +95,270 @@
     #controls b {
       color: rgba(255, 255, 255, 0.75);
     }
+
+    /* ── Select Mode toggle ─────────────────────────────────────────────── */
+    #select-toggle {
+      position: fixed;
+      top: 14px;
+      right: 14px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: rgba(0, 0, 0, 0.55);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 20px;
+      padding: 7px 14px 7px 10px;
+      color: rgba(255, 255, 255, 0.65);
+      font: 12px/1 sans-serif;
+      font-weight: 500;
+      cursor: pointer;
+      z-index: 9999;
+      pointer-events: all;
+      isolation: isolate;
+      transition: background 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #select-toggle:hover {
+      background: rgba(99, 102, 241, 0.25);
+      border-color: rgba(99, 102, 241, 0.5);
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    #select-toggle.active {
+      background: rgba(99, 102, 241, 0.35);
+      border-color: rgba(99, 102, 241, 0.8);
+      color: #fff;
+      box-shadow: 0 0 16px rgba(99, 102, 241, 0.45);
+    }
+
+    #select-toggle .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.3);
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+
+    #select-toggle.active .dot {
+      background: #a5b4fc;
+      box-shadow: 0 0 6px #6366f1;
+    }
+
+    /* ── Size editor panel ──────────────────────────────────────────────── */
+    #size-panel {
+      position: fixed;
+      bottom: -220px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 360px;
+      background: rgba(10, 12, 30, 0.92);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 16px;
+      padding: 0;
+      z-index: 9999;
+      pointer-events: all;
+      isolation: isolate;
+      transition: bottom 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);
+      overflow: hidden;
+      box-shadow: 0 -4px 40px rgba(99, 102, 241, 0.2), 0 8px 32px rgba(0, 0, 0, 0.6);
+    }
+
+    #size-panel.visible {
+      bottom: 20px;
+    }
+
+    #panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    }
+
+    #panel-furniture-name {
+      font: 600 13px/1 sans-serif;
+      color: #a5b4fc;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    #panel-furniture-name::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #6366f1;
+      box-shadow: 0 0 6px #6366f1;
+    }
+
+    #panel-close {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 16px;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      line-height: 1;
+    }
+
+    #panel-close:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+    }
+
+    #panel-body {
+      padding: 14px 16px 16px;
+    }
+
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .slider-label {
+      font: 11px/1 sans-serif;
+      color: rgba(255, 255, 255, 0.45);
+      white-space: nowrap;
+      width: 38px;
+    }
+
+    #scale-slider {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 4px;
+      border-radius: 2px;
+      background: linear-gradient(to right, #6366f1 var(--pct, 30%), rgba(255, 255, 255, 0.12) var(--pct, 30%));
+      outline: none;
+      cursor: pointer;
+    }
+
+    #scale-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25), 0 2px 6px rgba(0, 0, 0, 0.4);
+      cursor: pointer;
+      transition: box-shadow 0.15s, transform 0.15s;
+    }
+
+    #scale-slider::-webkit-slider-thumb:hover {
+      box-shadow: 0 0 0 5px rgba(99, 102, 241, 0.35), 0 2px 8px rgba(0, 0, 0, 0.5);
+      transform: scale(1.1);
+    }
+
+    #scale-value-badge {
+      font: 600 12px/1 'Courier New', monospace;
+      color: #c7d2fe;
+      background: rgba(99, 102, 241, 0.15);
+      border: 1px solid rgba(99, 102, 241, 0.25);
+      border-radius: 6px;
+      padding: 4px 8px;
+      min-width: 46px;
+      text-align: center;
+    }
+
+    .scale-presets {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+
+    .preset-btn {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      color: rgba(255, 255, 255, 0.55);
+      font: 11px/1 sans-serif;
+      padding: 6px 4px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      text-align: center;
+    }
+
+    .preset-btn:hover,
+    .preset-btn.active {
+      background: rgba(99, 102, 241, 0.2);
+      border-color: rgba(99, 102, 241, 0.5);
+      color: #a5b4fc;
+    }
+
+    .panel-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    #btn-reset {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+      color: rgba(255, 255, 255, 0.55);
+      font: 12px/1 sans-serif;
+      font-weight: 600;
+      padding: 10px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    #btn-reset:hover {
+      background: rgba(255, 255, 255, 0.10);
+      color: #fff;
+    }
+
+    #btn-save {
+      flex: 2;
+      background: #6366f1;
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      font: 13px/1 sans-serif;
+      font-weight: 700;
+      padding: 10px;
+      cursor: pointer;
+      transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+      letter-spacing: 0.3px;
+    }
+
+    #btn-save:hover {
+      background: #4f52d4;
+      box-shadow: 0 4px 14px rgba(99, 102, 241, 0.5);
+    }
+
+    #btn-save:active {
+      transform: scale(0.97);
+    }
+
+    #btn-save.saved {
+      background: #16a34a;
+      box-shadow: 0 4px 14px rgba(22, 163, 74, 0.4);
+    }
+
+    /* Crosshair cursor while in select mode */
+    body.select-active canvas {
+      cursor: crosshair !important;
+    }
   </style>
 </head>
 
@@ -116,9 +380,48 @@
     W/S → Zoom &nbsp;·&nbsp; A/D → Rotate &nbsp;·&nbsp; Arrows → Pan
   </div>
 
+  <!-- Select mode toggle -->
+  <div id="select-toggle">
+    <span class="dot"></span>
+    <span id="select-toggle-label">Select &amp; Resize</span>
+  </div>
+
+  <!-- Size editor panel -->
+  <div id="size-panel">
+    <div id="panel-header">
+      <div id="panel-furniture-name">Chair</div>
+      <div id="panel-close">×</div>
+    </div>
+    <div id="panel-body">
+      <div class="slider-row">
+        <span class="slider-label">Scale</span>
+        <input type="range" id="scale-slider" min="0.2" max="3.0" step="0.05" value="1.0">
+        <span id="scale-value-badge">1.00×</span>
+      </div>
+      <div class="scale-presets">
+        <div class="preset-btn" data-preset="0.5">½×</div>
+        <div class="preset-btn" data-preset="0.75">¾×</div>
+        <div class="preset-btn active" data-preset="1.0">1×</div>
+        <div class="preset-btn" data-preset="1.5">1.5×</div>
+        <div class="preset-btn" data-preset="2.0">2×</div>
+      </div>
+      <div class="panel-actions">
+        <button id="btn-reset">↺ Reset</button>
+        <button id="btn-save">💾 Save Size</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Model cache — filled during loading phase
     var bank = {};
+
+    // Module-level scene ref — set by boot() so select-mode functions can use it
+    var _scene = null;
+    var placedItems = [];   // [{obj, data, baseScale, scaleFactor, index}]
+    var selectedEntry = null;
+    var selectionBox = null; // THREE.BoxHelper
+    var mouseDownX = 0, mouseDownY = 0;
 
     function setStatus(t, p) {
       var el = document.getElementById('load-text');
@@ -178,6 +481,7 @@
 
       // ── Scene / Camera ─────────────────────────────────────────────────────
       var scene = new THREE.Scene();
+      _scene = scene; // expose for select-mode functions
       scene.background = new THREE.Color(0x1a1a2e);
       var camera = new THREE.PerspectiveCamera(
         50, window.innerWidth / window.innerHeight, 0.1, 200
@@ -446,6 +750,7 @@
         requestAnimationFrame(loop);
         handleKeys();
         controls.update();
+        if (selectionBox) selectionBox.update();
         renderer.render(scene, camera);
       })();
 
@@ -494,12 +799,20 @@
       // ── Sequential GLB loader (same pattern as original) ───────────────────
       // Determine which models are actually needed for this payload so we don't
       // waste time loading furniture that isn't in the room.
+      // Tracks custom GLB filenames that need loading (keyed by filename)
+      var customGlbFiles = {};
+
       function getNeededTypes() {
         var payload = getPayload();
         if (!payload || !payload.items) return [];
         var seen = {};
         payload.items.forEach(function (item) {
-          if (MODEL_FILE[item.type]) seen[item.type] = true;
+          if (item.glbFile) {
+            // Custom furniture — load by filename directly
+            customGlbFiles[item.glbFile] = true;
+          } else if (MODEL_FILE[item.type]) {
+            seen[item.type] = true;
+          }
         });
         return Object.keys(seen);
       }
@@ -564,8 +877,53 @@
         var fg = new THREE.Group();
         scene.add(fg);
 
-        payload.items.forEach(function (item) {
-          fg.add(placeItem(item, rs));
+        placedItems = []; // reset on each load
+        payload.items.forEach(function (item, idx) {
+          var result = placeItem(item, rs);
+          fg.add(result.obj);
+          placedItems.push({
+            obj: result.obj,
+            data: item,
+            baseScale: result.baseScale,
+            scaleFactor: item.scaleFactor || 1.0,
+            index: idx
+          });
+        });
+
+        // ── Raycasting setup (done here so camera/scene are ready) ─────────
+        var raycaster = new THREE.Raycaster();
+        var _mouse = new THREE.Vector2();
+
+        renderer.domElement.addEventListener('mousedown', function (e) {
+          mouseDownX = e.clientX; mouseDownY = e.clientY;
+        });
+
+        renderer.domElement.addEventListener('click', function (e) {
+          if (!selectMode) return;
+          // Skip if the click target is not the canvas (UI element intercepted it)
+          if (e.target !== renderer.domElement) return;
+          var dx = e.clientX - mouseDownX, dy = e.clientY - mouseDownY;
+          if (Math.sqrt(dx * dx + dy * dy) > 6) return; // drag → skip
+
+          var rect = renderer.domElement.getBoundingClientRect();
+          _mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+          _mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+          raycaster.setFromCamera(_mouse, camera);
+
+          // Intersect all furniture objects
+          var targets = placedItems.map(function (pi) { return pi.obj; });
+          var hits = raycaster.intersectObjects(targets, true);
+
+          if (hits.length > 0) {
+            var hitMesh = hits[0].object;
+            for (var i = 0; i < placedItems.length; i++) {
+              var found = false;
+              placedItems[i].obj.traverse(function (c) { if (c === hitMesh) found = true; });
+              if (found) { selectFurniture(placedItems[i]); return; }
+            }
+          }
+          // Clicked empty space → deselect
+          deselectFurniture();
         });
 
         console.log('Scene ready — ' + payload.items.length + ' items placed');
@@ -583,7 +941,9 @@
         var cz = (item.y + item.height / 2) * rs;
 
         var obj;
-        var tmpl = bank[item.type];
+        var baseScale = 1.0;
+        // Custom furniture uses item.glbFile as bank key; built-ins use type
+        var tmpl = item.glbFile ? bank[item.glbFile] : bank[item.type];
 
         if (tmpl) {
           obj = tmpl.clone();
@@ -604,12 +964,15 @@
           var th = MODEL_HEIGHT[item.type] || 0.85;
 
           // Uniform scale: fit footprint AND height, take the smallest factor
-          // so the model never clips through walls or floor.
           var sX = sz.x > 0.001 ? tw / sz.x : 1;
           var sZ = sz.z > 0.001 ? td / sz.z : 1;
           var sY = sz.y > 0.001 ? th / sz.y : 1;
           var s = Math.min(sX, sZ, sY);
-          obj.scale.setScalar(s);
+
+          // Apply any pre-saved scale factor from the payload
+          var sf = item.scaleFactor || 1.0;
+          baseScale = s;
+          obj.scale.setScalar(s * sf);
 
           // Lift so the bottom of the model rests on the floor
           var bbox2 = new THREE.Box3().setFromObject(obj);
@@ -617,7 +980,7 @@
 
         } else {
           // Fallback coloured box when the GLB didn't load
-          var h = MODEL_HEIGHT[item.type] || 0.80;
+          var h = (MODEL_HEIGHT[item.type] || 0.80) * (item.scaleFactor || 1.0);
           obj = new THREE.Mesh(
             new THREE.BoxGeometry(tw, h, td),
             new THREE.MeshLambertMaterial({ color: 0x888888 })
@@ -625,12 +988,13 @@
           obj.position.y = h / 2;
           obj.castShadow = true;
           obj.receiveShadow = true;
+          baseScale = 1.0;
         }
 
         obj.position.x = cx;
         obj.position.z = cz;
         obj.rotation.y = -(item.rotation || 0);
-        return obj;
+        return { obj: obj, baseScale: baseScale };
       }
 
       // ── Resize handler ─────────────────────────────────────────────────────
@@ -642,15 +1006,229 @@
 
       // ── Kick off loading ───────────────────────────────────────────────────
       var neededTypes = getNeededTypes();
-      if (neededTypes.length === 0) {
-        // No items or no payload — just show empty room
+      var customFiles = Object.keys(customGlbFiles);
+
+      // Load custom GLBs (keyed by filename), then built-in types
+      function loadCustomGlbs(i, onDone) {
+        if (i >= customFiles.length) { onDone(); return; }
+        var filename = customFiles[i];
+        var pct = 40 + Math.round((i / customFiles.length) * 20);
+        setStatus('Loading custom model ' + (i + 1) + '/' + customFiles.length, pct);
+        var done = false;
+        var timer = setTimeout(function () {
+          if (done) return; done = true;
+          console.warn('Custom GLB timeout: ' + filename);
+          loadCustomGlbs(i + 1, onDone);
+        }, 8000);
+        var loader = new THREE.GLTFLoader();
+        loader.load(filename,
+          function (gltf) {
+            if (done) return; done = true; clearTimeout(timer);
+            bank[filename] = gltf.scene;
+            console.log('Loaded custom GLB: ' + filename);
+            loadCustomGlbs(i + 1, onDone);
+          }, null,
+          function (err) {
+            if (done) return; done = true; clearTimeout(timer);
+            console.warn('Failed custom GLB: ' + filename, err);
+            loadCustomGlbs(i + 1, onDone);
+          }
+        );
+      }
+
+      if (neededTypes.length === 0 && customFiles.length === 0) {
         buildRoom(10, 10);
         hideLoading();
       } else {
-        setStatus('Preparing ' + neededTypes.length + ' model(s)…', 40);
-        loadSeq(neededTypes, 0, onReady);
+        setStatus('Preparing models…', 40);
+        loadCustomGlbs(0, function () {
+          loadSeq(neededTypes, 0, onReady);
+        });
       }
     }
+    // ─────────────────────────────────────────────────────────────────────
+    // Select Mode — functions called from HTML onclick attributes
+    // (defined at page scope so they're accessible before boot())
+    // ─────────────────────────────────────────────────────────────────────
+
+    function toggleSelectMode() {
+      selectMode = !selectMode;
+      var toggle = document.getElementById('select-toggle');
+      var label = document.getElementById('select-toggle-label');
+      if (selectMode) {
+        toggle.classList.add('active');
+        label.textContent = 'Select Mode ON';
+        document.body.classList.add('select-active');
+      } else {
+        toggle.classList.remove('active');
+        label.textContent = 'Select & Resize';
+        document.body.classList.remove('select-active');
+        deselectFurniture();
+      }
+    }
+
+    function selectFurniture(entry) {
+      // Remove old selection box
+      if (selectionBox && _scene) _scene.remove(selectionBox);
+
+      selectedEntry = entry;
+
+      // Create a glowing BoxHelper around the selected object
+      if (typeof THREE !== 'undefined' && _scene) {
+        selectionBox = new THREE.BoxHelper(entry.obj, 0x6366f1);
+        _scene.add(selectionBox);
+      }
+
+      // Populate panel
+      var name = (entry.data.label || entry.data.type || 'Furniture');
+      // CamelCase → words
+      name = name.replace(/([A-Z])/g, ' $1').trim();
+      name = name.charAt(0).toUpperCase() + name.slice(1);
+      document.getElementById('panel-furniture-name').textContent = name;
+
+      var slider = document.getElementById('scale-slider');
+      slider.value = entry.scaleFactor;
+      updateSliderTrack(slider);
+      document.getElementById('scale-value-badge').textContent =
+        entry.scaleFactor.toFixed(2) + '×';
+      updatePresets(entry.scaleFactor);
+
+      document.getElementById('size-panel').classList.add('visible');
+    }
+
+    function deselectFurniture() {
+      if (selectionBox && _scene) _scene.remove(selectionBox);
+      selectionBox = null;
+      selectedEntry = null;
+      document.getElementById('size-panel').classList.remove('visible');
+    }
+
+    function applyScale(factor) {
+      if (!selectedEntry) return;
+      selectedEntry.scaleFactor = factor;
+
+      var newS = selectedEntry.baseScale * factor;
+      selectedEntry.obj.scale.setScalar(newS);
+
+      // Re-ground the object
+      if (typeof THREE !== 'undefined') {
+        var bbox = new THREE.Box3().setFromObject(selectedEntry.obj);
+        selectedEntry.obj.position.y = -bbox.min.y;
+        if (selectionBox) selectionBox.update();
+      }
+
+      var slider = document.getElementById('scale-slider');
+      slider.value = factor;
+      updateSliderTrack(slider);
+      document.getElementById('scale-value-badge').textContent = factor.toFixed(2) + '×';
+      updatePresets(factor);
+    }
+
+    function applyPreset(val) { applyScale(val); }
+
+    function resetScale() { applyScale(1.0); }
+
+    function saveSize() {
+      if (!selectedEntry) return;
+      var msg = {
+        type: 'sizeUpdate',
+        id: selectedEntry.data.id,
+        index: selectedEntry.index,
+        scaleFactor: selectedEntry.scaleFactor
+      };
+      try {
+        window.chrome.webview.postMessage(JSON.stringify(msg));
+      } catch (e) {
+        console.log('[3D] postMessage not available (dev mode):', e);
+      }
+      var btn = document.getElementById('btn-save');
+      btn.textContent = '✓ Saved!';
+      btn.classList.add('saved');
+      setTimeout(function () {
+        btn.textContent = '💾 Save Size';
+        btn.classList.remove('saved');
+      }, 1800);
+    }
+
+    function updateSliderTrack(slider) {
+      var min = parseFloat(slider.min), max = parseFloat(slider.max),
+        val = parseFloat(slider.value);
+      var pct = ((val - min) / (max - min) * 100).toFixed(1);
+      slider.style.setProperty('--pct', pct + '%');
+    }
+
+    function updatePresets(factor) {
+      var presets = [0.5, 0.75, 1.0, 1.5, 2.0];
+      document.querySelectorAll('.preset-btn').forEach(function (btn, i) {
+        btn.classList.toggle('active', Math.abs(presets[i] - factor) < 0.02);
+      });
+    }
+
+    // ── Wire all UI events immediately ─────────────────────────────────────
+    // DOMContentLoaded has already fired by the time dynamically-loaded scripts
+    // run, so we bind directly. The HTML elements exist when this executes
+    // because this <script> block is below them in the document body.
+    (function wireUI() {
+      // Stop mousedown on toggle from reaching OrbitControls on the canvas
+      document.getElementById('select-toggle').addEventListener('mousedown', function (e) {
+        e.stopPropagation();
+      });
+
+      // Select & Resize toggle
+      document.getElementById('select-toggle').addEventListener('click', function (e) {
+        e.stopPropagation();
+        toggleSelectMode();
+      });
+
+      // Panel close ×
+      document.getElementById('panel-close').addEventListener('mousedown', function (e) {
+        e.stopPropagation();
+      });
+      document.getElementById('panel-close').addEventListener('click', function (e) {
+        e.stopPropagation();
+        deselectFurniture();
+      });
+
+      // Scale slider — input fires on drag, click prevents canvas raycast
+      document.getElementById('scale-slider').addEventListener('input', function () {
+        applyScale(parseFloat(this.value));
+      });
+      document.getElementById('scale-slider').addEventListener('mousedown', function (e) {
+        e.stopPropagation();
+      });
+      document.getElementById('scale-slider').addEventListener('click', function (e) {
+        e.stopPropagation();
+      });
+
+      // Preset buttons
+      document.querySelectorAll('.preset-btn').forEach(function (btn) {
+        btn.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          applyPreset(parseFloat(this.dataset.preset));
+        });
+      });
+
+      // Reset & Save buttons
+      document.getElementById('btn-reset').addEventListener('mousedown', function (e) { e.stopPropagation(); });
+      document.getElementById('btn-reset').addEventListener('click', function (e) {
+        e.stopPropagation();
+        resetScale();
+      });
+      document.getElementById('btn-save').addEventListener('mousedown', function (e) { e.stopPropagation(); });
+      document.getElementById('btn-save').addEventListener('click', function (e) {
+        e.stopPropagation();
+        saveSize();
+      });
+
+      // Prevent any panel interaction from reaching the canvas raycaster
+      document.getElementById('size-panel').addEventListener('mousedown', function (e) {
+        e.stopPropagation();
+      });
+      document.getElementById('size-panel').addEventListener('click', function (e) {
+        e.stopPropagation();
+      });
+    })();
   </script>
 </body>
 

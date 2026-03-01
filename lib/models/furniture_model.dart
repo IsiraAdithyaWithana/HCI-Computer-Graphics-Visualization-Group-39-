@@ -27,6 +27,8 @@ enum FurnitureType {
   lamp,
   tvStand,
   rug,
+  // Custom (user-added via Add Furniture dialog)
+  custom,
 }
 
 // ── Category + item descriptors ────────────────────────────────────────────
@@ -202,6 +204,16 @@ class FurnitureModel {
   Color color;
   double rotation;
 
+  /// For custom furniture: the GLB filename (served by AssetServer).
+  final String? glbOverride;
+
+  /// For custom furniture: the display label shown on the 2D canvas tile.
+  final String? labelOverride;
+
+  /// Scale multiplier applied in the 3D view (default 1.0 = natural size).
+  /// Persisted so reopening the 3D view respects saved sizes.
+  double scaleFactor;
+
   FurnitureModel({
     required this.id,
     required this.type,
@@ -209,6 +221,9 @@ class FurnitureModel {
     required this.size,
     required this.color,
     this.rotation = 0,
+    this.glbOverride,
+    this.labelOverride,
+    this.scaleFactor = 1.0,
   });
 
   Map<String, dynamic> toJson() => {
@@ -220,6 +235,9 @@ class FurnitureModel {
     'height': size.height,
     'color': color.value,
     'rotation': rotation,
+    'scaleFactor': scaleFactor,
+    if (glbOverride != null) 'glbOverride': glbOverride,
+    if (labelOverride != null) 'labelOverride': labelOverride,
   };
 
   factory FurnitureModel.fromJson(Map<String, dynamic> json) => FurnitureModel(
@@ -238,5 +256,8 @@ class FurnitureModel {
     ),
     color: Color(json['color'] as int),
     rotation: (json['rotation'] as num).toDouble(),
+    scaleFactor: (json['scaleFactor'] as num?)?.toDouble() ?? 1.0,
+    glbOverride: json['glbOverride'] as String?,
+    labelOverride: json['labelOverride'] as String?,
   );
 }

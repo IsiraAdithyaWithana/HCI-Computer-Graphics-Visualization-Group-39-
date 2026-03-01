@@ -14,6 +14,13 @@ class RoomCanvas extends StatefulWidget {
   final double roomDepthPx;
   final void Function(double zoom)? onZoomChanged;
 
+  // ── Custom furniture overrides ─────────────────────────────────────────
+  // Set these when selectedType == FurnitureType.custom so the canvas knows
+  // which GLB file and label to attach to newly placed custom items.
+  final String? customGlbOverride;
+  final String? customLabelOverride;
+  final Color? customColor;
+
   const RoomCanvas({
     super.key,
     required this.selectedType,
@@ -21,6 +28,10 @@ class RoomCanvas extends StatefulWidget {
     this.roomWidthPx = 600,
     this.roomDepthPx = 500,
     this.onZoomChanged,
+    // custom fields — null for all built-in types
+    this.customGlbOverride,
+    this.customLabelOverride,
+    this.customColor,
   });
 
   @override
@@ -228,6 +239,8 @@ class RoomCanvasState extends State<RoomCanvas> {
             size: selectedItem!.size,
             color: selectedItem!.color,
             rotation: selectedItem!.rotation,
+            glbOverride: selectedItem!.glbOverride,
+            labelOverride: selectedItem!.labelOverride,
           ),
         );
       });
@@ -279,6 +292,9 @@ class RoomCanvasState extends State<RoomCanvas> {
         return const Size(160, 50);
       case FurnitureType.rug:
         return const Size(160, 120);
+      // ── Custom furniture default footprint ────────────────────────────
+      case FurnitureType.custom:
+        return const Size(80, 80);
     }
   }
 
@@ -324,6 +340,9 @@ class RoomCanvasState extends State<RoomCanvas> {
         return const Color(0xFF37474F);
       case FurnitureType.rug:
         return const Color(0xFFB71C1C);
+      // ── Custom furniture uses the colour stored in the registry entry ──
+      case FurnitureType.custom:
+        return widget.customColor ?? const Color(0xFF607D8B);
     }
   }
 
@@ -334,6 +353,13 @@ class RoomCanvasState extends State<RoomCanvas> {
         position: _snapOffset(position),
         size: size ?? _defaultSize(widget.selectedType),
         color: _defaultColor(widget.selectedType),
+        // Attach custom overrides when placing a custom furniture item
+        glbOverride: widget.selectedType == FurnitureType.custom
+            ? widget.customGlbOverride
+            : null,
+        labelOverride: widget.selectedType == FurnitureType.custom
+            ? widget.customLabelOverride
+            : null,
       );
 
   // ── Build ─────────────────────────────────────────────────────────────────
@@ -901,6 +927,10 @@ class RoomPainter extends CustomPainter {
       case FurnitureType.rug:
         _rug(canvas, item);
         break;
+      // ── Custom furniture: styled labelled tile ─────────────────────────
+      case FurnitureType.custom:
+        _custom(canvas, item);
+        break;
     }
   }
 
@@ -1010,6 +1040,51 @@ class RoomPainter extends CustomPainter {
     if (rot) canvas.rotate(-Math.pi / 2);
     tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
     canvas.restore();
+  }
+
+  // ── Custom furniture tile ─────────────────────────────────────────────────
+  void _custom(Canvas canvas, FurnitureModel item) {
+    final w = item.size.width;
+    final h = item.size.height;
+    final c = item.color;
+    _shadow(canvas, w, h, r: 6);
+    // Body
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, 0, w, h),
+        const Radius.circular(6),
+      ),
+      Paint()..color = c,
+    );
+    // Top accent stripe
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, 0, w, h * .20),
+        const Radius.circular(6),
+      ),
+      Paint()..color = _dk(c, .28),
+    );
+    // Subtle inner highlight
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(w * .08, h * .28, w * .84, h * .55),
+        const Radius.circular(4),
+      ),
+      Paint()..color = _lt(c, .12),
+    );
+    // Star / custom badge icon drawn as simple lines
+    final bp = Paint()
+      ..color = Colors.white.withOpacity(.55)
+      ..strokeWidth = 1.2
+      ..style = PaintingStyle.stroke;
+    final bx = w * .85, by = h * .13, br = Math.min(w, h) * .07;
+    canvas.drawCircle(Offset(bx, by), br, bp);
+    canvas.drawLine(Offset(bx - br * .6, by), Offset(bx + br * .6, by), bp);
+    canvas.drawLine(Offset(bx, by - br * .6), Offset(bx, by + br * .6), bp);
+    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .40), radius: 6);
+    // Label — use the user-supplied name, truncated to fit
+    final label = (item.labelOverride ?? 'CUSTOM').toUpperCase();
+    _lbl(canvas, label, w, h);
   }
 
   // ── Seating ───────────────────────────────────────────────────────────────

@@ -1,11 +1,16 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_static/shelf_static.dart';
+import 'custom_furniture_registry.dart';
 
 /// Copies all viewer assets (HTML + JS libraries + GLB models) from Flutter's
-/// asset bundle to a temp directory, then starts a local HTTP server.
-/// Uses Dart's built-in Directory.systemTemp — no path_provider plugin needed.
+/// asset bundle — plus any user-added custom GLB files — to a temp directory,
+/// then starts a local HTTP server.
+///
+/// Custom models are re-synced on every call to [start] so newly added
+/// furniture appears without restarting the server.
 class AssetServer {
   AssetServer._();
 
@@ -52,37 +57,72 @@ class AssetServer {
     'assets/models/rug.glb',
   ];
 
-  static Future<String> start() async {
-    if (_server != null && _baseUrl != null) return _baseUrl!;
+  // ── Start (or return cached URL) ─────────────────────────────────────────
 
+  static Future<String> start() async {
     final serveDir = Directory('${Directory.systemTemp.path}/furniture_viewer');
     await serveDir.create(recursive: true);
 
-    // Copy every asset to the flat temp directory
-    for (final assetPath in _assets) {
-      final bytes = await rootBundle.load(assetPath);
-      final fileName = assetPath.split('/').last;
-      final outFile = File('${serveDir.path}/$fileName');
-      await outFile.writeAsBytes(
-        bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
+    if (_server == null) {
+      // First launch: copy all Flutter-bundled assets
+      for (final assetPath in _assets) {
+        final bytes = await rootBundle.load(assetPath);
+        final fileName = assetPath.split('/').last;
+        final outFile = File('${serveDir.path}/$fileName');
+        await outFile.writeAsBytes(
+          bytes.buffer.asUint8List(bytes.offsetInBytes, bytes.lengthInBytes),
+        );
+      }
+
+      // Start the static file server (port 0 → OS picks a free port)
+      final handler = createStaticHandler(
+        serveDir.path,
+        defaultDocument: 'room_viewer.html',
       );
+      _server = await shelf_io.serve(handler, 'localhost', 0);
+      _baseUrl = 'http://localhost:${_server!.port}';
+      debugPrint('[AssetServer] started at $_baseUrl');
     }
 
-    final handler = createStaticHandler(
-      serveDir.path,
-      defaultDocument: 'room_viewer.html',
-    );
-
-    // Port 0 → OS picks a free port — no conflicts
-    _server = await shelf_io.serve(handler, 'localhost', 0);
-    _baseUrl = 'http://localhost:${_server!.port}';
+    // Always re-sync custom models so newly added GLBs are immediately
+    // available without restarting the server.
+    await _syncCustomModels(serveDir);
 
     return _baseUrl!;
   }
+
+  // ── Sync custom GLB files into the serve directory ───────────────────────
+
+  static Future<void> _syncCustomModels(Directory serveDir) async {
+    try {
+      final modelsDir = CustomFurnitureRegistry.modelsDir;
+      if (!await modelsDir.exists()) return;
+
+      await for (final entity in modelsDir.list()) {
+        if (entity is File && entity.path.toLowerCase().endsWith('.glb')) {
+          final filename = entity.path.split(Platform.pathSeparator).last;
+          final dest = File('${serveDir.path}/$filename');
+          // Only copy if the file is missing or has been updated
+          if (!await dest.exists() ||
+              (await entity.lastModified()).isAfter(
+                await dest.lastModified(),
+              )) {
+            await entity.copy(dest.path);
+            debugPrint('[AssetServer] synced custom model: $filename');
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[AssetServer] custom model sync error: $e');
+    }
+  }
+
+  // ── Stop the server ──────────────────────────────────────────────────────
 
   static Future<void> stop() async {
     await _server?.close(force: true);
     _server = null;
     _baseUrl = null;
+    debugPrint('[AssetServer] stopped');
   }
 }
