@@ -242,13 +242,25 @@
       };
 
       // ── Mouse scroll wheel zoom ────────────────────────────────────────────
+      // Normalise deltaY across deltaMode values so one wheel notch always
+      // moves the same amount regardless of OS / browser / mouse driver.
+      //   deltaMode 0 = pixels  (~100 per notch) → scale by 0.0008
+      //   deltaMode 1 = lines   (~3 per notch)   → scale by 0.025
+      //   deltaMode 2 = pages   (~1 per notch)   → scale by 0.07
       controls.enableZoom = false;
       renderer.domElement.addEventListener('wheel', function (e) {
         e.preventDefault();
+        var norm;
+        if (e.deltaMode === 1) norm = e.deltaY * 0.025;   // lines
+        else if (e.deltaMode === 2) norm = e.deltaY * 0.07;    // pages
+        else norm = e.deltaY * 0.0008;  // pixels (default)
+
+        // Clamp so even a fast spin can't jump more than 8% per tick
+        norm = Math.max(-0.08, Math.min(0.08, norm));
+
         var dist = camera.position.distanceTo(controls.target);
-        var factor = 1.0 + e.deltaY * 0.003;
         var newD = Math.max(controls.minDistance,
-          Math.min(controls.maxDistance, dist * factor));
+          Math.min(controls.maxDistance, dist * (1.0 + norm)));
         var dir = camera.position.clone().sub(controls.target).normalize();
         camera.position.copy(controls.target).addScaledVector(dir, newD);
         controls.update();

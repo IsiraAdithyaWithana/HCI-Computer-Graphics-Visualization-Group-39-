@@ -107,7 +107,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             onModeChanged: (mode) => setState(() => _currentMode = mode),
           ),
 
-          // ── Left panel ─────────────────────────────────────────────────────
+          // ── Left panel ──────────────────────────────────────────────────
           SizedBox(
             width: 220,
             child: _LeftPanel(
@@ -123,7 +123,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             ),
           ),
 
-          // ── Canvas ──────────────────────────────────────────────────────────
+          // ── Canvas ──────────────────────────────────────────────────────
           Expanded(
             child: Stack(
               children: [
@@ -157,7 +157,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Left panel — scrollable, with categorised furniture + room controls
+// Left panel
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _LeftPanel extends StatefulWidget {
@@ -184,8 +184,15 @@ class _LeftPanel extends StatefulWidget {
 }
 
 class _LeftPanelState extends State<_LeftPanel> {
-  // Track which category indices are expanded
-  final Set<int> _expanded = {0}; // Seating open by default
+  final Set<int> _expanded = {0};
+
+  void _openAddFurnitureDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => const _AddFurnitureDialog(),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -193,11 +200,11 @@ class _LeftPanelState extends State<_LeftPanel> {
       color: Colors.grey[100],
       child: Column(
         children: [
-          // ── Header ──────────────────────────────────────────────────────────
+          // ── Header ──────────────────────────────────────────────────────
           Container(
             width: double.infinity,
             color: Colors.grey[200],
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+            padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
             child: Row(
               children: [
                 const Icon(Icons.chair_alt, size: 15, color: Colors.black54),
@@ -206,20 +213,45 @@ class _LeftPanelState extends State<_LeftPanel> {
                   'Furniture',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                 ),
+                const Spacer(),
+                // ── Add furniture "+" button ───────────────────────────────
+                Tooltip(
+                  message: 'Add custom furniture',
+                  child: InkWell(
+                    onTap: _openAddFurnitureDialog,
+                    borderRadius: BorderRadius.circular(6),
+                    child: Container(
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF6366F1).withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: const Color(0xFF6366F1).withOpacity(0.35),
+                          width: 1,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.add,
+                        size: 16,
+                        color: Color(0xFF6366F1),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
               ],
             ),
           ),
 
-          // ── Category list (scrollable) ──────────────────────────────────────
+          // ── Category list (scrollable) ───────────────────────────────────
           Expanded(
             child: ListView(
               padding: EdgeInsets.zero,
               children: [
-                // Categories
                 ...List.generate(kFurnitureCategories.length, (ci) {
                   final cat = kFurnitureCategories[ci];
                   final isOpen = _expanded.contains(ci);
-                  // Check if any item in this cat is selected
                   final hasSelected = cat.items.any(
                     (i) => i.type == widget.selectedType,
                   );
@@ -237,7 +269,7 @@ class _LeftPanelState extends State<_LeftPanel> {
 
                 const Divider(height: 1, thickness: 1),
 
-                // ── Room Size ──────────────────────────────────────────────────
+                // ── Room Size ──────────────────────────────────────────────
                 Container(
                   color: Colors.grey[200],
                   padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
@@ -311,7 +343,7 @@ class _LeftPanelState extends State<_LeftPanel> {
 
                 const Divider(height: 1, thickness: 1),
 
-                // ── Realistic 3D button ────────────────────────────────────────
+                // ── Realistic 3D button ────────────────────────────────────
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
                   child: SizedBox(
@@ -332,6 +364,567 @@ class _LeftPanelState extends State<_LeftPanel> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Add Furniture Dialog
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _AddFurnitureDialog extends StatefulWidget {
+  const _AddFurnitureDialog();
+
+  @override
+  State<_AddFurnitureDialog> createState() => _AddFurnitureDialogState();
+}
+
+class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
+  // Form state
+  String? _selectedFileName; // display name of picked file
+  final _nameCtrl = TextEditingController();
+  final _newCatCtrl = TextEditingController();
+  bool _createNewCategory = false;
+  String? _selectedBuiltinCategory;
+
+  // Built-in category names pulled from the master list
+  final List<String> _builtinCategories = kFurnitureCategories
+      .map((c) => c.name)
+      .toList();
+
+  static const _accent = Color(0xFF6366F1);
+  static const _accentLight = Color(0xFFEEEEFD);
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _newCatCtrl.dispose();
+    super.dispose();
+  }
+
+  // ── Simulated file pick (real implementation comes later) ──────────────
+  void _pickFile() {
+    // TODO: wire up file_picker package
+    setState(() => _selectedFileName = 'my_furniture.glb');
+  }
+
+  void _handleAdd() {
+    // TODO: implement actual add logic in next step
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: 0,
+      backgroundColor: Colors.transparent,
+      child: Container(
+        width: 400,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.18),
+              blurRadius: 32,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // ── Title bar ────────────────────────────────────────────────
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 18, 12, 16),
+              decoration: const BoxDecoration(
+                color: _accent,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(
+                      Icons.add_box_outlined,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Text(
+                      'Add Custom Furniture',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.2,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(
+                      Icons.close,
+                      color: Colors.white70,
+                      size: 20,
+                    ),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // ── Form body ─────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // ── 1. GLB file picker ─────────────────────────────────
+                  _SectionLabel(
+                    icon: Icons.view_in_ar_outlined,
+                    label: '3D Model File',
+                  ),
+                  const SizedBox(height: 8),
+                  GestureDetector(
+                    onTap: _pickFile,
+                    child: Container(
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: _selectedFileName != null
+                            ? _accentLight
+                            : Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: _selectedFileName != null
+                              ? _accent.withOpacity(0.45)
+                              : Colors.grey.shade300,
+                          width: 1.5,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 12),
+                          Icon(
+                            _selectedFileName != null
+                                ? Icons.check_circle_outline
+                                : Icons.upload_file,
+                            size: 20,
+                            color: _selectedFileName != null
+                                ? _accent
+                                : Colors.grey.shade500,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              _selectedFileName ?? 'Choose a .glb file…',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: _selectedFileName != null
+                                    ? _accent
+                                    : Colors.grey.shade500,
+                                fontWeight: _selectedFileName != null
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Container(
+                            margin: const EdgeInsets.only(right: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: _accent,
+                              borderRadius: BorderRadius.circular(7),
+                            ),
+                            child: const Text(
+                              'Browse',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 18),
+
+                  // ── 2. Furniture name ──────────────────────────────────
+                  _SectionLabel(
+                    icon: Icons.drive_file_rename_outline,
+                    label: 'Furniture Name',
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _nameCtrl,
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'e.g. Barcelona Chair',
+                      hintStyle: TextStyle(
+                        color: Colors.grey.shade400,
+                        fontSize: 13,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      filled: true,
+                      fillColor: Colors.grey.shade50,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(
+                          color: _accent,
+                          width: 1.5,
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: Colors.grey.shade300),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 18),
+
+                  // ── 3. Category ────────────────────────────────────────
+                  _SectionLabel(
+                    icon: Icons.category_outlined,
+                    label: 'Category',
+                  ),
+                  const SizedBox(height: 10),
+
+                  // New category checkbox
+                  GestureDetector(
+                    onTap: () => setState(
+                      () => _createNewCategory = !_createNewCategory,
+                    ),
+                    child: Row(
+                      children: [
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          width: 20,
+                          height: 20,
+                          decoration: BoxDecoration(
+                            color: _createNewCategory ? _accent : Colors.white,
+                            borderRadius: BorderRadius.circular(5),
+                            border: Border.all(
+                              color: _createNewCategory
+                                  ? _accent
+                                  : Colors.grey.shade400,
+                              width: 1.5,
+                            ),
+                          ),
+                          child: _createNewCategory
+                              ? const Icon(
+                                  Icons.check,
+                                  size: 13,
+                                  color: Colors.white,
+                                )
+                              : null,
+                        ),
+                        const SizedBox(width: 10),
+                        const Text(
+                          'Create new category',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  // New category text field (unlocked when checkbox ticked)
+                  AnimatedOpacity(
+                    duration: const Duration(milliseconds: 180),
+                    opacity: _createNewCategory ? 1.0 : 0.38,
+                    child: TextField(
+                      controller: _newCatCtrl,
+                      enabled: _createNewCategory,
+                      style: const TextStyle(fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'New category name…',
+                        hintStyle: TextStyle(
+                          color: Colors.grey.shade400,
+                          fontSize: 13,
+                        ),
+                        prefixIcon: Icon(
+                          Icons.create_new_folder_outlined,
+                          size: 18,
+                          color: _createNewCategory
+                              ? _accent
+                              : Colors.grey.shade400,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        filled: true,
+                        fillColor: _createNewCategory
+                            ? _accentLight
+                            : Colors.grey.shade100,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide(color: Colors.grey.shade300),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: const BorderSide(
+                            color: _accent,
+                            width: 1.5,
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide(
+                            color: _accent.withOpacity(0.4),
+                          ),
+                        ),
+                        disabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide(color: Colors.grey.shade200),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // Built-in category dropdown (shown when checkbox NOT ticked)
+                  AnimatedOpacity(
+                    duration: const Duration(milliseconds: 180),
+                    opacity: _createNewCategory ? 0.38 : 1.0,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: IgnorePointer(
+                        ignoring: _createNewCategory,
+                        child: Container(
+                          height: 48,
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
+                          decoration: BoxDecoration(
+                            color: _createNewCategory
+                                ? Colors.grey.shade100
+                                : Colors.grey.shade50,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: _createNewCategory
+                                  ? Colors.grey.shade200
+                                  : Colors.grey.shade300,
+                              width: 1.5,
+                            ),
+                          ),
+                          child: DropdownButtonHideUnderline(
+                            child: DropdownButton<String>(
+                              isExpanded: true,
+                              value: _selectedBuiltinCategory,
+                              hint: Row(
+                                children: [
+                                  Icon(
+                                    Icons.folder_outlined,
+                                    size: 17,
+                                    color: Colors.grey.shade500,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Select existing category…',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey.shade500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              icon: Icon(
+                                Icons.keyboard_arrow_down,
+                                color: Colors.grey.shade500,
+                                size: 20,
+                              ),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                color: Colors.black87,
+                              ),
+                              onChanged: _createNewCategory
+                                  ? null
+                                  : (val) => setState(
+                                      () => _selectedBuiltinCategory = val,
+                                    ),
+                              items: _builtinCategories
+                                  .map(
+                                    (cat) => DropdownMenuItem(
+                                      value: cat,
+                                      child: Row(
+                                        children: [
+                                          Icon(
+                                            _categoryIcon(cat),
+                                            size: 16,
+                                            color: _categoryColor(cat),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(cat),
+                                        ],
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // ── Divider + action buttons ───────────────────────────────────
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20),
+              child: Divider(height: 24),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              child: Row(
+                children: [
+                  // Cancel
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        side: BorderSide(color: Colors.grey.shade300),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.black54,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // Add
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton.icon(
+                      onPressed: _handleAdd,
+                      icon: const Icon(Icons.add, size: 17),
+                      label: const Text(
+                        'Add Furniture',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _accent,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Category icon / colour helpers ─────────────────────────────────────
+  IconData _categoryIcon(String name) {
+    switch (name) {
+      case 'Seating':
+        return Icons.chair;
+      case 'Tables':
+        return Icons.table_restaurant;
+      case 'Storage':
+        return Icons.door_sliding;
+      case 'Bedroom':
+        return Icons.bed;
+      case 'Decor':
+        return Icons.local_florist;
+      default:
+        return Icons.folder;
+    }
+  }
+
+  Color _categoryColor(String name) {
+    switch (name) {
+      case 'Seating':
+        return const Color(0xFF7C5CBF);
+      case 'Tables':
+        return const Color(0xFF1976D2);
+      case 'Storage':
+        return const Color(0xFF388E3C);
+      case 'Bedroom':
+        return const Color(0xFFE64A19);
+      case 'Decor':
+        return const Color(0xFF00796B);
+      default:
+        return Colors.grey;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Small helper — section label with leading icon
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _SectionLabel extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _SectionLabel({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 15, color: const Color(0xFF6366F1)),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: Colors.black87,
+            letterSpacing: 0.3,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -364,7 +957,6 @@ class _CategorySection extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // ── Category header ──────────────────────────────────────────────────
         InkWell(
           onTap: onToggle,
           child: Container(
@@ -382,7 +974,6 @@ class _CategorySection extends StatelessWidget {
             ),
             child: Row(
               children: [
-                // Category icon with colored background
                 Container(
                   width: 28,
                   height: 28,
@@ -405,7 +996,6 @@ class _CategorySection extends StatelessWidget {
                     ),
                   ),
                 ),
-                // Item count badge
                 if (!isExpanded)
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -428,7 +1018,6 @@ class _CategorySection extends StatelessWidget {
                     ),
                   ),
                 const SizedBox(width: 4),
-                // Chevron
                 AnimatedRotation(
                   turns: isExpanded ? 0.5 : 0,
                   duration: const Duration(milliseconds: 200),
@@ -442,8 +1031,6 @@ class _CategorySection extends StatelessWidget {
             ),
           ),
         ),
-
-        // ── Animated item grid ───────────────────────────────────────────────
         AnimatedCrossFade(
           firstChild: const SizedBox.shrink(),
           secondChild: _buildGrid(accentColor),
@@ -453,8 +1040,6 @@ class _CategorySection extends StatelessWidget {
           duration: const Duration(milliseconds: 200),
           sizeCurve: Curves.easeInOut,
         ),
-
-        // Thin separator
         const Divider(height: 1, thickness: 1, indent: 0, endIndent: 0),
       ],
     );
