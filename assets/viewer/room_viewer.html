@@ -17,7 +17,6 @@
       width: 100vw;
       height: 100vh;
       touch-action: none;
-      /* let JS handle all touch/pointer events */
     }
 
     canvas {
@@ -80,7 +79,6 @@
       transition: width 0.25s;
     }
 
-    /* Controls legend bottom-left */
     #controls {
       position: fixed;
       bottom: 14px;
@@ -119,15 +117,26 @@
   </div>
 
   <script>
+    // Model cache — filled during loading phase
     var bank = {};
+
     function setStatus(t, p) {
-      var el = document.getElementById('load-text'); if (el) el.textContent = t;
-      if (p !== undefined) { var b = document.getElementById('load-bar'); if (b) b.style.width = p + '%'; }
+      var el = document.getElementById('load-text');
+      if (el) el.textContent = t;
+      if (p !== undefined) {
+        var b = document.getElementById('load-bar');
+        if (b) b.style.width = p + '%';
+      }
     }
+
     function hideLoading() {
       var el = document.getElementById('loading');
-      if (el) { el.classList.add('hidden'); setTimeout(function () { el.style.display = 'none'; }, 600); }
+      if (el) {
+        el.classList.add('hidden');
+        setTimeout(function () { el.style.display = 'none'; }, 600);
+      }
     }
+
     function getPayload() {
       try {
         var raw = new URLSearchParams(window.location.search).get('d');
@@ -135,6 +144,7 @@
         return JSON.parse(atob(raw.replace(/-/g, '+').replace(/_/g, '/')));
       } catch (e) { return null; }
     }
+
     function loadScript(src, cb) {
       var s = document.createElement('script');
       s.src = src + '?t=' + Date.now();
@@ -155,7 +165,7 @@
     function boot() {
       if (typeof THREE === 'undefined') { setStatus('Error: Three.js failed'); return; }
 
-      // ── Renderer ──────────────────────────────────────────────────────────────
+      // ── Renderer ──────────────────────────────────────────────────────────
       var renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.setSize(window.innerWidth, window.innerHeight);
@@ -166,13 +176,15 @@
       renderer.toneMappingExposure = 1.05;
       document.body.appendChild(renderer.domElement);
 
-      // ── Scene / Camera ────────────────────────────────────────────────────────
+      // ── Scene / Camera ─────────────────────────────────────────────────────
       var scene = new THREE.Scene();
       scene.background = new THREE.Color(0x1a1a2e);
-      var camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
+      var camera = new THREE.PerspectiveCamera(
+        50, window.innerWidth / window.innerHeight, 0.1, 200
+      );
       camera.position.set(12, 8, 14);
 
-      // ── OrbitControls ─────────────────────────────────────────────────────────
+      // ── OrbitControls ──────────────────────────────────────────────────────
       var controls = new THREE.OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
       controls.dampingFactor = 0.07;
@@ -182,44 +194,33 @@
       controls.zoomSpeed = 1.2;
       controls.rotateSpeed = 0.8;
       controls.panSpeed = 0.8;
-      // Enable all mouse buttons: left=rotate, middle=zoom, right=pan
       controls.mouseButtons = {
         LEFT: THREE.MOUSE.ROTATE,
         MIDDLE: THREE.MOUSE.DOLLY,
         RIGHT: THREE.MOUSE.PAN
       };
-      // Touch: one finger = rotate, two fingers = pan+zoom
       controls.touches = {
         ONE: THREE.TOUCH.ROTATE,
         TWO: THREE.TOUCH.DOLLY_PAN
       };
       controls.update();
 
-      // ── Flutter touchpad bridge ───────────────────────────────────────────────
-      var _tpStartDist = 0;  // camera distance from target captured at gesture start
+      // ── Flutter touchpad bridge ────────────────────────────────────────────
+      var _tpStartDist = 0;
       var _tpFocalX = 0, _tpFocalY = 0;
 
       window._flutterTouchpad = function (type, x, y, scale, panDx, panDy) {
-
         if (type === 'start') {
           _tpStartDist = camera.position.distanceTo(controls.target);
           _tpFocalX = x; _tpFocalY = y;
           return;
         }
-        if (type === 'end') {
-          _tpStartDist = 0;
-          return;
-        }
+        if (type === 'end') { _tpStartDist = 0; return; }
 
-        // type === 'update'
         var dist = camera.position.distanceTo(controls.target);
-
-        // Decide gesture type: if scale has deviated >3% from 1.0 it's a pinch,
-        // otherwise treat as pure pan. Never mix both — pan during pinch = chaos.
         var isPinch = Math.abs(scale - 1.0) > 0.03;
 
         if (!isPinch && (panDx !== 0 || panDy !== 0)) {
-          // Pure two-finger pan
           var panSpeed = dist * 0.004;
           var right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
           var up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
@@ -231,8 +232,6 @@
         }
 
         if (isPinch && _tpStartDist > 0) {
-          // Pinch zoom — cumulative scale from start, no per-frame drift
-          // scale>1 = fingers spreading = zoom in (smaller distance)
           var newDist = Math.max(controls.minDistance,
             Math.min(controls.maxDistance, _tpStartDist / scale));
           var dir = camera.position.clone().sub(controls.target).normalize();
@@ -242,19 +241,20 @@
         controls.update();
       };
 
-      // ── Mouse scroll wheel → zoom (WebView2 does forward regular wheel events) ─
-      controls.enableZoom = false; // we handle zoom ourselves below
+      // ── Mouse scroll wheel zoom ────────────────────────────────────────────
+      controls.enableZoom = false;
       renderer.domElement.addEventListener('wheel', function (e) {
         e.preventDefault();
         var dist = camera.position.distanceTo(controls.target);
         var factor = 1.0 + e.deltaY * 0.003;
-        var newD = Math.max(controls.minDistance, Math.min(controls.maxDistance, dist * factor));
+        var newD = Math.max(controls.minDistance,
+          Math.min(controls.maxDistance, dist * factor));
         var dir = camera.position.clone().sub(controls.target).normalize();
         camera.position.copy(controls.target).addScaledVector(dir, newD);
         controls.update();
       }, { passive: false });
 
-      // ── Keyboard controls ─────────────────────────────────────────────────────
+      // ── Keyboard controls ──────────────────────────────────────────────────
       var keys = {};
       window.addEventListener('keydown', function (e) { keys[e.key] = true; });
       window.addEventListener('keyup', function (e) { keys[e.key] = false; });
@@ -269,19 +269,16 @@
         var panSpeed = dist * 0.015;
         var rotSpeed = 0.03;
 
-        // W/S zoom
         if (keys['w'] || keys['W']) {
           var dir = camera.position.clone().sub(controls.target).normalize();
-          var newD = Math.max(controls.minDistance, dist - zSpeed);
-          camera.position.copy(controls.target).addScaledVector(dir, newD);
+          camera.position.copy(controls.target)
+            .addScaledVector(dir, Math.max(controls.minDistance, dist - zSpeed));
         }
         if (keys['s'] || keys['S']) {
           var dir2 = camera.position.clone().sub(controls.target).normalize();
-          var newD2 = Math.min(controls.maxDistance, dist + zSpeed);
-          camera.position.copy(controls.target).addScaledVector(dir2, newD2);
+          camera.position.copy(controls.target)
+            .addScaledVector(dir2, Math.min(controls.maxDistance, dist + zSpeed));
         }
-
-        // A/D orbit around Y
         if (keys['a'] || keys['A']) {
           var o = camera.position.clone().sub(controls.target);
           var c = Math.cos(rotSpeed), s = Math.sin(rotSpeed);
@@ -300,9 +297,8 @@
             controls.target.z + o2.x * s2 + o2.z * c2
           );
         }
-
-        // Arrow pan
-        if (keys['ArrowLeft'] || keys['ArrowRight'] || keys['ArrowUp'] || keys['ArrowDown']) {
+        if (keys['ArrowLeft'] || keys['ArrowRight'] ||
+          keys['ArrowUp'] || keys['ArrowDown']) {
           var right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
           var up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
           if (keys['ArrowLeft']) { camera.position.addScaledVector(right, -panSpeed); controls.target.addScaledVector(right, -panSpeed); }
@@ -310,29 +306,35 @@
           if (keys['ArrowUp']) { camera.position.addScaledVector(up, panSpeed); controls.target.addScaledVector(up, panSpeed); }
           if (keys['ArrowDown']) { camera.position.addScaledVector(up, -panSpeed); controls.target.addScaledVector(up, -panSpeed); }
         }
-
         controls.update();
       }
 
-      // ── Lights ────────────────────────────────────────────────────────────────
+      // ── Lights ─────────────────────────────────────────────────────────────
       scene.add(new THREE.AmbientLight(0xfff5e8, 0.55));
       scene.add(new THREE.HemisphereLight(0xfff0d0, 0x6a5a40, 0.4));
+
       var sun = new THREE.DirectionalLight(0xfff8f0, 1.2);
-      sun.position.set(8, 14, 6); sun.castShadow = true;
+      sun.position.set(8, 14, 6);
+      sun.castShadow = true;
       sun.shadow.mapSize.set(2048, 2048);
-      sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 60;
+      sun.shadow.camera.near = 0.5;
+      sun.shadow.camera.far = 60;
       sun.shadow.camera.left = sun.shadow.camera.bottom = -20;
       sun.shadow.camera.right = sun.shadow.camera.top = 20;
       sun.shadow.bias = -0.001;
       scene.add(sun);
-      var fill = new THREE.DirectionalLight(0xc8d8ff, 0.3);
-      fill.position.set(-6, 8, -6); scene.add(fill);
 
-      // ── Room ──────────────────────────────────────────────────────────────────
-      var roomGroup = new THREE.Group(); scene.add(roomGroup);
+      var fill = new THREE.DirectionalLight(0xc8d8ff, 0.3);
+      fill.position.set(-6, 8, -6);
+      scene.add(fill);
+
+      // ── Room builder ───────────────────────────────────────────────────────
+      var roomGroup = new THREE.Group();
+      scene.add(roomGroup);
 
       function buildRoom(rw, rd) {
         while (roomGroup.children.length) roomGroup.remove(roomGroup.children[0]);
+
         var WH = 3.2;
         var floorMat = new THREE.MeshLambertMaterial({ color: 0xd4c4a8 });
         var wallMat = new THREE.MeshLambertMaterial({ color: 0xf0ebe2 });
@@ -341,10 +343,12 @@
 
         // Floor
         var floor = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd), floorMat);
-        floor.rotation.x = -Math.PI / 2; floor.position.set(rw / 2, 0, rd / 2);
-        floor.receiveShadow = true; roomGroup.add(floor);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.set(rw / 2, 0, rd / 2);
+        floor.receiveShadow = true;
+        roomGroup.add(floor);
 
-        // Floor grid (exact room size)
+        // Floor grid
         var gridDiv = Math.round(Math.max(rw, rd) * 2);
         var grid = new THREE.GridHelper(Math.max(rw, rd), gridDiv, 0xb0a090, 0xc8b89a);
         grid.position.set(rw / 2, 0.002, rd / 2);
@@ -354,8 +358,10 @@
         // 4 walls
         function addWall(geo, pos, rotY) {
           var m = new THREE.Mesh(geo, wallMat.clone());
-          m.position.copy(pos); if (rotY) m.rotation.y = rotY;
-          m.receiveShadow = true; roomGroup.add(m);
+          m.position.copy(pos);
+          if (rotY) m.rotation.y = rotY;
+          m.receiveShadow = true;
+          roomGroup.add(m);
         }
         addWall(new THREE.PlaneGeometry(rw, WH), new THREE.Vector3(rw / 2, WH / 2, 0), 0);
         addWall(new THREE.PlaneGeometry(rw, WH), new THREE.Vector3(rw / 2, WH / 2, rd), Math.PI);
@@ -364,13 +370,16 @@
 
         // Ceiling
         var ceil = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd), ceilMat);
-        ceil.rotation.x = Math.PI / 2; ceil.position.set(rw / 2, WH, rd / 2); roomGroup.add(ceil);
+        ceil.rotation.x = Math.PI / 2;
+        ceil.position.set(rw / 2, WH, rd / 2);
+        roomGroup.add(ceil);
 
         // Baseboard on all 4 walls
         var bh = 0.08, bd = 0.02;
         function addBoard(geo, pos) {
           var m = new THREE.Mesh(geo, trimMat.clone());
-          m.position.copy(pos); roomGroup.add(m);
+          m.position.copy(pos);
+          roomGroup.add(m);
         }
         addBoard(new THREE.BoxGeometry(rw, bh, bd), new THREE.Vector3(rw / 2, bh / 2, bd / 2));
         addBoard(new THREE.BoxGeometry(rw, bh, bd), new THREE.Vector3(rw / 2, bh / 2, rd - bd / 2));
@@ -381,31 +390,46 @@
         var ch = 0.05, cd = 0.04;
         var cornMat = new THREE.MeshLambertMaterial({ color: 0xe8e4de });
         function addCornice(geo, pos) {
-          var m = new THREE.Mesh(geo, cornMat.clone()); m.position.copy(pos); roomGroup.add(m);
+          var m = new THREE.Mesh(geo, cornMat.clone());
+          m.position.copy(pos);
+          roomGroup.add(m);
         }
         addCornice(new THREE.BoxGeometry(rw, ch, cd), new THREE.Vector3(rw / 2, WH - ch / 2, cd / 2));
         addCornice(new THREE.BoxGeometry(rw, ch, cd), new THREE.Vector3(rw / 2, WH - ch / 2, rd - cd / 2));
         addCornice(new THREE.BoxGeometry(cd, ch, rd), new THREE.Vector3(cd / 2, WH - ch / 2, rd / 2));
         addCornice(new THREE.BoxGeometry(cd, ch, rd), new THREE.Vector3(rw - cd / 2, WH - ch / 2, rd / 2));
 
-        // Ceiling light
-        var lf = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.05, 20),
-          new THREE.MeshLambertMaterial({ color: 0xffffff }));
-        lf.position.set(rw / 2, WH - 0.025, rd / 2); roomGroup.add(lf);
-        var pl = new THREE.PointLight(0xffe8c0, 0.7, rw * 2.5, 1.8);
-        pl.position.set(rw / 2, WH - 0.15, rd / 2); roomGroup.add(pl);
+        // Ceiling light fixture
+        var lf = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.18, 0.22, 0.05, 20),
+          new THREE.MeshLambertMaterial({ color: 0xffffff })
+        );
+        lf.position.set(rw / 2, WH - 0.025, rd / 2);
+        roomGroup.add(lf);
 
-        sun.shadow.camera.left = -(rw + 3); sun.shadow.camera.right = rw + 3;
-        sun.shadow.camera.top = rd + 3; sun.shadow.camera.bottom = -(rd + 3);
+        var pl = new THREE.PointLight(0xffe8c0, 0.7, rw * 2.5, 1.8);
+        pl.position.set(rw / 2, WH - 0.15, rd / 2);
+        roomGroup.add(pl);
+
+        // Update shadow camera to room size
+        sun.shadow.camera.left = -(rw + 3);
+        sun.shadow.camera.right = rw + 3;
+        sun.shadow.camera.top = rd + 3;
+        sun.shadow.camera.bottom = -(rd + 3);
         sun.shadow.camera.updateProjectionMatrix();
 
+        // Reposition camera to frame the room nicely
         var roomMax = Math.max(rw, rd);
         controls.target.set(rw / 2, WH * 0.35, rd / 2);
-        camera.position.set(rw / 2 + roomMax * .85, roomMax * .6, rd / 2 + roomMax * .95);
+        camera.position.set(
+          rw / 2 + roomMax * 0.85,
+          roomMax * 0.6,
+          rd / 2 + roomMax * 0.95
+        );
         controls.update();
       }
 
-      // Render loop
+      // ── Render loop ────────────────────────────────────────────────────────
       (function loop() {
         requestAnimationFrame(loop);
         handleKeys();
@@ -413,74 +437,207 @@
         renderer.render(scene, camera);
       })();
 
-      // ── Sequential GLB loader ─────────────────────────────────────────────────
-      var TARGET_HEIGHT = { chair: 0.90, table: 0.75, sofa: 0.85 };
-      var FALLBACK_COLOR = { chair: 0x8B6F47, table: 0x5C3A1E, sofa: 0x4A6FA5 };
-      var MODEL_NAMES = ['chair', 'table', 'sofa'];
-      var TIMEOUT_MS = 5000;
+      // ── Model definitions ──────────────────────────────────────────────────
+      // Each entry: [dartEnumName, glbFilename, naturalHeightM]
+      // naturalHeightM is the target rendered height in metres (proportional
+      // to real-world furniture dimensions).
+      var MODEL_DEFS = [
+        // Seating
+        ['chair', 'chair.glb', 0.90],
+        ['sofa', 'sofa.glb', 0.85],
+        ['armchair', 'arm_chair.glb', 0.88],
+        ['bench', 'bench.glb', 0.50],
+        ['stool', 'stool.glb', 0.65],
+        // Tables
+        ['table', 'table.glb', 0.75],
+        ['coffeeTable', 'coffee_table.glb', 0.45],
+        ['desk', 'desk.glb', 0.75],
+        ['sideTable', 'side_table.glb', 0.60],
+        // Storage
+        ['wardrobe', 'wardrobe.glb', 1.90],
+        ['bookshelf', 'book_shelf.glb', 1.80],
+        ['cabinet', 'cabinet.glb', 0.85],
+        ['dresser', 'dresser.glb', 1.10],
+        // Bedroom
+        ['bed', 'double_bed.glb', 0.55],
+        ['singleBed', 'single_bed.glb', 0.55],
+        ['nightstand', 'night_stand.glb', 0.60],
+        // Decor
+        ['plant', 'plant.glb', 1.20],
+        ['lamp', 'floor_lamp.glb', 1.65],
+        ['tvStand', 'tv_stand.glb', 0.50],
+        ['rug', 'rug.glb', 0.02],
+      ];
 
-      function loadOneModel(name, index, onDone) {
-        setStatus('Loading ' + name + '… (' + (index + 1) + '/3)', 50 + (index / MODEL_NAMES.length) * 40);
+      // Build lookup maps
+      var MODEL_FILE = {};   // dartName → filename
+      var MODEL_HEIGHT = {};   // dartName → target height (m)
+      MODEL_DEFS.forEach(function (def) {
+        MODEL_FILE[def[0]] = def[1];
+        MODEL_HEIGHT[def[0]] = def[2];
+      });
+
+      var TIMEOUT_MS = 8000;
+
+      // ── Sequential GLB loader (same pattern as original) ───────────────────
+      // Determine which models are actually needed for this payload so we don't
+      // waste time loading furniture that isn't in the room.
+      function getNeededTypes() {
+        var payload = getPayload();
+        if (!payload || !payload.items) return [];
+        var seen = {};
+        payload.items.forEach(function (item) {
+          if (MODEL_FILE[item.type]) seen[item.type] = true;
+        });
+        return Object.keys(seen);
+      }
+
+      function loadOneModel(dartName, index, total, onDone) {
+        var filename = MODEL_FILE[dartName];
+        var pct = 40 + Math.round((index / total) * 50);
+        setStatus('Loading ' + dartName + '… (' + (index + 1) + '/' + total + ')', pct);
+
         var done = false;
-        var timer = setTimeout(function () { if (done) return; done = true; console.warn(name + ' timeout'); onDone(); }, TIMEOUT_MS);
-        var sl = new THREE.GLTFLoader();
-        sl.load(name + '.glb',
-          function (gltf) { if (done) return; done = true; clearTimeout(timer); bank[name] = gltf.scene; console.log('Loaded ' + name); onDone(); },
+        var timer = setTimeout(function () {
+          if (done) return;
+          done = true;
+          console.warn(dartName + ' timed out');
+          onDone();
+        }, TIMEOUT_MS);
+
+        var loader = new THREE.GLTFLoader();
+        loader.load(
+          filename,
+          function (gltf) {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            bank[dartName] = gltf.scene;
+            console.log('Loaded ' + dartName + ' (' + filename + ')');
+            onDone();
+          },
           null,
-          function (err) { if (done) return; done = true; clearTimeout(timer); console.warn(name + ' err:', err); onDone(); }
+          function (err) {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            console.warn('Failed ' + dartName + ' (' + filename + '):', err);
+            onDone();
+          }
         );
       }
 
-      function loadSeq(i) {
-        if (i >= MODEL_NAMES.length) { onReady(); return; }
-        loadOneModel(MODEL_NAMES[i], i, function () { loadSeq(i + 1); });
+      function loadSeq(types, i, onAllDone) {
+        if (i >= types.length) { onAllDone(); return; }
+        loadOneModel(types[i], i, types.length, function () {
+          loadSeq(types, i + 1, onAllDone);
+        });
       }
 
       function onReady() {
         setStatus('Building scene…', 95);
+
         var payload = getPayload();
-        if (!payload || !payload.items) { buildRoom(10, 10); hideLoading(); return; }
-        var TARGET = 12;
-        var rs = TARGET / Math.max(payload.roomWidth, payload.roomDepth);
+        if (!payload || !payload.items) {
+          buildRoom(10, 10);
+          hideLoading();
+          return;
+        }
+
+        // Scale the pixel room to target 12 m on the longest axis
+        var TARGET_M = 12;
+        var rs = TARGET_M / Math.max(payload.roomWidth, payload.roomDepth);
         buildRoom(payload.roomWidth * rs, payload.roomDepth * rs);
-        var fg = new THREE.Group(); scene.add(fg);
-        payload.items.forEach(function (item) { fg.add(placeItem(item, rs)); });
-        console.log('Ready — ' + payload.items.length + ' items');
+
+        var fg = new THREE.Group();
+        scene.add(fg);
+
+        payload.items.forEach(function (item) {
+          fg.add(placeItem(item, rs));
+        });
+
+        console.log('Scene ready — ' + payload.items.length + ' items placed');
         setStatus('Done!', 100);
         hideLoading();
       }
 
+      // ── Place a single furniture item ──────────────────────────────────────
       function placeItem(item, rs) {
-        var tw = item.width * rs, td = item.height * rs;
-        var cx = (item.x + item.width / 2) * rs, cz = (item.y + item.height / 2) * rs;
-        var obj, tmpl = bank[item.type];
+        // Footprint in world metres
+        var tw = item.width * rs;
+        var td = item.height * rs;
+        // Centre position in world metres
+        var cx = (item.x + item.width / 2) * rs;
+        var cz = (item.y + item.height / 2) * rs;
+
+        var obj;
+        var tmpl = bank[item.type];
+
         if (tmpl) {
           obj = tmpl.clone();
-          obj.traverse(function (c) { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
-          var box = new THREE.Box3().setFromObject(obj);
-          var sz = box.getSize(new THREE.Vector3());
-          var th = TARGET_HEIGHT[item.type] || 0.85;
-          var s = Math.min(tw / (sz.x || 1), td / (sz.z || 1), th / (sz.y || 1));
+          obj.traverse(function (c) {
+            if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; }
+          });
+
+          // Reset any transforms baked into the cloned prototype
+          obj.scale.set(1, 1, 1);
+          obj.position.set(0, 0, 0);
+          obj.rotation.set(0, 0, 0);
+          obj.updateMatrixWorld(true);
+
+          var bbox = new THREE.Box3().setFromObject(obj);
+          var sz = bbox.getSize(new THREE.Vector3());
+
+          // Target height for this furniture type
+          var th = MODEL_HEIGHT[item.type] || 0.85;
+
+          // Uniform scale: fit footprint AND height, take the smallest factor
+          // so the model never clips through walls or floor.
+          var sX = sz.x > 0.001 ? tw / sz.x : 1;
+          var sZ = sz.z > 0.001 ? td / sz.z : 1;
+          var sY = sz.y > 0.001 ? th / sz.y : 1;
+          var s = Math.min(sX, sZ, sY);
           obj.scale.setScalar(s);
-          var box2 = new THREE.Box3().setFromObject(obj);
-          obj.position.y = -box2.min.y;
+
+          // Lift so the bottom of the model rests on the floor
+          var bbox2 = new THREE.Box3().setFromObject(obj);
+          obj.position.y = -bbox2.min.y;
+
         } else {
-          var h = TARGET_HEIGHT[item.type] || 0.8;
-          obj = new THREE.Mesh(new THREE.BoxGeometry(tw, h, td),
-            new THREE.MeshLambertMaterial({ color: FALLBACK_COLOR[item.type] || 0x888888 }));
-          obj.position.y = h / 2; obj.castShadow = true; obj.receiveShadow = true;
+          // Fallback coloured box when the GLB didn't load
+          var h = MODEL_HEIGHT[item.type] || 0.80;
+          obj = new THREE.Mesh(
+            new THREE.BoxGeometry(tw, h, td),
+            new THREE.MeshLambertMaterial({ color: 0x888888 })
+          );
+          obj.position.y = h / 2;
+          obj.castShadow = true;
+          obj.receiveShadow = true;
         }
-        obj.position.x = cx; obj.position.z = cz; obj.rotation.y = -(item.rotation || 0);
+
+        obj.position.x = cx;
+        obj.position.z = cz;
+        obj.rotation.y = -(item.rotation || 0);
         return obj;
       }
 
+      // ── Resize handler ─────────────────────────────────────────────────────
       window.addEventListener('resize', function () {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
       });
 
-      loadSeq(0);
+      // ── Kick off loading ───────────────────────────────────────────────────
+      var neededTypes = getNeededTypes();
+      if (neededTypes.length === 0) {
+        // No items or no payload — just show empty room
+        buildRoom(10, 10);
+        hideLoading();
+      } else {
+        setStatus('Preparing ' + neededTypes.length + ' model(s)…', 40);
+        loadSeq(neededTypes, 0, onReady);
+      }
     }
   </script>
 </body>

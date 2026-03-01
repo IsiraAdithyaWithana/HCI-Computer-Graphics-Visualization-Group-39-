@@ -13,16 +13,43 @@ class AssetServer {
   static String? _baseUrl;
 
   static const List<String> _assets = [
-    // HTML viewer
+    // ── HTML viewer ────────────────────────────────────────────────────────
     'assets/viewer/room_viewer.html',
-    // Three.js local copies (no CDN needed — works offline in WebView2)
+
+    // ── Three.js local copies (no CDN needed — works offline in WebView2) ──
     'assets/viewer/three.min.js',
     'assets/viewer/OrbitControls.js',
     'assets/viewer/GLTFLoader.js',
-    // 3D models
+
+    // ── 3D models — Seating ────────────────────────────────────────────────
     'assets/models/chair.glb',
-    'assets/models/table.glb',
     'assets/models/sofa.glb',
+    'assets/models/arm_chair.glb',
+    'assets/models/bench.glb',
+    'assets/models/stool.glb',
+
+    // ── 3D models — Tables ─────────────────────────────────────────────────
+    'assets/models/table.glb',
+    'assets/models/coffee_table.glb',
+    'assets/models/desk.glb',
+    'assets/models/side_table.glb',
+
+    // ── 3D models — Storage ────────────────────────────────────────────────
+    'assets/models/wardrobe.glb',
+    'assets/models/book_shelf.glb',
+    'assets/models/cabinet.glb',
+    'assets/models/dresser.glb',
+
+    // ── 3D models — Bedroom ────────────────────────────────────────────────
+    'assets/models/double_bed.glb',
+    'assets/models/single_bed.glb',
+    'assets/models/night_stand.glb',
+
+    // ── 3D models — Decor ──────────────────────────────────────────────────
+    'assets/models/plant.glb',
+    'assets/models/floor_lamp.glb',
+    'assets/models/tv_stand.glb',
+    'assets/models/rug.glb',
   ];
 
   static Future<String> start() async {
