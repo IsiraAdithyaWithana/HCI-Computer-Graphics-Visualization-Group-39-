@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'screens/login_screen.dart';
 import 'services/custom_furniture_registry.dart';
+import 'theme/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,8 +21,8 @@ class FurnitureApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Furniture Visualizer',
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.blueGrey),
+      title: 'Spazio — Room Designer',
+      theme: AppTheme.themeData,
       home: const LoginScreen(),
     );
   }
