@@ -13,6 +13,7 @@ class RoomCanvas extends StatefulWidget {
   final double roomWidthPx;
   final double roomDepthPx;
   final void Function(double zoom)? onZoomChanged;
+  final VoidCallback? onChanged;
 
   // ── Custom furniture overrides ─────────────────────────────────────────
   // Set these when selectedType == FurnitureType.custom so the canvas knows
@@ -32,6 +33,7 @@ class RoomCanvas extends StatefulWidget {
     this.customGlbOverride,
     this.customLabelOverride,
     this.customColor,
+    this.onChanged,
   });
 
   @override
@@ -110,6 +112,8 @@ class RoomCanvasState extends State<RoomCanvas> {
       selectedItem = null;
     });
   }
+
+  void _save() => widget.onChanged?.call();
 
   // ── Coordinate helpers ────────────────────────────────────────────────────
   Offset _toScene(Offset screenPos) => MatrixUtils.transformPoint(
@@ -229,6 +233,7 @@ class RoomCanvasState extends State<RoomCanvas> {
         selectedItems.clear();
         selectedItem = null;
       });
+      _save();
     } else if (result == 'duplicate') {
       setState(() {
         furnitureItems.add(
@@ -244,8 +249,10 @@ class RoomCanvasState extends State<RoomCanvas> {
           ),
         );
       });
+      _save();
     } else if (result == 'rotate') {
       setState(() => selectedItem!.rotation += 1.5708);
+      _save();
     }
   }
 
@@ -377,6 +384,7 @@ class RoomCanvasState extends State<RoomCanvas> {
             selectedItems.clear();
             selectedItem = null;
           });
+          _save();
         }
       },
       child: MouseRegion(
@@ -596,6 +604,7 @@ class RoomCanvasState extends State<RoomCanvas> {
                                   ),
                                 ),
                               );
+                              _save();
                             }
                           }
                           if (widget.currentMode == MouseMode.select &&
@@ -634,7 +643,9 @@ class RoomCanvasState extends State<RoomCanvas> {
                                 );
                               }
                             });
+                            _save();
                           }
+
                           setState(() {
                             _isRotating = _isDragging = _isResizing =
                                 _isPanningCanvas = _isSelectingBox = false;

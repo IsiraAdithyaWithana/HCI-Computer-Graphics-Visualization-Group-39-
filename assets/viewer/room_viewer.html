@@ -96,7 +96,6 @@
       color: rgba(255, 255, 255, 0.75);
     }
 
-    /* ── Select Mode toggle ─────────────────────────────────────────────── */
     #select-toggle {
       position: fixed;
       top: 14px;
@@ -147,7 +146,6 @@
       box-shadow: 0 0 6px #6366f1;
     }
 
-    /* ── Size editor panel ──────────────────────────────────────────────── */
     #size-panel {
       position: fixed;
       bottom: -220px;
@@ -355,7 +353,6 @@
       box-shadow: 0 4px 14px rgba(22, 163, 74, 0.4);
     }
 
-    /* Crosshair cursor while in select mode */
     body.select-active canvas {
       cursor: crosshair !important;
     }
@@ -374,19 +371,17 @@
   <div id="controls">
     <b>Mouse</b><br>
     Left-drag → Orbit &nbsp;·&nbsp; Scroll → Zoom &nbsp;·&nbsp; Right-drag → Pan<br>
-    <b>Touchpad</b><br>
-    1-finger drag → Orbit &nbsp;·&nbsp; Pinch → Zoom &nbsp;·&nbsp; 2-finger drag → Pan<br>
+    <b>Select Mode</b><br>
+    Left-click → Select furniture &nbsp;·&nbsp; Right-drag → Pan<br>
     <b>Keyboard</b><br>
     W/S → Zoom &nbsp;·&nbsp; A/D → Rotate &nbsp;·&nbsp; Arrows → Pan
   </div>
 
-  <!-- Select mode toggle -->
   <div id="select-toggle">
     <span class="dot"></span>
     <span id="select-toggle-label">Select &amp; Resize</span>
   </div>
 
-  <!-- Size editor panel -->
   <div id="size-panel">
     <div id="panel-header">
       <div id="panel-furniture-name">Chair</div>
@@ -413,32 +408,27 @@
   </div>
 
   <script>
-    // Model cache — filled during loading phase
     var bank = {};
 
-    // Module-level scene ref — set by boot() so select-mode functions can use it
+    // ── Module-level refs exposed from boot() ──────────────────────────────
     var _scene = null;
-    var placedItems = [];   // [{obj, data, baseScale, scaleFactor, index}]
+    var _controls = null;   // ← OrbitControls reference (NEW)
+
+    var placedItems = [];
     var selectedEntry = null;
-    var selectionBox = null; // THREE.BoxHelper
+    var selectionBox = null;
     var mouseDownX = 0, mouseDownY = 0;
     var selectMode = false;
 
     function setStatus(t, p) {
       var el = document.getElementById('load-text');
       if (el) el.textContent = t;
-      if (p !== undefined) {
-        var b = document.getElementById('load-bar');
-        if (b) b.style.width = p + '%';
-      }
+      if (p !== undefined) { var b = document.getElementById('load-bar'); if (b) b.style.width = p + '%'; }
     }
 
     function hideLoading() {
       var el = document.getElementById('loading');
-      if (el) {
-        el.classList.add('hidden');
-        setTimeout(function () { el.style.display = 'none'; }, 600);
-      }
+      if (el) { el.classList.add('hidden'); setTimeout(function () { el.style.display = 'none'; }, 600); }
     }
 
     function getPayload() {
@@ -469,7 +459,7 @@
     function boot() {
       if (typeof THREE === 'undefined') { setStatus('Error: Three.js failed'); return; }
 
-      // ── Renderer ──────────────────────────────────────────────────────────
+      // ── Renderer ────────────────────────────────────────────────────────
       var renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.setSize(window.innerWidth, window.innerHeight);
@@ -480,17 +470,16 @@
       renderer.toneMappingExposure = 1.05;
       document.body.appendChild(renderer.domElement);
 
-      // ── Scene / Camera ─────────────────────────────────────────────────────
+      // ── Scene / Camera ───────────────────────────────────────────────────
       var scene = new THREE.Scene();
-      _scene = scene; // expose for select-mode functions
+      _scene = scene;
       scene.background = new THREE.Color(0x1a1a2e);
-      var camera = new THREE.PerspectiveCamera(
-        50, window.innerWidth / window.innerHeight, 0.1, 200
-      );
+      var camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
       camera.position.set(12, 8, 14);
 
-      // ── OrbitControls ──────────────────────────────────────────────────────
+      // ── OrbitControls ────────────────────────────────────────────────────
       var controls = new THREE.OrbitControls(camera, renderer.domElement);
+      _controls = controls;   // ← expose to module scope so toggleSelectMode() can reach it
       controls.enableDamping = true;
       controls.dampingFactor = 0.07;
       controls.minDistance = 1;
@@ -499,422 +488,206 @@
       controls.zoomSpeed = 1.2;
       controls.rotateSpeed = 0.8;
       controls.panSpeed = 0.8;
-      controls.mouseButtons = {
-        LEFT: THREE.MOUSE.ROTATE,
-        MIDDLE: THREE.MOUSE.DOLLY,
-        RIGHT: THREE.MOUSE.PAN
-      };
-      controls.touches = {
-        ONE: THREE.TOUCH.ROTATE,
-        TWO: THREE.TOUCH.DOLLY_PAN
-      };
+      controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+      controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
       controls.update();
 
-      // ── Flutter touchpad bridge ────────────────────────────────────────────
-      var _tpStartDist = 0;
-      var _tpFocalX = 0, _tpFocalY = 0;
-
+      // ── Flutter touchpad bridge ──────────────────────────────────────────
+      var _tpStartDist = 0, _tpFocalX = 0, _tpFocalY = 0;
       window._flutterTouchpad = function (type, x, y, scale, panDx, panDy) {
-        if (type === 'start') {
-          _tpStartDist = camera.position.distanceTo(controls.target);
-          _tpFocalX = x; _tpFocalY = y;
-          return;
-        }
+        if (type === 'start') { _tpStartDist = camera.position.distanceTo(controls.target); _tpFocalX = x; _tpFocalY = y; return; }
         if (type === 'end') { _tpStartDist = 0; return; }
-
         var dist = camera.position.distanceTo(controls.target);
         var isPinch = Math.abs(scale - 1.0) > 0.03;
-
         if (!isPinch && (panDx !== 0 || panDy !== 0)) {
-          var panSpeed = dist * 0.004;
+          var ps = dist * 0.004;
           var right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
           var up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
-          var delta = new THREE.Vector3()
-            .addScaledVector(right, -panDx * panSpeed)
-            .addScaledVector(up, panDy * panSpeed);
-          camera.position.add(delta);
-          controls.target.add(delta);
+          var delta = new THREE.Vector3().addScaledVector(right, -panDx * ps).addScaledVector(up, panDy * ps);
+          camera.position.add(delta); controls.target.add(delta);
         }
-
         if (isPinch && _tpStartDist > 0) {
-          var newDist = Math.max(controls.minDistance,
-            Math.min(controls.maxDistance, _tpStartDist / scale));
+          var newDist = Math.max(controls.minDistance, Math.min(controls.maxDistance, _tpStartDist / scale));
           var dir = camera.position.clone().sub(controls.target).normalize();
           camera.position.copy(controls.target).addScaledVector(dir, newDist);
         }
-
         controls.update();
       };
 
-      // ── Mouse scroll wheel zoom ────────────────────────────────────────────
-      // Normalise deltaY across deltaMode values so one wheel notch always
-      // moves the same amount regardless of OS / browser / mouse driver.
-      //   deltaMode 0 = pixels  (~100 per notch) → scale by 0.0008
-      //   deltaMode 1 = lines   (~3 per notch)   → scale by 0.025
-      //   deltaMode 2 = pages   (~1 per notch)   → scale by 0.07
+      // ── Scroll zoom (custom — OrbitControls zoom disabled) ───────────────
       controls.enableZoom = false;
       renderer.domElement.addEventListener('wheel', function (e) {
         e.preventDefault();
         var norm;
-        if (e.deltaMode === 1) norm = e.deltaY * 0.025;   // lines
-        else if (e.deltaMode === 2) norm = e.deltaY * 0.07;    // pages
-        else norm = e.deltaY * 0.0008;  // pixels (default)
-
-        // Clamp so even a fast spin can't jump more than 8% per tick
+        if (e.deltaMode === 1) norm = e.deltaY * 0.025;
+        else if (e.deltaMode === 2) norm = e.deltaY * 0.07;
+        else norm = e.deltaY * 0.0008;
         norm = Math.max(-0.08, Math.min(0.08, norm));
-
         var dist = camera.position.distanceTo(controls.target);
-        var newD = Math.max(controls.minDistance,
-          Math.min(controls.maxDistance, dist * (1.0 + norm)));
+        var newD = Math.max(controls.minDistance, Math.min(controls.maxDistance, dist * (1.0 + norm)));
         var dir = camera.position.clone().sub(controls.target).normalize();
         camera.position.copy(controls.target).addScaledVector(dir, newD);
         controls.update();
       }, { passive: false });
 
-      // ── Keyboard controls ──────────────────────────────────────────────────
+      // ── Keyboard controls ────────────────────────────────────────────────
       var keys = {};
       window.addEventListener('keydown', function (e) { keys[e.key] = true; });
       window.addEventListener('keyup', function (e) { keys[e.key] = false; });
-
       function handleKeys() {
-        var anyKey = false;
-        for (var k in keys) { if (keys[k]) { anyKey = true; break; } }
-        if (!anyKey) return;
-
+        var any = false; for (var k in keys) { if (keys[k]) { any = true; break; } } if (!any) return;
         var dist = camera.position.distanceTo(controls.target);
-        var zSpeed = dist * 0.025;
-        var panSpeed = dist * 0.015;
-        var rotSpeed = 0.03;
-
-        if (keys['w'] || keys['W']) {
-          var dir = camera.position.clone().sub(controls.target).normalize();
-          camera.position.copy(controls.target)
-            .addScaledVector(dir, Math.max(controls.minDistance, dist - zSpeed));
-        }
-        if (keys['s'] || keys['S']) {
-          var dir2 = camera.position.clone().sub(controls.target).normalize();
-          camera.position.copy(controls.target)
-            .addScaledVector(dir2, Math.min(controls.maxDistance, dist + zSpeed));
-        }
-        if (keys['a'] || keys['A']) {
-          var o = camera.position.clone().sub(controls.target);
-          var c = Math.cos(rotSpeed), s = Math.sin(rotSpeed);
-          camera.position.set(
-            controls.target.x + o.x * c - o.z * s,
-            camera.position.y,
-            controls.target.z + o.x * s + o.z * c
-          );
-        }
-        if (keys['d'] || keys['D']) {
-          var o2 = camera.position.clone().sub(controls.target);
-          var c2 = Math.cos(-rotSpeed), s2 = Math.sin(-rotSpeed);
-          camera.position.set(
-            controls.target.x + o2.x * c2 - o2.z * s2,
-            camera.position.y,
-            controls.target.z + o2.x * s2 + o2.z * c2
-          );
-        }
-        if (keys['ArrowLeft'] || keys['ArrowRight'] ||
-          keys['ArrowUp'] || keys['ArrowDown']) {
-          var right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
-          var up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
-          if (keys['ArrowLeft']) { camera.position.addScaledVector(right, -panSpeed); controls.target.addScaledVector(right, -panSpeed); }
-          if (keys['ArrowRight']) { camera.position.addScaledVector(right, panSpeed); controls.target.addScaledVector(right, panSpeed); }
-          if (keys['ArrowUp']) { camera.position.addScaledVector(up, panSpeed); controls.target.addScaledVector(up, panSpeed); }
-          if (keys['ArrowDown']) { camera.position.addScaledVector(up, -panSpeed); controls.target.addScaledVector(up, -panSpeed); }
+        var zS = dist * 0.025, pS = dist * 0.015, rS = 0.03;
+        if (keys['w'] || keys['W']) { var d = camera.position.clone().sub(controls.target).normalize(); camera.position.copy(controls.target).addScaledVector(d, Math.max(controls.minDistance, dist - zS)); }
+        if (keys['s'] || keys['S']) { var d2 = camera.position.clone().sub(controls.target).normalize(); camera.position.copy(controls.target).addScaledVector(d2, Math.min(controls.maxDistance, dist + zS)); }
+        if (keys['a'] || keys['A']) { var o = camera.position.clone().sub(controls.target); var c = Math.cos(rS), s = Math.sin(rS); camera.position.set(controls.target.x + o.x * c - o.z * s, camera.position.y, controls.target.z + o.x * s + o.z * c); }
+        if (keys['d'] || keys['D']) { var o2 = camera.position.clone().sub(controls.target); var c2 = Math.cos(-rS), s2 = Math.sin(-rS); camera.position.set(controls.target.x + o2.x * c2 - o2.z * s2, camera.position.y, controls.target.z + o2.x * s2 + o2.z * c2); }
+        if (keys['ArrowLeft'] || keys['ArrowRight'] || keys['ArrowUp'] || keys['ArrowDown']) {
+          var right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0), up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
+          if (keys['ArrowLeft']) { camera.position.addScaledVector(right, -pS); controls.target.addScaledVector(right, -pS); }
+          if (keys['ArrowRight']) { camera.position.addScaledVector(right, pS); controls.target.addScaledVector(right, pS); }
+          if (keys['ArrowUp']) { camera.position.addScaledVector(up, pS); controls.target.addScaledVector(up, pS); }
+          if (keys['ArrowDown']) { camera.position.addScaledVector(up, -pS); controls.target.addScaledVector(up, -pS); }
         }
         controls.update();
       }
 
-      // ── Lights ─────────────────────────────────────────────────────────────
+      // ── Lights ───────────────────────────────────────────────────────────
       scene.add(new THREE.AmbientLight(0xfff5e8, 0.55));
       scene.add(new THREE.HemisphereLight(0xfff0d0, 0x6a5a40, 0.4));
-
       var sun = new THREE.DirectionalLight(0xfff8f0, 1.2);
-      sun.position.set(8, 14, 6);
-      sun.castShadow = true;
-      sun.shadow.mapSize.set(2048, 2048);
-      sun.shadow.camera.near = 0.5;
-      sun.shadow.camera.far = 60;
-      sun.shadow.camera.left = sun.shadow.camera.bottom = -20;
-      sun.shadow.camera.right = sun.shadow.camera.top = 20;
-      sun.shadow.bias = -0.001;
+      sun.position.set(8, 14, 6); sun.castShadow = true;
+      sun.shadow.mapSize.set(2048, 2048); sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 60;
+      sun.shadow.camera.left = sun.shadow.camera.bottom = -20; sun.shadow.camera.right = sun.shadow.camera.top = 20; sun.shadow.bias = -0.001;
       scene.add(sun);
+      var fill = new THREE.DirectionalLight(0xc8d8ff, 0.3); fill.position.set(-6, 8, -6); scene.add(fill);
 
-      var fill = new THREE.DirectionalLight(0xc8d8ff, 0.3);
-      fill.position.set(-6, 8, -6);
-      scene.add(fill);
-
-      // ── Room builder ───────────────────────────────────────────────────────
-      var roomGroup = new THREE.Group();
-      scene.add(roomGroup);
-
+      // ── Room builder ─────────────────────────────────────────────────────
+      var roomGroup = new THREE.Group(); scene.add(roomGroup);
       function buildRoom(rw, rd) {
         while (roomGroup.children.length) roomGroup.remove(roomGroup.children[0]);
-
         var WH = 3.2;
         var floorMat = new THREE.MeshLambertMaterial({ color: 0xd4c4a8 });
         var wallMat = new THREE.MeshLambertMaterial({ color: 0xf0ebe2 });
         var ceilMat = new THREE.MeshLambertMaterial({ color: 0xfaf8f4 });
         var trimMat = new THREE.MeshLambertMaterial({ color: 0xe8e0d4 });
-
-        // Floor
         var floor = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd), floorMat);
-        floor.rotation.x = -Math.PI / 2;
-        floor.position.set(rw / 2, 0, rd / 2);
-        floor.receiveShadow = true;
-        roomGroup.add(floor);
-
-        // Floor grid
+        floor.rotation.x = -Math.PI / 2; floor.position.set(rw / 2, 0, rd / 2); floor.receiveShadow = true; roomGroup.add(floor);
         var gridDiv = Math.round(Math.max(rw, rd) * 2);
         var grid = new THREE.GridHelper(Math.max(rw, rd), gridDiv, 0xb0a090, 0xc8b89a);
-        grid.position.set(rw / 2, 0.002, rd / 2);
-        grid.scale.set(rw / Math.max(rw, rd), 1, rd / Math.max(rw, rd));
-        roomGroup.add(grid);
-
-        // 4 walls
-        function addWall(geo, pos, rotY) {
-          var m = new THREE.Mesh(geo, wallMat.clone());
-          m.position.copy(pos);
-          if (rotY) m.rotation.y = rotY;
-          m.receiveShadow = true;
-          roomGroup.add(m);
-        }
+        grid.position.set(rw / 2, 0.002, rd / 2); grid.scale.set(rw / Math.max(rw, rd), 1, rd / Math.max(rw, rd)); roomGroup.add(grid);
+        function addWall(geo, pos, rotY) { var m = new THREE.Mesh(geo, wallMat.clone()); m.position.copy(pos); if (rotY) m.rotation.y = rotY; m.receiveShadow = true; roomGroup.add(m); }
         addWall(new THREE.PlaneGeometry(rw, WH), new THREE.Vector3(rw / 2, WH / 2, 0), 0);
         addWall(new THREE.PlaneGeometry(rw, WH), new THREE.Vector3(rw / 2, WH / 2, rd), Math.PI);
         addWall(new THREE.PlaneGeometry(rd, WH), new THREE.Vector3(0, WH / 2, rd / 2), Math.PI / 2);
         addWall(new THREE.PlaneGeometry(rd, WH), new THREE.Vector3(rw, WH / 2, rd / 2), -Math.PI / 2);
-
-        // Ceiling
-        var ceil = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd), ceilMat);
-        ceil.rotation.x = Math.PI / 2;
-        ceil.position.set(rw / 2, WH, rd / 2);
-        roomGroup.add(ceil);
-
-        // Baseboard on all 4 walls
+        var ceil = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd), ceilMat); ceil.rotation.x = Math.PI / 2; ceil.position.set(rw / 2, WH, rd / 2); roomGroup.add(ceil);
         var bh = 0.08, bd = 0.02;
-        function addBoard(geo, pos) {
-          var m = new THREE.Mesh(geo, trimMat.clone());
-          m.position.copy(pos);
-          roomGroup.add(m);
-        }
+        function addBoard(geo, pos) { var m = new THREE.Mesh(geo, trimMat.clone()); m.position.copy(pos); roomGroup.add(m); }
         addBoard(new THREE.BoxGeometry(rw, bh, bd), new THREE.Vector3(rw / 2, bh / 2, bd / 2));
         addBoard(new THREE.BoxGeometry(rw, bh, bd), new THREE.Vector3(rw / 2, bh / 2, rd - bd / 2));
         addBoard(new THREE.BoxGeometry(bd, bh, rd), new THREE.Vector3(bd / 2, bh / 2, rd / 2));
         addBoard(new THREE.BoxGeometry(bd, bh, rd), new THREE.Vector3(rw - bd / 2, bh / 2, rd / 2));
-
-        // Ceiling cornice
-        var ch = 0.05, cd = 0.04;
-        var cornMat = new THREE.MeshLambertMaterial({ color: 0xe8e4de });
-        function addCornice(geo, pos) {
-          var m = new THREE.Mesh(geo, cornMat.clone());
-          m.position.copy(pos);
-          roomGroup.add(m);
-        }
+        var ch = 0.05, cd = 0.04, cornMat = new THREE.MeshLambertMaterial({ color: 0xe8e4de });
+        function addCornice(geo, pos) { var m = new THREE.Mesh(geo, cornMat.clone()); m.position.copy(pos); roomGroup.add(m); }
         addCornice(new THREE.BoxGeometry(rw, ch, cd), new THREE.Vector3(rw / 2, WH - ch / 2, cd / 2));
         addCornice(new THREE.BoxGeometry(rw, ch, cd), new THREE.Vector3(rw / 2, WH - ch / 2, rd - cd / 2));
         addCornice(new THREE.BoxGeometry(cd, ch, rd), new THREE.Vector3(cd / 2, WH - ch / 2, rd / 2));
         addCornice(new THREE.BoxGeometry(cd, ch, rd), new THREE.Vector3(rw - cd / 2, WH - ch / 2, rd / 2));
-
-        // Ceiling light fixture
-        var lf = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.18, 0.22, 0.05, 20),
-          new THREE.MeshLambertMaterial({ color: 0xffffff })
-        );
-        lf.position.set(rw / 2, WH - 0.025, rd / 2);
-        roomGroup.add(lf);
-
-        var pl = new THREE.PointLight(0xffe8c0, 0.7, rw * 2.5, 1.8);
-        pl.position.set(rw / 2, WH - 0.15, rd / 2);
-        roomGroup.add(pl);
-
-        // Update shadow camera to room size
-        sun.shadow.camera.left = -(rw + 3);
-        sun.shadow.camera.right = rw + 3;
-        sun.shadow.camera.top = rd + 3;
-        sun.shadow.camera.bottom = -(rd + 3);
-        sun.shadow.camera.updateProjectionMatrix();
-
-        // Reposition camera to frame the room nicely
+        var lf = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.05, 20), new THREE.MeshLambertMaterial({ color: 0xffffff }));
+        lf.position.set(rw / 2, WH - 0.025, rd / 2); roomGroup.add(lf);
+        var pl = new THREE.PointLight(0xffe8c0, 0.7, rw * 2.5, 1.8); pl.position.set(rw / 2, WH - 0.15, rd / 2); roomGroup.add(pl);
+        sun.shadow.camera.left = -(rw + 3); sun.shadow.camera.right = rw + 3; sun.shadow.camera.top = rd + 3; sun.shadow.camera.bottom = -(rd + 3); sun.shadow.camera.updateProjectionMatrix();
         var roomMax = Math.max(rw, rd);
         controls.target.set(rw / 2, WH * 0.35, rd / 2);
-        camera.position.set(
-          rw / 2 + roomMax * 0.85,
-          roomMax * 0.6,
-          rd / 2 + roomMax * 0.95
-        );
+        camera.position.set(rw / 2 + roomMax * 0.85, roomMax * 0.6, rd / 2 + roomMax * 0.95);
         controls.update();
       }
 
-      // ── Render loop ────────────────────────────────────────────────────────
-      (function loop() {
-        requestAnimationFrame(loop);
-        handleKeys();
-        controls.update();
-        if (selectionBox) selectionBox.update();
-        renderer.render(scene, camera);
-      })();
+      // ── Render loop ──────────────────────────────────────────────────────
+      (function loop() { requestAnimationFrame(loop); handleKeys(); controls.update(); if (selectionBox) selectionBox.update(); renderer.render(scene, camera); })();
 
-      // ── Model definitions ──────────────────────────────────────────────────
-      // Each entry: [dartEnumName, glbFilename, naturalHeightM]
-      // naturalHeightM is the target rendered height in metres (proportional
-      // to real-world furniture dimensions).
+      // ── Model definitions ────────────────────────────────────────────────
       var MODEL_DEFS = [
-        // Seating
-        ['chair', 'chair.glb', 0.90],
-        ['sofa', 'sofa.glb', 0.85],
-        ['armchair', 'arm_chair.glb', 0.88],
-        ['bench', 'bench.glb', 0.50],
-        ['stool', 'stool.glb', 0.65],
-        // Tables
-        ['table', 'table.glb', 0.75],
-        ['coffeeTable', 'coffee_table.glb', 0.45],
-        ['desk', 'desk.glb', 0.75],
-        ['sideTable', 'side_table.glb', 0.60],
-        // Storage
-        ['wardrobe', 'wardrobe.glb', 1.90],
-        ['bookshelf', 'book_shelf.glb', 1.80],
-        ['cabinet', 'cabinet.glb', 0.85],
-        ['dresser', 'dresser.glb', 1.10],
-        // Bedroom
-        ['bed', 'double_bed.glb', 0.55],
-        ['singleBed', 'single_bed.glb', 0.55],
-        ['nightstand', 'night_stand.glb', 0.60],
-        // Decor
-        ['plant', 'plant.glb', 1.20],
-        ['lamp', 'floor_lamp.glb', 1.65],
-        ['tvStand', 'tv_stand.glb', 0.50],
-        ['rug', 'rug.glb', 0.02],
+        ['chair', 'chair.glb', 0.90], ['sofa', 'sofa.glb', 0.85], ['armchair', 'arm_chair.glb', 0.88],
+        ['bench', 'bench.glb', 0.50], ['stool', 'stool.glb', 0.65], ['table', 'table.glb', 0.75],
+        ['coffeeTable', 'coffee_table.glb', 0.45], ['desk', 'desk.glb', 0.75], ['sideTable', 'side_table.glb', 0.60],
+        ['wardrobe', 'wardrobe.glb', 1.90], ['bookshelf', 'book_shelf.glb', 1.80], ['cabinet', 'cabinet.glb', 0.85],
+        ['dresser', 'dresser.glb', 1.10], ['bed', 'double_bed.glb', 0.55], ['singleBed', 'single_bed.glb', 0.55],
+        ['nightstand', 'night_stand.glb', 0.60], ['plant', 'plant.glb', 1.20], ['lamp', 'floor_lamp.glb', 1.65],
+        ['tvStand', 'tv_stand.glb', 0.50], ['rug', 'rug.glb', 0.02],
       ];
-
-      // Build lookup maps
-      var MODEL_FILE = {};   // dartName → filename
-      var MODEL_HEIGHT = {};   // dartName → target height (m)
-      MODEL_DEFS.forEach(function (def) {
-        MODEL_FILE[def[0]] = def[1];
-        MODEL_HEIGHT[def[0]] = def[2];
-      });
+      var MODEL_FILE = {}, MODEL_HEIGHT = {};
+      MODEL_DEFS.forEach(function (d) { MODEL_FILE[d[0]] = d[1]; MODEL_HEIGHT[d[0]] = d[2]; });
 
       var TIMEOUT_MS = 8000;
-
-      // ── Sequential GLB loader (same pattern as original) ───────────────────
-      // Determine which models are actually needed for this payload so we don't
-      // waste time loading furniture that isn't in the room.
-      // Tracks custom GLB filenames that need loading (keyed by filename)
       var customGlbFiles = {};
 
       function getNeededTypes() {
-        var payload = getPayload();
-        if (!payload || !payload.items) return [];
+        var payload = getPayload(); if (!payload || !payload.items) return [];
         var seen = {};
-        payload.items.forEach(function (item) {
-          if (item.glbFile) {
-            // Custom furniture — load by filename directly
-            customGlbFiles[item.glbFile] = true;
-          } else if (MODEL_FILE[item.type]) {
-            seen[item.type] = true;
-          }
-        });
+        payload.items.forEach(function (item) { if (item.glbFile) { customGlbFiles[item.glbFile] = true; } else if (MODEL_FILE[item.type]) { seen[item.type] = true; } });
         return Object.keys(seen);
       }
 
       function loadOneModel(dartName, index, total, onDone) {
-        var filename = MODEL_FILE[dartName];
-        var pct = 40 + Math.round((index / total) * 50);
+        var filename = MODEL_FILE[dartName], pct = 40 + Math.round((index / total) * 50);
         setStatus('Loading ' + dartName + '… (' + (index + 1) + '/' + total + ')', pct);
-
         var done = false;
-        var timer = setTimeout(function () {
-          if (done) return;
-          done = true;
-          console.warn(dartName + ' timed out');
-          onDone();
-        }, TIMEOUT_MS);
-
+        var timer = setTimeout(function () { if (done) return; done = true; console.warn(dartName + ' timed out'); onDone(); }, TIMEOUT_MS);
         var loader = new THREE.GLTFLoader();
-        loader.load(
-          filename,
-          function (gltf) {
-            if (done) return;
-            done = true;
-            clearTimeout(timer);
-            bank[dartName] = gltf.scene;
-            console.log('Loaded ' + dartName + ' (' + filename + ')');
-            onDone();
-          },
-          null,
-          function (err) {
-            if (done) return;
-            done = true;
-            clearTimeout(timer);
-            console.warn('Failed ' + dartName + ' (' + filename + '):', err);
-            onDone();
-          }
+        loader.load(filename,
+          function (gltf) { if (done) return; done = true; clearTimeout(timer); bank[dartName] = gltf.scene; onDone(); }, null,
+          function (err) { if (done) return; done = true; clearTimeout(timer); console.warn('Failed ' + dartName, err); onDone(); }
         );
       }
 
       function loadSeq(types, i, onAllDone) {
         if (i >= types.length) { onAllDone(); return; }
-        loadOneModel(types[i], i, types.length, function () {
-          loadSeq(types, i + 1, onAllDone);
-        });
+        loadOneModel(types[i], i, types.length, function () { loadSeq(types, i + 1, onAllDone); });
       }
 
       function onReady() {
         setStatus('Building scene…', 95);
-
         var payload = getPayload();
-        if (!payload || !payload.items) {
-          buildRoom(10, 10);
-          hideLoading();
-          return;
-        }
-
-        // Scale the pixel room to target 12 m on the longest axis
-        var TARGET_M = 12;
-        var rs = TARGET_M / Math.max(payload.roomWidth, payload.roomDepth);
+        if (!payload || !payload.items) { buildRoom(10, 10); hideLoading(); return; }
+        var TARGET_M = 12, rs = TARGET_M / Math.max(payload.roomWidth, payload.roomDepth);
         buildRoom(payload.roomWidth * rs, payload.roomDepth * rs);
-
-        var fg = new THREE.Group();
-        scene.add(fg);
-
-        placedItems = []; // reset on each load
+        var fg = new THREE.Group(); scene.add(fg);
+        placedItems = [];
         payload.items.forEach(function (item, idx) {
           var result = placeItem(item, rs);
           fg.add(result.obj);
-          placedItems.push({
-            obj: result.obj,
-            data: item,
-            baseScale: result.baseScale,
-            scaleFactor: item.scaleFactor || 1.0,
-            index: idx
-          });
+          placedItems.push({ obj: result.obj, data: item, baseScale: result.baseScale, scaleFactor: item.scaleFactor || 1.0, index: idx });
         });
 
-        // ── Raycasting setup (done here so camera/scene are ready) ─────────
+        // ── Raycasting setup ────────────────────────────────────────────────
+        // Use pointerdown/pointerup instead of mousedown/click.
+        // This bypasses the OrbitControls event interception that was
+        // preventing click events from reaching the raycaster.
         var raycaster = new THREE.Raycaster();
         var _mouse = new THREE.Vector2();
 
-        renderer.domElement.addEventListener('mousedown', function (e) {
-          mouseDownX = e.clientX; mouseDownY = e.clientY;
+        renderer.domElement.addEventListener('pointerdown', function (e) {
+          mouseDownX = e.clientX;
+          mouseDownY = e.clientY;
         });
 
-        renderer.domElement.addEventListener('click', function (e) {
+        renderer.domElement.addEventListener('pointerup', function (e) {
           if (!selectMode) return;
-          // Skip if the click target is not the canvas (UI element intercepted it)
-          if (e.target !== renderer.domElement) return;
+          if (e.button !== 0) return;   // left button only
+
+          // If pointer moved more than 6 px it was a drag, not a tap
           var dx = e.clientX - mouseDownX, dy = e.clientY - mouseDownY;
-          if (Math.sqrt(dx * dx + dy * dy) > 6) return; // drag → skip
+          if (Math.sqrt(dx * dx + dy * dy) > 6) return;
 
           var rect = renderer.domElement.getBoundingClientRect();
           _mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
           _mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
           raycaster.setFromCamera(_mouse, camera);
 
-          // Intersect all furniture objects
           var targets = placedItems.map(function (pi) { return pi.obj; });
           var hits = raycaster.intersectObjects(targets, true);
-
           if (hits.length > 0) {
             var hitMesh = hits[0].object;
             for (var i = 0; i < placedItems.length; i++) {
@@ -923,7 +696,6 @@
               if (found) { selectFurniture(placedItems[i]); return; }
             }
           }
-          // Clicked empty space → deselect
           deselectFurniture();
         });
 
@@ -932,125 +704,58 @@
         hideLoading();
       }
 
-      // ── Place a single furniture item ──────────────────────────────────────
+      // ── Place a single item ──────────────────────────────────────────────
       function placeItem(item, rs) {
-        // Footprint in world metres
-        var tw = item.width * rs;
-        var td = item.height * rs;
-        // Centre position in world metres
-        var cx = (item.x + item.width / 2) * rs;
-        var cz = (item.y + item.height / 2) * rs;
-
-        var obj;
-        var baseScale = 1.0;
-        // Custom furniture uses item.glbFile as bank key; built-ins use type
+        var tw = item.width * rs, td = item.height * rs;
+        var cx = (item.x + item.width / 2) * rs, cz = (item.y + item.height / 2) * rs;
+        var obj, baseScale = 1.0;
         var tmpl = item.glbFile ? bank[item.glbFile] : bank[item.type];
-
         if (tmpl) {
           obj = tmpl.clone();
-          obj.traverse(function (c) {
-            if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; }
-          });
-
-          // Reset any transforms baked into the cloned prototype
-          obj.scale.set(1, 1, 1);
-          obj.position.set(0, 0, 0);
-          obj.rotation.set(0, 0, 0);
-          obj.updateMatrixWorld(true);
-
-          var bbox = new THREE.Box3().setFromObject(obj);
-          var sz = bbox.getSize(new THREE.Vector3());
-
-          // Target height for this furniture type
+          obj.traverse(function (c) { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+          obj.scale.set(1, 1, 1); obj.position.set(0, 0, 0); obj.rotation.set(0, 0, 0); obj.updateMatrixWorld(true);
+          var bbox = new THREE.Box3().setFromObject(obj), sz = bbox.getSize(new THREE.Vector3());
           var th = MODEL_HEIGHT[item.type] || 0.85;
-
-          // Uniform scale: fit footprint AND height, take the smallest factor
-          var sX = sz.x > 0.001 ? tw / sz.x : 1;
-          var sZ = sz.z > 0.001 ? td / sz.z : 1;
-          var sY = sz.y > 0.001 ? th / sz.y : 1;
-          var s = Math.min(sX, sZ, sY);
-
-          // Apply any pre-saved scale factor from the payload
-          var sf = item.scaleFactor || 1.0;
-          baseScale = s;
-          obj.scale.setScalar(s * sf);
-
-          // Lift so the bottom of the model rests on the floor
-          var bbox2 = new THREE.Box3().setFromObject(obj);
-          obj.position.y = -bbox2.min.y;
-
+          var sX = sz.x > 0.001 ? tw / sz.x : 1, sZ = sz.z > 0.001 ? td / sz.z : 1, sY = sz.y > 0.001 ? th / sz.y : 1;
+          var s = Math.min(sX, sZ, sY), sf = item.scaleFactor || 1.0;
+          baseScale = s; obj.scale.setScalar(s * sf);
+          var bbox2 = new THREE.Box3().setFromObject(obj); obj.position.y = -bbox2.min.y;
         } else {
-          // Fallback coloured box when the GLB didn't load
           var h = (MODEL_HEIGHT[item.type] || 0.80) * (item.scaleFactor || 1.0);
-          obj = new THREE.Mesh(
-            new THREE.BoxGeometry(tw, h, td),
-            new THREE.MeshLambertMaterial({ color: 0x888888 })
-          );
-          obj.position.y = h / 2;
-          obj.castShadow = true;
-          obj.receiveShadow = true;
-          baseScale = 1.0;
+          obj = new THREE.Mesh(new THREE.BoxGeometry(tw, h, td), new THREE.MeshLambertMaterial({ color: 0x888888 }));
+          obj.position.y = h / 2; obj.castShadow = true; obj.receiveShadow = true; baseScale = 1.0;
         }
-
-        obj.position.x = cx;
-        obj.position.z = cz;
-        obj.rotation.y = -(item.rotation || 0);
+        obj.position.x = cx; obj.position.z = cz; obj.rotation.y = -(item.rotation || 0);
         return { obj: obj, baseScale: baseScale };
       }
 
-      // ── Resize handler ─────────────────────────────────────────────────────
+      // ── Resize ───────────────────────────────────────────────────────────
       window.addEventListener('resize', function () {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
+        camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
         renderer.setSize(window.innerWidth, window.innerHeight);
       });
 
-      // ── Kick off loading ───────────────────────────────────────────────────
-      var neededTypes = getNeededTypes();
-      var customFiles = Object.keys(customGlbFiles);
-
-      // Load custom GLBs (keyed by filename), then built-in types
+      // ── Start loading ────────────────────────────────────────────────────
+      var neededTypes = getNeededTypes(), customFiles = Object.keys(customGlbFiles);
       function loadCustomGlbs(i, onDone) {
         if (i >= customFiles.length) { onDone(); return; }
         var filename = customFiles[i];
-        var pct = 40 + Math.round((i / customFiles.length) * 20);
-        setStatus('Loading custom model ' + (i + 1) + '/' + customFiles.length, pct);
+        setStatus('Loading custom model ' + (i + 1) + '/' + customFiles.length, 40 + Math.round((i / customFiles.length) * 20));
         var done = false;
-        var timer = setTimeout(function () {
-          if (done) return; done = true;
-          console.warn('Custom GLB timeout: ' + filename);
-          loadCustomGlbs(i + 1, onDone);
-        }, 8000);
+        var timer = setTimeout(function () { if (done) return; done = true; loadCustomGlbs(i + 1, onDone); }, 8000);
         var loader = new THREE.GLTFLoader();
         loader.load(filename,
-          function (gltf) {
-            if (done) return; done = true; clearTimeout(timer);
-            bank[filename] = gltf.scene;
-            console.log('Loaded custom GLB: ' + filename);
-            loadCustomGlbs(i + 1, onDone);
-          }, null,
-          function (err) {
-            if (done) return; done = true; clearTimeout(timer);
-            console.warn('Failed custom GLB: ' + filename, err);
-            loadCustomGlbs(i + 1, onDone);
-          }
+          function (gltf) { if (done) return; done = true; clearTimeout(timer); bank[filename] = gltf.scene; loadCustomGlbs(i + 1, onDone); }, null,
+          function (err) { if (done) return; done = true; clearTimeout(timer); console.warn('Failed custom GLB:' + filename, err); loadCustomGlbs(i + 1, onDone); }
         );
       }
-
-      if (neededTypes.length === 0 && customFiles.length === 0) {
-        buildRoom(10, 10);
-        hideLoading();
-      } else {
-        setStatus('Preparing models…', 40);
-        loadCustomGlbs(0, function () {
-          loadSeq(neededTypes, 0, onReady);
-        });
-      }
+      if (neededTypes.length === 0 && customFiles.length === 0) { buildRoom(10, 10); hideLoading(); }
+      else { setStatus('Preparing models…', 40); loadCustomGlbs(0, function () { loadSeq(neededTypes, 0, onReady); }); }
     }
-    // ─────────────────────────────────────────────────────────────────────
-    // Select Mode — functions called from HTML onclick attributes
-    // (defined at page scope so they're accessible before boot())
-    // ─────────────────────────────────────────────────────────────────────
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Select Mode
+    // ─────────────────────────────────────────────────────────────────────────
 
     function toggleSelectMode() {
       selectMode = !selectMode;
@@ -1060,102 +765,81 @@
         toggle.classList.add('active');
         label.textContent = 'Select Mode ON';
         document.body.classList.add('select-active');
+        // ── KEY FIX: disable left-button orbit so clicks reach the raycaster
+        if (_controls) {
+          _controls.mouseButtons = { LEFT: -1, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+        }
       } else {
         toggle.classList.remove('active');
         label.textContent = 'Select & Resize';
         document.body.classList.remove('select-active');
         deselectFurniture();
+        // Restore normal orbit
+        if (_controls) {
+          _controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+        }
       }
     }
 
     function selectFurniture(entry) {
-      // Remove old selection box
       if (selectionBox && _scene) _scene.remove(selectionBox);
-
       selectedEntry = entry;
-
-      // Create a glowing BoxHelper around the selected object
       if (typeof THREE !== 'undefined' && _scene) {
         selectionBox = new THREE.BoxHelper(entry.obj, 0x6366f1);
         _scene.add(selectionBox);
       }
-
-      // Populate panel
       var name = (entry.data.label || entry.data.type || 'Furniture');
-      // CamelCase → words
       name = name.replace(/([A-Z])/g, ' $1').trim();
       name = name.charAt(0).toUpperCase() + name.slice(1);
       document.getElementById('panel-furniture-name').textContent = name;
-
       var slider = document.getElementById('scale-slider');
       slider.value = entry.scaleFactor;
       updateSliderTrack(slider);
-      document.getElementById('scale-value-badge').textContent =
-        entry.scaleFactor.toFixed(2) + '×';
+      document.getElementById('scale-value-badge').textContent = entry.scaleFactor.toFixed(2) + '×';
       updatePresets(entry.scaleFactor);
-
       document.getElementById('size-panel').classList.add('visible');
     }
 
     function deselectFurniture() {
       if (selectionBox && _scene) _scene.remove(selectionBox);
-      selectionBox = null;
-      selectedEntry = null;
+      selectionBox = null; selectedEntry = null;
       document.getElementById('size-panel').classList.remove('visible');
     }
 
     function applyScale(factor) {
       if (!selectedEntry) return;
       selectedEntry.scaleFactor = factor;
-
-      var newS = selectedEntry.baseScale * factor;
-      selectedEntry.obj.scale.setScalar(newS);
-
-      // Re-ground the object
+      selectedEntry.obj.scale.setScalar(selectedEntry.baseScale * factor);
       if (typeof THREE !== 'undefined') {
+        // Reset Y to 0 BEFORE measuring the bounding box.
+        // Without this, bbox.min.y includes the old position.y offset,
+        // causing the furniture to drift underground or float on each change.
+        selectedEntry.obj.position.y = 0;
         var bbox = new THREE.Box3().setFromObject(selectedEntry.obj);
         selectedEntry.obj.position.y = -bbox.min.y;
         if (selectionBox) selectionBox.update();
       }
-
       var slider = document.getElementById('scale-slider');
-      slider.value = factor;
-      updateSliderTrack(slider);
+      slider.value = factor; updateSliderTrack(slider);
       document.getElementById('scale-value-badge').textContent = factor.toFixed(2) + '×';
       updatePresets(factor);
     }
 
     function applyPreset(val) { applyScale(val); }
-
     function resetScale() { applyScale(1.0); }
 
     function saveSize() {
       if (!selectedEntry) return;
-      var msg = {
-        type: 'sizeUpdate',
-        id: selectedEntry.data.id,
-        index: selectedEntry.index,
-        scaleFactor: selectedEntry.scaleFactor
-      };
-      try {
-        window.chrome.webview.postMessage(JSON.stringify(msg));
-      } catch (e) {
-        console.log('[3D] postMessage not available (dev mode):', e);
-      }
+      var msg = { type: 'sizeUpdate', id: selectedEntry.data.id, index: selectedEntry.index, scaleFactor: selectedEntry.scaleFactor };
+      try { window.chrome.webview.postMessage(JSON.stringify(msg)); } catch (e) { console.log('[3D] postMessage not available:', e); }
       var btn = document.getElementById('btn-save');
-      btn.textContent = '✓ Saved!';
-      btn.classList.add('saved');
-      setTimeout(function () {
-        btn.textContent = '💾 Save Size';
-        btn.classList.remove('saved');
-      }, 1800);
+      btn.textContent = '✓ Saved!'; btn.classList.add('saved');
+      setTimeout(function () { btn.textContent = '💾 Save Size'; btn.classList.remove('saved'); }, 1800);
     }
 
     function updateSliderTrack(slider) {
-      var min = parseFloat(slider.min), max = parseFloat(slider.max),
-        val = parseFloat(slider.value);
-      var pct = ((val - min) / (max - min) * 100).toFixed(1);
-      slider.style.setProperty('--pct', pct + '%');
+      var min = parseFloat(slider.min), max = parseFloat(slider.max), val = parseFloat(slider.value);
+      slider.style.setProperty('--pct', ((val - min) / (max - min) * 100).toFixed(1) + '%');
     }
 
     function updatePresets(factor) {
@@ -1165,70 +849,30 @@
       });
     }
 
-    // ── Wire all UI events immediately ─────────────────────────────────────
-    // DOMContentLoaded has already fired by the time dynamically-loaded scripts
-    // run, so we bind directly. The HTML elements exist when this executes
-    // because this <script> block is below them in the document body.
+    // ── Wire UI events ─────────────────────────────────────────────────────
     (function wireUI() {
-      // Stop mousedown on toggle from reaching OrbitControls on the canvas
-      document.getElementById('select-toggle').addEventListener('mousedown', function (e) {
-        e.stopPropagation();
+      ['mousedown', 'pointerdown'].forEach(function (ev) {
+        document.getElementById('select-toggle').addEventListener(ev, function (e) { e.stopPropagation(); });
+        document.getElementById('panel-close').addEventListener(ev, function (e) { e.stopPropagation(); });
+        document.getElementById('scale-slider').addEventListener(ev, function (e) { e.stopPropagation(); });
+        document.getElementById('btn-reset').addEventListener(ev, function (e) { e.stopPropagation(); });
+        document.getElementById('btn-save').addEventListener(ev, function (e) { e.stopPropagation(); });
+        document.getElementById('size-panel').addEventListener(ev, function (e) { e.stopPropagation(); });
       });
 
-      // Select & Resize toggle
-      document.getElementById('select-toggle').addEventListener('click', function (e) {
-        e.stopPropagation();
-        toggleSelectMode();
-      });
+      document.getElementById('select-toggle').addEventListener('click', function (e) { e.stopPropagation(); toggleSelectMode(); });
+      document.getElementById('panel-close').addEventListener('click', function (e) { e.stopPropagation(); deselectFurniture(); });
+      document.getElementById('scale-slider').addEventListener('input', function () { applyScale(parseFloat(this.value)); });
+      document.getElementById('scale-slider').addEventListener('click', function (e) { e.stopPropagation(); });
 
-      // Panel close ×
-      document.getElementById('panel-close').addEventListener('mousedown', function (e) {
-        e.stopPropagation();
-      });
-      document.getElementById('panel-close').addEventListener('click', function (e) {
-        e.stopPropagation();
-        deselectFurniture();
-      });
-
-      // Scale slider — input fires on drag, click prevents canvas raycast
-      document.getElementById('scale-slider').addEventListener('input', function () {
-        applyScale(parseFloat(this.value));
-      });
-      document.getElementById('scale-slider').addEventListener('mousedown', function (e) {
-        e.stopPropagation();
-      });
-      document.getElementById('scale-slider').addEventListener('click', function (e) {
-        e.stopPropagation();
-      });
-
-      // Preset buttons
       document.querySelectorAll('.preset-btn').forEach(function (btn) {
         btn.addEventListener('mousedown', function (e) { e.stopPropagation(); });
-        btn.addEventListener('click', function (e) {
-          e.stopPropagation();
-          applyPreset(parseFloat(this.dataset.preset));
-        });
+        btn.addEventListener('click', function (e) { e.stopPropagation(); applyPreset(parseFloat(this.dataset.preset)); });
       });
 
-      // Reset & Save buttons
-      document.getElementById('btn-reset').addEventListener('mousedown', function (e) { e.stopPropagation(); });
-      document.getElementById('btn-reset').addEventListener('click', function (e) {
-        e.stopPropagation();
-        resetScale();
-      });
-      document.getElementById('btn-save').addEventListener('mousedown', function (e) { e.stopPropagation(); });
-      document.getElementById('btn-save').addEventListener('click', function (e) {
-        e.stopPropagation();
-        saveSize();
-      });
-
-      // Prevent any panel interaction from reaching the canvas raycaster
-      document.getElementById('size-panel').addEventListener('mousedown', function (e) {
-        e.stopPropagation();
-      });
-      document.getElementById('size-panel').addEventListener('click', function (e) {
-        e.stopPropagation();
-      });
+      document.getElementById('btn-reset').addEventListener('click', function (e) { e.stopPropagation(); resetScale(); });
+      document.getElementById('btn-save').addEventListener('click', function (e) { e.stopPropagation(); saveSize(); });
+      document.getElementById('size-panel').addEventListener('click', function (e) { e.stopPropagation(); });
     })();
   </script>
 </body>

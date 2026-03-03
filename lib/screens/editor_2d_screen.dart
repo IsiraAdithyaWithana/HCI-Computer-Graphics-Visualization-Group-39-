@@ -5,6 +5,7 @@ import '../widgets/room_canvas.dart';
 import '../models/furniture_model.dart';
 import '../services/custom_furniture_registry.dart';
 import 'realistic_3d_screen.dart';
+import '../services/layout_persistence_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Editor2DScreen
@@ -90,6 +91,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             final idx = canvasItems.indexWhere((f) => f.id == id);
             if (idx != -1) {
               setState(() => canvasItems[idx].scaleFactor = scaleFactor);
+              _saveLayout();
               _snack(
                 '${canvasItems[idx].labelOverride ?? canvasItems[idx].type.name} '
                 'size saved (${scaleFactor.toStringAsFixed(2)}×).',
@@ -113,6 +115,34 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   void _setZoom(double value) {
     _canvasKey.currentState?.setZoom(value);
     setState(() => _canvasZoom = value);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadSavedLayout());
+  }
+
+  Future<void> _loadSavedLayout() async {
+    final snapshot = await LayoutPersistenceService.instance.load();
+    if (snapshot == null) return;
+    setState(() {
+      _roomWidthM = snapshot.roomWidthM;
+      _roomDepthM = snapshot.roomDepthM;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _canvasKey.currentState?.loadFromJson(snapshot.furnitureJson);
+    });
+  }
+
+  Future<void> _saveLayout() async {
+    final json = _canvasKey.currentState?.exportToJson();
+    if (json == null) return;
+    await LayoutPersistenceService.instance.save(
+      furnitureJson: json,
+      roomWidthM: _roomWidthM,
+      roomDepthM: _roomDepthM,
+    );
   }
 
   @override
@@ -167,8 +197,14 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
               roomDepthM: _roomDepthM,
               minRoomM: _minRoomM,
               maxRoomM: _maxRoomM,
-              onWidthChanged: (v) => setState(() => _roomWidthM = v),
-              onDepthChanged: (v) => setState(() => _roomDepthM = v),
+              onWidthChanged: (v) {
+                setState(() => _roomWidthM = v);
+                _saveLayout();
+              },
+              onDepthChanged: (v) {
+                setState(() => _roomDepthM = v);
+                _saveLayout();
+              },
               onRealistic3D: _openRealistic3D,
             ),
           ),
@@ -185,6 +221,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                   customGlbOverride: _customGlbOverride,
                   customLabelOverride: _customLabelOverride,
                   customColor: _customColor,
+                  onChanged: _saveLayout,
                 ),
                 Positioned(
                   right: 16,
