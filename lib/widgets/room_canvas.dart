@@ -3,6 +3,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/furniture_model.dart';
+import '../services/furniture_scale_service.dart';
 import 'dart:math' as Math;
 
 enum MouseMode { select, hand, draw }
@@ -111,6 +112,27 @@ class RoomCanvasState extends State<RoomCanvas> {
       selectedItems.clear();
       selectedItem = null;
     });
+  }
+
+  /// Updates the 3D scale factor for a single furniture item and immediately
+  /// triggers a canvas save via [onChanged].  Called from the 3D screen's
+  /// onSizeUpdated callback so the change is owned by the canvas state and
+  /// always included in the next [exportToJson] / SharedPreferences write.
+  ///
+  /// The scale is ALSO written to [FurnitureScaleService] so that every
+  /// future instance of the same furniture type inherits this size — even
+  /// after a hot reload or full app restart.
+  void updateScaleFactor(String id, double scaleFactor) {
+    final idx = furnitureItems.indexWhere((f) => f.id == id);
+    if (idx == -1) return;
+    final item = furnitureItems[idx];
+    setState(() {
+      item.scaleFactor = scaleFactor;
+    });
+    // Persist scale for this furniture TYPE so new placements use it too.
+    final typeKey = item.glbOverride ?? item.type.name;
+    FurnitureScaleService.instance.saveScale(typeKey, scaleFactor);
+    _save(); // → widget.onChanged → _Editor2DScreenState._saveLayout()
   }
 
   void _save() => widget.onChanged?.call();
@@ -353,21 +375,33 @@ class RoomCanvasState extends State<RoomCanvas> {
     }
   }
 
-  FurnitureModel _newItem({required Offset position, Size? size}) =>
-      FurnitureModel(
-        id: DateTime.now().toString(),
-        type: widget.selectedType,
-        position: _snapOffset(position),
-        size: size ?? _defaultSize(widget.selectedType),
-        color: _defaultColor(widget.selectedType),
-        // Attach custom overrides when placing a custom furniture item
-        glbOverride: widget.selectedType == FurnitureType.custom
-            ? widget.customGlbOverride
-            : null,
-        labelOverride: widget.selectedType == FurnitureType.custom
-            ? widget.customLabelOverride
-            : null,
-      );
+  /// Returns the lookup key used by [FurnitureScaleService].
+  /// Custom items are keyed by their GLB filename so every item using the
+  /// same model shares the same saved scale; built-ins use the type name.
+  String _scaleKey({String? glbOverride}) =>
+      glbOverride ?? widget.selectedType.name;
+
+  FurnitureModel _newItem({required Offset position, Size? size}) {
+    final glb = widget.selectedType == FurnitureType.custom
+        ? widget.customGlbOverride
+        : null;
+    final savedScale = FurnitureScaleService.instance.getScale(
+      _scaleKey(glbOverride: glb),
+    );
+    return FurnitureModel(
+      id: DateTime.now().toString(),
+      type: widget.selectedType,
+      position: _snapOffset(position),
+      size: size ?? _defaultSize(widget.selectedType),
+      color: _defaultColor(widget.selectedType),
+      scaleFactor: savedScale,
+      // Attach custom overrides when placing a custom furniture item
+      glbOverride: glb,
+      labelOverride: widget.selectedType == FurnitureType.custom
+          ? widget.customLabelOverride
+          : null,
+    );
+  }
 
   // ── Build ─────────────────────────────────────────────────────────────────
   @override

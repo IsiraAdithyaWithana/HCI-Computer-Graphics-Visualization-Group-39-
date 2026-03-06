@@ -80,27 +80,28 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       _snack('Add some furniture first.');
       return;
     }
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => Realistic3DScreen(
-          furniture: List.from(items),
-          roomWidth: _roomWidthPx,
-          roomDepth: _roomDepthPx,
-          onSizeUpdated: (String id, double scaleFactor) {
-            final canvasItems = _canvasKey.currentState?.furnitureItems ?? [];
-            final idx = canvasItems.indexWhere((f) => f.id == id);
-            if (idx != -1) {
-              setState(() => canvasItems[idx].scaleFactor = scaleFactor);
-              _saveLayout();
-              _snack(
-                '${canvasItems[idx].labelOverride ?? canvasItems[idx].type.name} '
-                'size saved (${scaleFactor.toStringAsFixed(2)}×).',
-              );
-            }
-          },
-        ),
-      ),
-    );
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => Realistic3DScreen(
+              furniture: List.from(items),
+              roomWidth: _roomWidthPx,
+              roomDepth: _roomDepthPx,
+              onSizeUpdated: (String id, double scaleFactor) {
+                // Delegate entirely to RoomCanvasState which owns the list.
+                // updateScaleFactor uses the canvas's own setState so the
+                // mutation is committed before exportToJson() runs, and
+                // _save() -> onChanged -> _saveLayout() persists to
+                // SharedPreferences with no race condition.
+                _canvasKey.currentState?.updateScaleFactor(id, scaleFactor);
+              },
+            ),
+          ),
+        )
+        // Belt-and-suspenders: save once more when the user pops back to the
+        // 2D editor, guaranteeing the latest scale factors hit disk even if an
+        // earlier save during the 3D session was somehow skipped.
+        .then((_) => _saveLayout());
   }
 
   void _snack(String msg) =>
