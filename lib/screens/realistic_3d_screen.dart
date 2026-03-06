@@ -9,6 +9,12 @@ class Realistic3DScreen extends StatefulWidget {
   final double roomWidth;
   final double roomDepth;
 
+  /// Room colour scheme — passed through to the Three.js viewer.
+  final Color wallColour;
+  final Color floorColour;
+  final Color ceilingColour;
+  final Color trimColour;
+
   /// Called when the user saves a resized furniture item in the 3D view.
   /// [id] is the FurnitureModel.id, [scaleFactor] is the multiplier applied.
   final void Function(String id, double scaleFactor)? onSizeUpdated;
@@ -18,6 +24,10 @@ class Realistic3DScreen extends StatefulWidget {
     required this.furniture,
     required this.roomWidth,
     required this.roomDepth,
+    this.wallColour = const Color(0xFFF0EBE2),
+    this.floorColour = const Color(0xFFD4C4A8),
+    this.ceilingColour = const Color(0xFFFAF8F4),
+    this.trimColour = const Color(0xFFE8E0D4),
     this.onSizeUpdated,
   });
 
@@ -84,6 +94,9 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
     }
   }
 
+  String _colourHex(Color c) =>
+      c.value.toRadixString(16).substring(2).toUpperCase();
+
   String _buildUrl(String baseUrl) {
     final items = widget.furniture
         .map(
@@ -107,6 +120,10 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
       'items': items,
       'roomWidth': widget.roomWidth,
       'roomDepth': widget.roomDepth,
+      'wallColor': _colourHex(widget.wallColour),
+      'floorColor': _colourHex(widget.floorColour),
+      'ceilingColor': _colourHex(widget.ceilingColour),
+      'trimColor': _colourHex(widget.trimColour),
     });
 
     final encoded = base64Url.encode(utf8.encode(payload));

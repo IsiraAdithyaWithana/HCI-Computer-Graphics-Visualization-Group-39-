@@ -3,7 +3,6 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/furniture_model.dart';
-import '../services/furniture_scale_service.dart';
 import 'dart:math' as Math;
 
 enum MouseMode { select, hand, draw }
@@ -15,6 +14,13 @@ class RoomCanvas extends StatefulWidget {
   final double roomDepthPx;
   final void Function(double zoom)? onZoomChanged;
   final VoidCallback? onChanged;
+
+  // ── Colour scheme ──────────────────────────────────────────────────────
+  /// Room floor colour shown in the 2D top-down canvas.
+  final Color roomFloorColour;
+
+  /// Wall/border colour for the room outline.
+  final Color roomWallColour;
 
   // ── Custom furniture overrides ─────────────────────────────────────────
   // Set these when selectedType == FurnitureType.custom so the canvas knows
@@ -30,6 +36,8 @@ class RoomCanvas extends StatefulWidget {
     this.roomWidthPx = 600,
     this.roomDepthPx = 500,
     this.onZoomChanged,
+    this.roomFloorColour = const Color(0xFFFAF8F5),
+    this.roomWallColour = const Color(0xFF4A4A5A),
     // custom fields — null for all built-in types
     this.customGlbOverride,
     this.customLabelOverride,
@@ -112,27 +120,6 @@ class RoomCanvasState extends State<RoomCanvas> {
       selectedItems.clear();
       selectedItem = null;
     });
-  }
-
-  /// Updates the 3D scale factor for a single furniture item and immediately
-  /// triggers a canvas save via [onChanged].  Called from the 3D screen's
-  /// onSizeUpdated callback so the change is owned by the canvas state and
-  /// always included in the next [exportToJson] / SharedPreferences write.
-  ///
-  /// The scale is ALSO written to [FurnitureScaleService] so that every
-  /// future instance of the same furniture type inherits this size — even
-  /// after a hot reload or full app restart.
-  void updateScaleFactor(String id, double scaleFactor) {
-    final idx = furnitureItems.indexWhere((f) => f.id == id);
-    if (idx == -1) return;
-    final item = furnitureItems[idx];
-    setState(() {
-      item.scaleFactor = scaleFactor;
-    });
-    // Persist scale for this furniture TYPE so new placements use it too.
-    final typeKey = item.glbOverride ?? item.type.name;
-    FurnitureScaleService.instance.saveScale(typeKey, scaleFactor);
-    _save(); // → widget.onChanged → _Editor2DScreenState._saveLayout()
   }
 
   void _save() => widget.onChanged?.call();
@@ -375,33 +362,21 @@ class RoomCanvasState extends State<RoomCanvas> {
     }
   }
 
-  /// Returns the lookup key used by [FurnitureScaleService].
-  /// Custom items are keyed by their GLB filename so every item using the
-  /// same model shares the same saved scale; built-ins use the type name.
-  String _scaleKey({String? glbOverride}) =>
-      glbOverride ?? widget.selectedType.name;
-
-  FurnitureModel _newItem({required Offset position, Size? size}) {
-    final glb = widget.selectedType == FurnitureType.custom
-        ? widget.customGlbOverride
-        : null;
-    final savedScale = FurnitureScaleService.instance.getScale(
-      _scaleKey(glbOverride: glb),
-    );
-    return FurnitureModel(
-      id: DateTime.now().toString(),
-      type: widget.selectedType,
-      position: _snapOffset(position),
-      size: size ?? _defaultSize(widget.selectedType),
-      color: _defaultColor(widget.selectedType),
-      scaleFactor: savedScale,
-      // Attach custom overrides when placing a custom furniture item
-      glbOverride: glb,
-      labelOverride: widget.selectedType == FurnitureType.custom
-          ? widget.customLabelOverride
-          : null,
-    );
-  }
+  FurnitureModel _newItem({required Offset position, Size? size}) =>
+      FurnitureModel(
+        id: DateTime.now().toString(),
+        type: widget.selectedType,
+        position: _snapOffset(position),
+        size: size ?? _defaultSize(widget.selectedType),
+        color: _defaultColor(widget.selectedType),
+        // Attach custom overrides when placing a custom furniture item
+        glbOverride: widget.selectedType == FurnitureType.custom
+            ? widget.customGlbOverride
+            : null,
+        labelOverride: widget.selectedType == FurnitureType.custom
+            ? widget.customLabelOverride
+            : null,
+      );
 
   // ── Build ─────────────────────────────────────────────────────────────────
   @override
@@ -705,6 +680,8 @@ class RoomCanvasState extends State<RoomCanvas> {
                                     roomDepth: widget.roomDepthPx,
                                     canvasW: _canvasW,
                                     canvasH: _canvasH,
+                                    roomFloorColour: widget.roomFloorColour,
+                                    roomWallColour: widget.roomWallColour,
                                   ),
                                   size: const Size(_canvasW, _canvasH),
                                 ),
@@ -827,6 +804,8 @@ class RoomPainter extends CustomPainter {
   final List<FurnitureModel> furnitureItems;
   final List<FurnitureModel> selectedItems;
   final double roomWidth, roomDepth, canvasW, canvasH;
+  final Color roomFloorColour;
+  final Color roomWallColour;
 
   const RoomPainter({
     required this.furnitureItems,
@@ -835,17 +814,20 @@ class RoomPainter extends CustomPainter {
     required this.roomDepth,
     required this.canvasW,
     required this.canvasH,
+    this.roomFloorColour = const Color(0xFFFAF8F5),
+    this.roomWallColour = const Color(0xFF4A4A5A),
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Background
+    // Background (area outside the room)
     canvas.drawRect(
       Rect.fromLTWH(0, 0, canvasW, canvasH),
       Paint()..color = const Color(0xFFBABCC4),
     );
     final rr = Rect.fromLTWH(0, 0, roomWidth, roomDepth);
-    canvas.drawRect(rr, Paint()..color = const Color(0xFFFAF8F5));
+    // Room floor — use the scheme colour
+    canvas.drawRect(rr, Paint()..color = roomFloorColour);
 
     // Grid
     canvas.save();
@@ -869,11 +851,11 @@ class RoomPainter extends CustomPainter {
     canvas.drawRect(
       rr,
       Paint()
-        ..color = const Color(0xFF4A4A5A)
+        ..color = roomWallColour
         ..style = PaintingStyle.stroke
         ..strokeWidth = 8,
     );
-    final cp = Paint()..color = const Color(0xFF4A4A5A);
+    final cp = Paint()..color = roomWallColour;
     for (final c in [
       Offset(0, 0),
       Offset(roomWidth, 0),

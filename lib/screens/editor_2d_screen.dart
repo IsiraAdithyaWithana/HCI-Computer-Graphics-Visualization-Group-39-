@@ -6,6 +6,7 @@ import '../models/furniture_model.dart';
 import '../services/custom_furniture_registry.dart';
 import 'realistic_3d_screen.dart';
 import '../services/layout_persistence_service.dart';
+import '../widgets/colour_scheme_picker.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Editor2DScreen
@@ -23,6 +24,8 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   String? _selectedCustomId;
 
   final GlobalKey<RoomCanvasState> _canvasKey = GlobalKey<RoomCanvasState>();
+
+  RoomColourScheme _currentScheme = kColourPresets.first;
 
   double _roomWidthM = 6.0;
   double _roomDepthM = 5.0;
@@ -80,28 +83,31 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       _snack('Add some furniture first.');
       return;
     }
-    Navigator.of(context)
-        .push(
-          MaterialPageRoute(
-            builder: (_) => Realistic3DScreen(
-              furniture: List.from(items),
-              roomWidth: _roomWidthPx,
-              roomDepth: _roomDepthPx,
-              onSizeUpdated: (String id, double scaleFactor) {
-                // Delegate entirely to RoomCanvasState which owns the list.
-                // updateScaleFactor uses the canvas's own setState so the
-                // mutation is committed before exportToJson() runs, and
-                // _save() -> onChanged -> _saveLayout() persists to
-                // SharedPreferences with no race condition.
-                _canvasKey.currentState?.updateScaleFactor(id, scaleFactor);
-              },
-            ),
-          ),
-        )
-        // Belt-and-suspenders: save once more when the user pops back to the
-        // 2D editor, guaranteeing the latest scale factors hit disk even if an
-        // earlier save during the 3D session was somehow skipped.
-        .then((_) => _saveLayout());
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => Realistic3DScreen(
+          furniture: List.from(items),
+          roomWidth: _roomWidthPx,
+          roomDepth: _roomDepthPx,
+          wallColour: _currentScheme.wall,
+          floorColour: _currentScheme.floor,
+          ceilingColour: _currentScheme.ceiling,
+          trimColour: _currentScheme.trim,
+          onSizeUpdated: (String id, double scaleFactor) {
+            final canvasItems = _canvasKey.currentState?.furnitureItems ?? [];
+            final idx = canvasItems.indexWhere((f) => f.id == id);
+            if (idx != -1) {
+              setState(() => canvasItems[idx].scaleFactor = scaleFactor);
+              _saveLayout();
+              _snack(
+                '${canvasItems[idx].labelOverride ?? canvasItems[idx].type.name} '
+                'size saved (${scaleFactor.toStringAsFixed(2)}×).',
+              );
+            }
+          },
+        ),
+      ),
+    );
   }
 
   void _snack(String msg) =>
@@ -153,6 +159,13 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       appBar: AppBar(
         title: const Text('2D Room Editor'),
         actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+            child: ColourSchemeButton(
+              current: _currentScheme,
+              onSchemeChanged: (s) => setState(() => _currentScheme = s),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.auto_awesome),
             tooltip: 'Realistic 3D View',
@@ -218,6 +231,8 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                   currentMode: _currentMode,
                   roomWidthPx: _roomWidthPx,
                   roomDepthPx: _roomDepthPx,
+                  roomFloorColour: _currentScheme.floor,
+                  roomWallColour: _currentScheme.wall,
                   onZoomChanged: _onZoomChanged,
                   customGlbOverride: _customGlbOverride,
                   customLabelOverride: _customLabelOverride,

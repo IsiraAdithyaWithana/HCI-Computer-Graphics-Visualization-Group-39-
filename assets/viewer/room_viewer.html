@@ -567,10 +567,11 @@
       function buildRoom(rw, rd) {
         while (roomGroup.children.length) roomGroup.remove(roomGroup.children[0]);
         var WH = 3.2;
-        var floorMat = new THREE.MeshLambertMaterial({ color: 0xd4c4a8 });
-        var wallMat = new THREE.MeshLambertMaterial({ color: 0xf0ebe2 });
-        var ceilMat = new THREE.MeshLambertMaterial({ color: 0xfaf8f4 });
-        var trimMat = new THREE.MeshLambertMaterial({ color: 0xe8e0d4 });
+        var _p = getPayload() || {};
+        var floorMat = new THREE.MeshLambertMaterial({ color: _p.floorColor ? parseInt(_p.floorColor, 16) : 0xd4c4a8 });
+        var wallMat = new THREE.MeshLambertMaterial({ color: _p.wallColor ? parseInt(_p.wallColor, 16) : 0xf0ebe2 });
+        var ceilMat = new THREE.MeshLambertMaterial({ color: _p.ceilingColor ? parseInt(_p.ceilingColor, 16) : 0xfaf8f4 });
+        var trimMat = new THREE.MeshLambertMaterial({ color: _p.trimColor ? parseInt(_p.trimColor, 16) : 0xe8e0d4 });
         var floor = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd), floorMat);
         floor.rotation.x = -Math.PI / 2; floor.position.set(rw / 2, 0, rd / 2); floor.receiveShadow = true; roomGroup.add(floor);
         var gridDiv = Math.round(Math.max(rw, rd) * 2);
