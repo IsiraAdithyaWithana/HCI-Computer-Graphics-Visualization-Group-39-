@@ -278,21 +278,24 @@
 
     .scale-presets {
       display: flex;
-      gap: 6px;
+      flex-wrap: wrap;
+      gap: 5px;
       margin-bottom: 14px;
     }
 
     .preset-btn {
-      flex: 1;
+      flex: 1 1 auto;
+      min-width: 36px;
       background: rgba(255, 255, 255, 0.04);
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 8px;
       color: rgba(255, 255, 255, 0.55);
       font: 11px/1 sans-serif;
-      padding: 6px 4px;
+      padding: 6px 3px;
       cursor: pointer;
       transition: background 0.15s, color 0.15s, border-color 0.15s;
       text-align: center;
+      white-space: nowrap;
     }
 
     .preset-btn:hover,
@@ -390,15 +393,19 @@
     <div id="panel-body">
       <div class="slider-row">
         <span class="slider-label">Scale</span>
-        <input type="range" id="scale-slider" min="0.2" max="3.0" step="0.05" value="1.0">
+        <!-- Slider internal value is logarithmic: sliderVal = ln(scaleFactor).
+             Range: ln(0.01)≈-4.605  →  ln(20)≈2.996  -->
+        <input type="range" id="scale-slider" min="-4.605" max="2.996" step="0.01" value="0">
         <span id="scale-value-badge">1.00×</span>
       </div>
       <div class="scale-presets">
+        <div class="preset-btn" data-preset="0.1">0.1×</div>
         <div class="preset-btn" data-preset="0.5">½×</div>
-        <div class="preset-btn" data-preset="0.75">¾×</div>
         <div class="preset-btn active" data-preset="1.0">1×</div>
-        <div class="preset-btn" data-preset="1.5">1.5×</div>
-        <div class="preset-btn" data-preset="2.0">2×</div>
+        <div class="preset-btn" data-preset="3.0">3×</div>
+        <div class="preset-btn" data-preset="5.0">5×</div>
+        <div class="preset-btn" data-preset="10.0">10×</div>
+        <div class="preset-btn" data-preset="20.0">20×</div>
       </div>
       <div class="panel-actions">
         <button id="btn-reset">↺ Reset</button>
@@ -820,7 +827,7 @@
       name = name.charAt(0).toUpperCase() + name.slice(1);
       document.getElementById('panel-furniture-name').textContent = name;
       var slider = document.getElementById('scale-slider');
-      slider.value = entry.scaleFactor;
+      slider.value = Math.log(Math.max(0.01, entry.scaleFactor));
       updateSliderTrack(slider);
       document.getElementById('scale-value-badge').textContent = entry.scaleFactor.toFixed(2) + '×';
       updatePresets(entry.scaleFactor);
@@ -835,19 +842,19 @@
 
     function applyScale(factor) {
       if (!selectedEntry) return;
+      factor = Math.max(0.01, Math.min(20, factor));
       selectedEntry.scaleFactor = factor;
       selectedEntry.obj.scale.setScalar(selectedEntry.baseScale * factor);
       if (typeof THREE !== 'undefined') {
-        // Reset Y to 0 BEFORE measuring the bounding box.
-        // Without this, bbox.min.y includes the old position.y offset,
-        // causing the furniture to drift underground or float on each change.
         selectedEntry.obj.position.y = 0;
         var bbox = new THREE.Box3().setFromObject(selectedEntry.obj);
         selectedEntry.obj.position.y = -bbox.min.y;
         if (selectionBox) selectionBox.update();
       }
       var slider = document.getElementById('scale-slider');
-      slider.value = factor; updateSliderTrack(slider);
+      // Slider position is ln(factor) to give logarithmic distribution
+      slider.value = Math.log(factor);
+      updateSliderTrack(slider);
       document.getElementById('scale-value-badge').textContent = factor.toFixed(2) + '×';
       updatePresets(factor);
     }
@@ -870,7 +877,7 @@
     }
 
     function updatePresets(factor) {
-      var presets = [0.5, 0.75, 1.0, 1.5, 2.0];
+      var presets = [0.1, 0.5, 1.0, 3.0, 5.0, 10.0, 20.0];
       document.querySelectorAll('.preset-btn').forEach(function (btn, i) {
         btn.classList.toggle('active', Math.abs(presets[i] - factor) < 0.02);
       });
@@ -889,7 +896,10 @@
 
       document.getElementById('select-toggle').addEventListener('click', function (e) { e.stopPropagation(); toggleSelectMode(); });
       document.getElementById('panel-close').addEventListener('click', function (e) { e.stopPropagation(); deselectFurniture(); });
-      document.getElementById('scale-slider').addEventListener('input', function () { applyScale(parseFloat(this.value)); });
+      document.getElementById('scale-slider').addEventListener('input', function () {
+        // Slider stores ln(scale), so exp() gives the real scale factor
+        applyScale(Math.exp(parseFloat(this.value)));
+      });
       document.getElementById('scale-slider').addEventListener('click', function (e) { e.stopPropagation(); });
 
       document.querySelectorAll('.preset-btn').forEach(function (btn) {
