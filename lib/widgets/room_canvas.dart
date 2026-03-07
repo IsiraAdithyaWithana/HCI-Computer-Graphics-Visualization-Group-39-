@@ -820,20 +820,22 @@ class RoomPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Background (area outside the room)
+    // Background (area outside the room) — match app dark theme
     canvas.drawRect(
       Rect.fromLTWH(0, 0, canvasW, canvasH),
-      Paint()..color = const Color(0xFFBABCC4),
+      Paint()..color = const Color(0xFF0D0D11),
     );
     final rr = Rect.fromLTWH(0, 0, roomWidth, roomDepth);
     // Room floor — use the scheme colour
     canvas.drawRect(rr, Paint()..color = roomFloorColour);
 
-    // Grid
+    // Grid — adapts to floor colour
     canvas.save();
     canvas.clipRect(rr);
     final gp = Paint()
-      ..color = Colors.grey.withOpacity(0.22)
+      ..color = roomFloorColour.computeLuminance() > 0.5
+          ? Colors.black.withOpacity(0.10)
+          : Colors.white.withOpacity(0.08)
       ..strokeWidth = 1;
     for (double x = 0; x <= roomWidth; x += 20)
       canvas.drawLine(Offset(x, 0), Offset(x, roomDepth), gp);
@@ -1055,7 +1057,7 @@ class RoomPainter extends CustomPainter {
       text: TextSpan(
         text: t,
         style: const TextStyle(
-          color: Color(0xFF44445A),
+          color: Color(0xFF8E8A9A),
           fontSize: 11,
           fontWeight: FontWeight.w700,
         ),

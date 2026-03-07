@@ -6,7 +6,6 @@ import '../models/furniture_model.dart';
 import '../services/custom_furniture_registry.dart';
 import 'realistic_3d_screen.dart';
 import '../services/layout_persistence_service.dart';
-import '../widgets/colour_scheme_picker.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Editor2DScreen
@@ -24,8 +23,6 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   String? _selectedCustomId;
 
   final GlobalKey<RoomCanvasState> _canvasKey = GlobalKey<RoomCanvasState>();
-
-  RoomColourScheme _currentScheme = kColourPresets.first;
 
   double _roomWidthM = 6.0;
   double _roomDepthM = 5.0;
@@ -89,10 +86,6 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
           furniture: List.from(items),
           roomWidth: _roomWidthPx,
           roomDepth: _roomDepthPx,
-          wallColour: _currentScheme.wall,
-          floorColour: _currentScheme.floor,
-          ceilingColour: _currentScheme.ceiling,
-          trimColour: _currentScheme.trim,
           onSizeUpdated: (String id, double scaleFactor) {
             final canvasItems = _canvasKey.currentState?.furnitureItems ?? [];
             final idx = canvasItems.indexWhere((f) => f.id == id);
@@ -159,13 +152,6 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       appBar: AppBar(
         title: const Text('2D Room Editor'),
         actions: [
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-            child: ColourSchemeButton(
-              current: _currentScheme,
-              onSchemeChanged: (s) => setState(() => _currentScheme = s),
-            ),
-          ),
           IconButton(
             icon: const Icon(Icons.auto_awesome),
             tooltip: 'Realistic 3D View',
@@ -231,8 +217,6 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                   currentMode: _currentMode,
                   roomWidthPx: _roomWidthPx,
                   roomDepthPx: _roomDepthPx,
-                  roomFloorColour: _currentScheme.floor,
-                  roomWallColour: _currentScheme.wall,
                   onZoomChanged: _onZoomChanged,
                   customGlbOverride: _customGlbOverride,
                   customLabelOverride: _customLabelOverride,
@@ -338,17 +322,21 @@ class _LeftPanelState extends State<_LeftPanel> {
         .toSet();
 
     return Container(
-      color: Colors.grey[100],
+      color: const Color(0xFF17171F),
       child: Column(
         children: [
           // Header
           Container(
             width: double.infinity,
-            color: Colors.grey[200],
+            color: const Color(0xFF1F1F2B),
             padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
             child: Row(
               children: [
-                const Icon(Icons.chair_alt, size: 15, color: Colors.black54),
+                const Icon(
+                  Icons.chair_alt,
+                  size: 15,
+                  color: const Color(0xFF8E8A9A),
+                ),
                 const SizedBox(width: 6),
                 const Text(
                   'Furniture',
@@ -364,16 +352,16 @@ class _LeftPanelState extends State<_LeftPanel> {
                       width: 26,
                       height: 26,
                       decoration: BoxDecoration(
-                        color: const Color(0xFF6366F1).withOpacity(0.12),
+                        color: const Color(0xFFC9A96E).withOpacity(0.12),
                         borderRadius: BorderRadius.circular(6),
                         border: Border.all(
-                          color: const Color(0xFF6366F1).withOpacity(0.35),
+                          color: const Color(0xFFC9A96E).withOpacity(0.35),
                         ),
                       ),
                       child: const Icon(
                         Icons.add,
                         size: 16,
-                        color: Color(0xFF6366F1),
+                        color: const Color(0xFFC9A96E),
                       ),
                     ),
                   ),
@@ -471,14 +459,14 @@ class _LeftPanelState extends State<_LeftPanel> {
 
                     // Room size section
                     Container(
-                      color: Colors.grey[200],
+                      color: const Color(0xFF1F1F2B),
                       padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
                       child: Row(
                         children: const [
                           Icon(
                             Icons.square_foot,
                             size: 15,
-                            color: Colors.black54,
+                            color: const Color(0xFF8E8A9A),
                           ),
                           SizedBox(width: 6),
                           Text(
@@ -486,6 +474,7 @@ class _LeftPanelState extends State<_LeftPanel> {
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 13,
+                              color: Color(0xFFF0EDE8),
                             ),
                           ),
                         ],
@@ -513,10 +502,10 @@ class _LeftPanelState extends State<_LeftPanel> {
                           vertical: 6,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.indigo.withOpacity(0.08),
+                          color: const Color(0xFFC9A96E).withOpacity(0.08),
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                            color: Colors.indigo.withOpacity(0.25),
+                            color: const Color(0xFFC9A96E).withOpacity(0.25),
                           ),
                         ),
                         child: Row(
@@ -525,7 +514,7 @@ class _LeftPanelState extends State<_LeftPanel> {
                             const Icon(
                               Icons.straighten,
                               size: 13,
-                              color: Colors.indigo,
+                              color: const Color(0xFFC9A96E),
                             ),
                             const SizedBox(width: 6),
                             Text(
@@ -533,7 +522,7 @@ class _LeftPanelState extends State<_LeftPanel> {
                               style: const TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
-                                color: Colors.indigo,
+                                color: const Color(0xFFC9A96E),
                               ),
                             ),
                           ],
@@ -550,8 +539,8 @@ class _LeftPanelState extends State<_LeftPanel> {
                           icon: const Icon(Icons.auto_awesome, size: 17),
                           label: const Text('Realistic 3D View'),
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF6366F1),
-                            foregroundColor: Colors.white,
+                            backgroundColor: const Color(0xFFC9A96E),
+                            foregroundColor: const Color(0xFF0D0D11),
                           ),
                           onPressed: widget.onRealistic3D,
                         ),
@@ -638,7 +627,7 @@ class _CategorySection extends StatelessWidget {
                       fontWeight: isExpanded
                           ? FontWeight.w700
                           : FontWeight.w500,
-                      color: isExpanded ? accent : Colors.black87,
+                      color: isExpanded ? accent : const Color(0xFFF0EDE8),
                     ),
                   ),
                 ),
@@ -651,7 +640,7 @@ class _CategorySection extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: hasSelectedItem
                           ? accent.withOpacity(0.15)
-                          : Colors.grey.shade200,
+                          : const Color(0xFF1F1F2B),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
@@ -659,7 +648,9 @@ class _CategorySection extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
-                        color: hasSelectedItem ? accent : Colors.black54,
+                        color: hasSelectedItem
+                            ? accent
+                            : const Color(0xFF8E8A9A),
                       ),
                     ),
                   ),
@@ -670,7 +661,7 @@ class _CategorySection extends StatelessWidget {
                   child: Icon(
                     Icons.keyboard_arrow_down,
                     size: 16,
-                    color: isExpanded ? accent : Colors.black45,
+                    color: isExpanded ? accent : const Color(0xFF56535F),
                   ),
                 ),
               ],
@@ -715,10 +706,12 @@ class _CategorySection extends StatelessWidget {
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
                 decoration: BoxDecoration(
-                  color: isSel ? accent.withOpacity(0.15) : Colors.white,
+                  color: isSel
+                      ? accent.withOpacity(0.15)
+                      : const Color(0xFF1F1F2B),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                    color: isSel ? accent : Colors.grey.shade300,
+                    color: isSel ? accent : const Color(0xFF2C2C3E),
                     width: isSel ? 1.5 : 1,
                   ),
                   boxShadow: isSel
@@ -742,7 +735,7 @@ class _CategorySection extends StatelessWidget {
                     Icon(
                       item.icon,
                       size: 16,
-                      color: isSel ? accent : Colors.black54,
+                      color: isSel ? accent : const Color(0xFF8E8A9A),
                     ),
                     const SizedBox(width: 5),
                     Flexible(
@@ -753,7 +746,7 @@ class _CategorySection extends StatelessWidget {
                         style: TextStyle(
                           fontSize: 10.5,
                           fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
-                          color: isSel ? accent : Colors.black87,
+                          color: isSel ? accent : const Color(0xFFF0EDE8),
                         ),
                       ),
                     ),
@@ -789,7 +782,7 @@ class _CustomCategorySection extends StatelessWidget {
   final ValueChanged<String> onItemTap;
   final void Function(String id, String name) onDelete;
 
-  static const Color _accent = Color(0xFF6366F1);
+  static const Color _accent = const Color(0xFFC9A96E);
 
   const _CustomCategorySection({
     required this.categoryName,
@@ -846,7 +839,7 @@ class _CustomCategorySection extends StatelessWidget {
                       fontWeight: isExpanded
                           ? FontWeight.w700
                           : FontWeight.w500,
-                      color: isExpanded ? _accent : Colors.black87,
+                      color: isExpanded ? _accent : const Color(0xFFF0EDE8),
                     ),
                   ),
                 ),
@@ -859,7 +852,7 @@ class _CustomCategorySection extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: hasSelectedItem
                           ? _accent.withOpacity(0.15)
-                          : Colors.grey.shade200,
+                          : const Color(0xFF1F1F2B),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
@@ -867,7 +860,9 @@ class _CustomCategorySection extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
-                        color: hasSelectedItem ? _accent : Colors.black54,
+                        color: hasSelectedItem
+                            ? _accent
+                            : const Color(0xFF8E8A9A),
                       ),
                     ),
                   ),
@@ -878,7 +873,7 @@ class _CustomCategorySection extends StatelessWidget {
                   child: Icon(
                     Icons.keyboard_arrow_down,
                     size: 16,
-                    color: isExpanded ? _accent : Colors.black45,
+                    color: isExpanded ? _accent : const Color(0xFF56535F),
                   ),
                 ),
               ],
@@ -952,10 +947,12 @@ class _CustomItemTile extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         decoration: BoxDecoration(
-          color: isSelected ? accentColor.withOpacity(0.15) : Colors.white,
+          color: isSelected
+              ? accentColor.withOpacity(0.15)
+              : const Color(0xFF1F1F2B),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: isSelected ? accentColor : Colors.grey.shade300,
+            color: isSelected ? accentColor : const Color(0xFF2C2C3E),
             width: isSelected ? 1.5 : 1,
           ),
           boxShadow: isSelected
@@ -979,7 +976,7 @@ class _CustomItemTile extends StatelessWidget {
             Icon(
               Icons.view_in_ar,
               size: 13,
-              color: isSelected ? accentColor : Colors.black45,
+              color: isSelected ? accentColor : const Color(0xFF56535F),
             ),
             const SizedBox(width: 4),
             Expanded(
@@ -990,7 +987,7 @@ class _CustomItemTile extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 10.5,
                   fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                  color: isSelected ? accentColor : Colors.black87,
+                  color: isSelected ? accentColor : const Color(0xFFF0EDE8),
                 ),
               ),
             ),
@@ -1011,7 +1008,7 @@ class _CustomItemTile extends StatelessWidget {
                   child: Icon(
                     Icons.delete_outline,
                     size: 13,
-                    color: Colors.red.shade400,
+                    color: const Color(0xFFE05252),
                   ),
                 ),
               ),
@@ -1046,8 +1043,8 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
   final List<String> _builtinCategories = kFurnitureCategories
       .map((c) => c.name)
       .toList();
-  static const _accent = Color(0xFF6366F1);
-  static const _accentLight = Color(0xFFEEEEFD);
+  static const _accent = const Color(0xFFC9A96E);
+  static const _accentLight = Color(0xFF252534);
 
   @override
   void dispose() {
@@ -1163,11 +1160,11 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
       child: Container(
         width: 400,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: const Color(0xFF17171F),
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.18),
+              color: Colors.black.withOpacity(0.35),
               blurRadius: 32,
               offset: const Offset(0, 8),
             ),
@@ -1181,8 +1178,9 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
             Container(
               padding: const EdgeInsets.fromLTRB(20, 18, 12, 16),
               decoration: const BoxDecoration(
-                color: _accent,
+                color: Color(0xFF1F1F2B),
                 borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                border: Border(bottom: BorderSide(color: Color(0xFF2C2C3E))),
               ),
               child: Row(
                 children: [
@@ -1244,13 +1242,13 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                       height: 48,
                       decoration: BoxDecoration(
                         color: _pickedFileName != null
-                            ? _accentLight
-                            : Colors.grey.shade50,
+                            ? const Color(0xFF252534)
+                            : const Color(0xFF17171F),
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
                           color: _pickedFileName != null
                               ? _accent.withOpacity(0.45)
-                              : Colors.grey.shade300,
+                              : const Color(0xFF2C2C3E),
                           width: 1.5,
                         ),
                       ),
@@ -1264,7 +1262,7 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                             size: 20,
                             color: _pickedFileName != null
                                 ? _accent
-                                : Colors.grey.shade500,
+                                : const Color(0xFF8E8A9A),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
@@ -1275,7 +1273,7 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                                 fontSize: 13,
                                 color: _pickedFileName != null
                                     ? _accent
-                                    : Colors.grey.shade500,
+                                    : const Color(0xFF8E8A9A),
                                 fontWeight: _pickedFileName != null
                                     ? FontWeight.w600
                                     : FontWeight.normal,
@@ -1319,7 +1317,7 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                     decoration: InputDecoration(
                       hintText: 'e.g. Barcelona Chair',
                       hintStyle: TextStyle(
-                        color: Colors.grey.shade400,
+                        color: const Color(0xFF56535F),
                         fontSize: 13,
                       ),
                       contentPadding: const EdgeInsets.symmetric(
@@ -1327,10 +1325,10 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                         vertical: 12,
                       ),
                       filled: true,
-                      fillColor: Colors.grey.shade50,
+                      fillColor: const Color(0xFF17171F),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
+                        borderSide: BorderSide(color: const Color(0xFF2C2C3E)),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10),
@@ -1341,7 +1339,7 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
+                        borderSide: BorderSide(color: const Color(0xFF2C2C3E)),
                       ),
                     ),
                   ),
@@ -1367,12 +1365,14 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                           width: 20,
                           height: 20,
                           decoration: BoxDecoration(
-                            color: _createNewCategory ? _accent : Colors.white,
+                            color: _createNewCategory
+                                ? _accent
+                                : const Color(0xFF1F1F2B),
                             borderRadius: BorderRadius.circular(5),
                             border: Border.all(
                               color: _createNewCategory
                                   ? _accent
-                                  : Colors.grey.shade400,
+                                  : const Color(0xFF56535F),
                               width: 1.5,
                             ),
                           ),
@@ -1390,6 +1390,7 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w500,
+                            color: Color(0xFFF0EDE8),
                           ),
                         ),
                       ],
@@ -1407,7 +1408,7 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                       decoration: InputDecoration(
                         hintText: 'New category name…',
                         hintStyle: TextStyle(
-                          color: Colors.grey.shade400,
+                          color: const Color(0xFF56535F),
                           fontSize: 13,
                         ),
                         prefixIcon: Icon(
@@ -1415,7 +1416,7 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                           size: 18,
                           color: _createNewCategory
                               ? _accent
-                              : Colors.grey.shade400,
+                              : const Color(0xFF56535F),
                         ),
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 14,
@@ -1423,11 +1424,13 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                         ),
                         filled: true,
                         fillColor: _createNewCategory
-                            ? _accentLight
-                            : Colors.grey.shade100,
+                            ? const Color(0xFF252534)
+                            : const Color(0xFF17171F),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide(color: Colors.grey.shade300),
+                          borderSide: BorderSide(
+                            color: const Color(0xFF2C2C3E),
+                          ),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
@@ -1444,7 +1447,9 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                         ),
                         disabledBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
-                          borderSide: BorderSide(color: Colors.grey.shade200),
+                          borderSide: BorderSide(
+                            color: const Color(0xFF1F1F2B),
+                          ),
                         ),
                       ),
                     ),
@@ -1463,13 +1468,13 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                           padding: const EdgeInsets.symmetric(horizontal: 14),
                           decoration: BoxDecoration(
                             color: _createNewCategory
-                                ? Colors.grey.shade100
-                                : Colors.grey.shade50,
+                                ? const Color(0xFF17171F)
+                                : const Color(0xFF17171F),
                             borderRadius: BorderRadius.circular(10),
                             border: Border.all(
                               color: _createNewCategory
-                                  ? Colors.grey.shade200
-                                  : Colors.grey.shade300,
+                                  ? const Color(0xFF1F1F2B)
+                                  : const Color(0xFF2C2C3E),
                               width: 1.5,
                             ),
                           ),
@@ -1482,26 +1487,26 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                                   Icon(
                                     Icons.folder_outlined,
                                     size: 17,
-                                    color: Colors.grey.shade500,
+                                    color: const Color(0xFF8E8A9A),
                                   ),
                                   const SizedBox(width: 8),
                                   Text(
                                     'Select existing category…',
                                     style: TextStyle(
                                       fontSize: 13,
-                                      color: Colors.grey.shade500,
+                                      color: const Color(0xFF8E8A9A),
                                     ),
                                   ),
                                 ],
                               ),
                               icon: Icon(
                                 Icons.keyboard_arrow_down,
-                                color: Colors.grey.shade500,
+                                color: const Color(0xFF8E8A9A),
                                 size: 20,
                               ),
                               style: const TextStyle(
                                 fontSize: 13,
-                                color: Colors.black87,
+                                color: const Color(0xFFF0EDE8),
                               ),
                               onChanged: (val) => setState(
                                 () => _selectedBuiltinCategory = val,
@@ -1539,16 +1544,16 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                         vertical: 8,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.red.shade50,
+                        color: const Color(0xFF2A1515),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.red.shade200),
+                        border: Border.all(color: const Color(0xFF5A2020)),
                       ),
                       child: Row(
                         children: [
                           Icon(
                             Icons.error_outline,
                             size: 15,
-                            color: Colors.red.shade600,
+                            color: const Color(0xFFE05252),
                           ),
                           const SizedBox(width: 8),
                           Expanded(
@@ -1556,7 +1561,7 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                               _errorMsg!,
                               style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.red.shade700,
+                                color: const Color(0xFFFF7070),
                               ),
                             ),
                           ),
@@ -1583,7 +1588,7 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                           : () => Navigator.of(context).pop(),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 13),
-                        side: BorderSide(color: Colors.grey.shade300),
+                        side: BorderSide(color: const Color(0xFF2C2C3E)),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10),
                         ),
@@ -1593,7 +1598,7 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                          color: Colors.black54,
+                          color: const Color(0xFF8E8A9A),
                         ),
                       ),
                     ),
@@ -1652,14 +1657,14 @@ class _SectionLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Row(
     children: [
-      Icon(icon, size: 15, color: const Color(0xFF6366F1)),
+      Icon(icon, size: 15, color: const Color(0xFFC9A96E)),
       const SizedBox(width: 6),
       Text(
         label,
         style: const TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.w700,
-          color: Colors.black87,
+          color: const Color(0xFFF0EDE8),
           letterSpacing: 0.3,
         ),
       ),
@@ -1736,7 +1741,10 @@ class _RoomSliderState extends State<_RoomSlider> {
           children: [
             Text(
               widget.label,
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
+              style: const TextStyle(
+                fontSize: 12,
+                color: const Color(0xFF8E8A9A),
+              ),
             ),
             _editing
                 ? SizedBox(
@@ -1748,7 +1756,7 @@ class _RoomSliderState extends State<_RoomSlider> {
                       style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: Colors.indigo,
+                        color: const Color(0xFFC9A96E),
                       ),
                       decoration: InputDecoration(
                         isDense: true,
@@ -1758,18 +1766,23 @@ class _RoomSliderState extends State<_RoomSlider> {
                         ),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(5),
-                          borderSide: const BorderSide(color: Colors.indigo),
+                          borderSide: const BorderSide(
+                            color: const Color(0xFFC9A96E),
+                          ),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(5),
                           borderSide: const BorderSide(
-                            color: Colors.indigo,
+                            color: const Color(0xFFC9A96E),
                             width: 1.5,
                           ),
                         ),
                         suffix: const Text(
                           ' m',
-                          style: TextStyle(fontSize: 11, color: Colors.black45),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: const Color(0xFF56535F),
+                          ),
                         ),
                       ),
                       keyboardType: const TextInputType.numberWithOptions(
@@ -1790,9 +1803,9 @@ class _RoomSliderState extends State<_RoomSlider> {
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(4),
                           border: Border.all(
-                            color: Colors.indigo.withOpacity(0.35),
+                            color: const Color(0xFFC9A96E).withOpacity(0.35),
                           ),
-                          color: Colors.indigo.withOpacity(0.05),
+                          color: const Color(0xFFC9A96E).withOpacity(0.05),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -1802,14 +1815,14 @@ class _RoomSliderState extends State<_RoomSlider> {
                               style: const TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
-                                color: Colors.indigo,
+                                color: const Color(0xFFC9A96E),
                               ),
                             ),
                             const SizedBox(width: 3),
                             const Icon(
                               Icons.edit,
                               size: 10,
-                              color: Colors.indigo,
+                              color: const Color(0xFFC9A96E),
                             ),
                           ],
                         ),
@@ -1823,10 +1836,10 @@ class _RoomSliderState extends State<_RoomSlider> {
             trackHeight: 2.5,
             thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
             overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
-            activeTrackColor: Colors.indigo,
-            inactiveTrackColor: Colors.grey.shade300,
-            thumbColor: Colors.indigo,
-            overlayColor: Colors.indigo.withOpacity(0.12),
+            activeTrackColor: const Color(0xFFC9A96E),
+            inactiveTrackColor: const Color(0xFF2C2C3E),
+            thumbColor: const Color(0xFFC9A96E),
+            overlayColor: const Color(0xFFC9A96E).withOpacity(0.12),
           ),
           child: Slider(
             value: widget.value,
@@ -1862,12 +1875,12 @@ class _ZoomControl extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
     decoration: BoxDecoration(
-      color: Colors.white.withOpacity(0.92),
+      color: const Color(0xFF17171F),
       borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: Colors.grey.shade300),
+      border: Border.all(color: const Color(0xFF2C2C3E)),
       boxShadow: [
         BoxShadow(
-          color: Colors.black.withOpacity(0.12),
+          color: Colors.black.withOpacity(0.35),
           blurRadius: 8,
           offset: const Offset(0, 2),
         ),
@@ -1888,10 +1901,10 @@ class _ZoomControl extends StatelessWidget {
               trackHeight: 3,
               thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
               overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-              activeTrackColor: Colors.indigo,
-              inactiveTrackColor: Colors.grey.shade300,
-              thumbColor: Colors.indigo,
-              overlayColor: Colors.indigo.withOpacity(0.15),
+              activeTrackColor: const Color(0xFFC9A96E),
+              inactiveTrackColor: const Color(0xFF2C2C3E),
+              thumbColor: const Color(0xFFC9A96E),
+              overlayColor: const Color(0xFFC9A96E).withOpacity(0.15),
             ),
             child: Slider(
               value: zoom.clamp(min, max),
@@ -1914,13 +1927,17 @@ class _ZoomControl extends StatelessWidget {
             alignment: Alignment.center,
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
             decoration: BoxDecoration(
-              color: Colors.grey.shade100,
+              color: const Color(0xFF17171F),
               borderRadius: BorderRadius.circular(5),
-              border: Border.all(color: Colors.grey.shade300),
+              border: Border.all(color: const Color(0xFF2C2C3E)),
             ),
             child: Text(
               label,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFFF0EDE8),
+              ),
             ),
           ),
         ),
@@ -1940,10 +1957,10 @@ class _IconBtn extends StatelessWidget {
       width: 26,
       height: 26,
       decoration: BoxDecoration(
-        color: Colors.grey.shade200,
+        color: const Color(0xFF1F1F2B),
         borderRadius: BorderRadius.circular(5),
       ),
-      child: Icon(icon, color: Colors.grey.shade700, size: 16),
+      child: Icon(icon, color: const Color(0xFF8E8A9A), size: 16),
     ),
   );
 }
