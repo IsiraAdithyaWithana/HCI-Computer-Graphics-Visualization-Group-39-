@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:furniture_visualizer/widgets/mouse_tool_sidebar.dart';
 import '../widgets/room_canvas.dart';
+import '../widgets/colour_scheme_picker.dart';
 import '../models/furniture_model.dart';
 import '../services/custom_furniture_registry.dart';
 import 'realistic_3d_screen.dart';
@@ -21,6 +23,12 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   MouseMode _currentMode = MouseMode.select;
   FurnitureType _selectedType = FurnitureType.chair;
   String? _selectedCustomId;
+
+  // ── Colour scheme (room surfaces) ─────────────────────────────────────────
+  RoomColourScheme _currentScheme = kColourPresets.first;
+
+  // ── Canvas background colour ──────────────────────────────────────────────
+  Color _canvasBgColour = const Color(0xFF0D0D11);
 
   final GlobalKey<RoomCanvasState> _canvasKey = GlobalKey<RoomCanvasState>();
 
@@ -86,6 +94,10 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
           furniture: List.from(items),
           roomWidth: _roomWidthPx,
           roomDepth: _roomDepthPx,
+          wallColour: _currentScheme.wall,
+          floorColour: _currentScheme.floor,
+          ceilingColour: _currentScheme.ceiling,
+          trimColour: _currentScheme.trim,
           onSizeUpdated: (String id, double scaleFactor) {
             final canvasItems = _canvasKey.currentState?.furnitureItems ?? [];
             final idx = canvasItems.indexWhere((f) => f.id == id);
@@ -115,6 +127,30 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   void _setZoom(double value) {
     _canvasKey.currentState?.setZoom(value);
     setState(() => _canvasZoom = value);
+  }
+
+  // ── Canvas background colour picker ───────────────────────────────────────
+  static const _bgPresets = [
+    Color(0xFF0D0D11), // default near-black
+    Color(0xFF111318), // charcoal blue
+    Color(0xFF1A1A1A), // dark grey
+    Color(0xFF1C1510), // dark warm
+    Color(0xFF0D1117), // dark slate
+    Color(0xFF17171F), // app surface
+    Color(0xFF12100E), // almost black warm
+    Color(0xFF0A0F0D), // very dark green
+    Color(0xFF2A2A3A), // mid charcoal
+    Color(0xFF252534), // elevated surface
+    Color(0xFF1E1E2E), // deep purple-grey
+    Color(0xFF22222A), // neutral dark
+  ];
+
+  Future<void> _pickCanvasBgColour(BuildContext ctx) async {
+    final picked = await showDialog<Color>(
+      context: ctx,
+      builder: (_) => _CanvasBgPickerDialog(initial: _canvasBgColour),
+    );
+    if (picked != null) setState(() => _canvasBgColour = picked);
   }
 
   @override
@@ -152,6 +188,57 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       appBar: AppBar(
         title: const Text('2D Room Editor'),
         actions: [
+          // ── Room colour scheme picker ───────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+            child: ColourSchemeButton(
+              current: _currentScheme,
+              onSchemeChanged: (s) => setState(() => _currentScheme = s),
+            ),
+          ),
+          // ── Canvas background colour picker ────────────────────────────
+          Tooltip(
+            message: 'Canvas background colour',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => _pickCanvasBgColour(context),
+              child: Container(
+                margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 0,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1F1F2B),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFF2C2C3E)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 14,
+                      height: 14,
+                      decoration: BoxDecoration(
+                        color: _canvasBgColour,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: const Color(0xFF8E8A9A),
+                          width: 1,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Icon(
+                      Icons.format_paint_outlined,
+                      size: 16,
+                      color: Color(0xFF8E8A9A),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.auto_awesome),
             tooltip: 'Realistic 3D View',
@@ -222,6 +309,9 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                   customLabelOverride: _customLabelOverride,
                   customColor: _customColor,
                   onChanged: _saveLayout,
+                  canvasBgColour: _canvasBgColour,
+                  roomFloorColour: _currentScheme.floor,
+                  roomWallColour: _currentScheme.wall,
                 ),
                 Positioned(
                   right: 16,
@@ -1963,4 +2053,293 @@ class _IconBtn extends StatelessWidget {
       child: Icon(icon, color: const Color(0xFF8E8A9A), size: 16),
     ),
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _CanvasBgPickerDialog — swatch grid + hex input for canvas background colour
+// ─────────────────────────────────────────────────────────────────────────────
+class _CanvasBgPickerDialog extends StatefulWidget {
+  final Color initial;
+  const _CanvasBgPickerDialog({required this.initial});
+  @override
+  State<_CanvasBgPickerDialog> createState() => _CanvasBgPickerDialogState();
+}
+
+class _CanvasBgPickerDialogState extends State<_CanvasBgPickerDialog> {
+  late Color _current;
+  late TextEditingController _hexCtrl;
+  late FocusNode _hexFocus;
+  bool _hexInvalid = false;
+
+  static const _presets = [
+    Color(0xFF0D0D11),
+    Color(0xFF111318),
+    Color(0xFF1A1A1A),
+    Color(0xFF1C1510),
+    Color(0xFF0D1117),
+    Color(0xFF17171F),
+    Color(0xFF12100E),
+    Color(0xFF0A0F0D),
+    Color(0xFF2A2A3A),
+    Color(0xFF252534),
+    Color(0xFF1E1E2E),
+    Color(0xFF22222A),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _current = widget.initial;
+    _hexCtrl = TextEditingController(text: _toHex(_current));
+    _hexFocus = FocusNode()
+      ..addListener(() {
+        if (!_hexFocus.hasFocus) _commitHex();
+      });
+  }
+
+  @override
+  void dispose() {
+    _hexCtrl.dispose();
+    _hexFocus.dispose();
+    super.dispose();
+  }
+
+  String _toHex(Color c) =>
+      c.value.toRadixString(16).substring(2).toUpperCase();
+
+  void _selectPreset(Color c) {
+    setState(() {
+      _current = c;
+      _hexCtrl.text = _toHex(c);
+      _hexInvalid = false;
+    });
+  }
+
+  void _commitHex() {
+    final raw = _hexCtrl.text.replaceAll('#', '').trim();
+    if (raw.length == 6) {
+      final parsed = int.tryParse('FF$raw', radix: 16);
+      if (parsed != null) {
+        setState(() {
+          _current = Color(parsed);
+          _hexInvalid = false;
+        });
+        return;
+      }
+    }
+    setState(() => _hexInvalid = true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: const Color(0xFF1F1F2B),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header
+            const Row(
+              children: [
+                Icon(
+                  Icons.format_paint_outlined,
+                  size: 16,
+                  color: Color(0xFFC9A96E),
+                ),
+                SizedBox(width: 8),
+                Text(
+                  'Canvas Background',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFFF0EDE8),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Colour shown outside the room boundary',
+              style: TextStyle(fontSize: 11, color: Color(0xFF8E8A9A)),
+            ),
+            const SizedBox(height: 16),
+            // Preset swatches
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _presets.map((c) {
+                final isCurrent = c.value == _current.value;
+                return GestureDetector(
+                  onTap: () => _selectPreset(c),
+                  child: Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: c,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isCurrent
+                            ? const Color(0xFFC9A96E)
+                            : const Color(0xFF2C2C3E),
+                        width: isCurrent ? 2.5 : 1,
+                      ),
+                    ),
+                    child: isCurrent
+                        ? const Icon(
+                            Icons.check,
+                            size: 16,
+                            color: Color(0xFFC9A96E),
+                          )
+                        : null,
+                  ),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 16),
+            // Hex input row
+            Row(
+              children: [
+                Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: _current,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFF2C2C3E)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  '#',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF56535F),
+                    fontFamily: 'monospace',
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: TextField(
+                    controller: _hexCtrl,
+                    focusNode: _hexFocus,
+                    maxLength: 6,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: _hexInvalid
+                          ? const Color(0xFFE05252)
+                          : const Color(0xFFF0EDE8),
+                      fontFamily: 'monospace',
+                      letterSpacing: 1.2,
+                    ),
+                    decoration: InputDecoration(
+                      counterText: '',
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 8,
+                      ),
+                      filled: true,
+                      fillColor: const Color(0xFF17171F),
+                      hintText: 'RRGGBB',
+                      hintStyle: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF3A3842),
+                        fontFamily: 'monospace',
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(
+                          color: _hexInvalid
+                              ? const Color(0xFFE05252)
+                              : const Color(0xFF2C2C3E),
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(
+                          color: _hexInvalid
+                              ? const Color(0xFFE05252)
+                              : const Color(0xFF2C2C3E),
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                        borderSide: BorderSide(
+                          color: _hexInvalid
+                              ? const Color(0xFFE05252)
+                              : const Color(0xFFC9A96E),
+                          width: 1.5,
+                        ),
+                      ),
+                    ),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9a-fA-F]')),
+                    ],
+                    onSubmitted: (_) => _commitHex(),
+                    onChanged: (v) {
+                      if (v.length == 6) _commitHex();
+                    },
+                  ),
+                ),
+                const SizedBox(width: 6),
+                GestureDetector(
+                  onTap: _commitHex,
+                  child: Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFC9A96E).withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: const Color(0xFFC9A96E).withOpacity(0.35),
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.check_rounded,
+                      size: 15,
+                      color: Color(0xFFC9A96E),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Action buttons
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(color: Color(0xFF8E8A9A)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(_current),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFC9A96E),
+                    foregroundColor: const Color(0xFF0D0D11),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text(
+                    'Apply',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

@@ -466,8 +466,8 @@
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.outputEncoding = THREE.sRGBEncoding;
-      renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.05;
+      renderer.toneMapping = THREE.NoToneMapping;
+      // No tone mapping exposure needed when tone mapping is off
       document.body.appendChild(renderer.domElement);
 
       // ── Scene / Camera ───────────────────────────────────────────────────
@@ -563,20 +563,46 @@
       var fill = new THREE.DirectionalLight(0xc8d8ff, 0.3); fill.position.set(-6, 8, -6); scene.add(fill);
 
       // ── Room builder ─────────────────────────────────────────────────────
+      // sRGB → Linear: converts a hex string chosen by the user (sRGB space)
+      // into a THREE.Color in linear space. With sRGBEncoding the renderer
+      // applies linear→sRGB, so the display shows exactly the original hex.
+      function srgbHexToLinear(hex) {
+        var h = parseInt(hex, 16);
+        var r = (h >> 16 & 0xFF) / 255;
+        var g = (h >> 8 & 0xFF) / 255;
+        var b = (h & 0xFF) / 255;
+        function toLinear(c) {
+          return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        }
+        return new THREE.Color(toLinear(r), toLinear(g), toLinear(b));
+      }
       var roomGroup = new THREE.Group(); scene.add(roomGroup);
       function buildRoom(rw, rd) {
         while (roomGroup.children.length) roomGroup.remove(roomGroup.children[0]);
         var WH = 3.2;
         var _p = getPayload() || {};
-        var floorMat = new THREE.MeshLambertMaterial({ color: _p.floorColor ? parseInt(_p.floorColor, 16) : 0xd4c4a8 });
-        var wallMat = new THREE.MeshLambertMaterial({ color: _p.wallColor ? parseInt(_p.wallColor, 16) : 0xf0ebe2 });
-        var ceilMat = new THREE.MeshLambertMaterial({ color: _p.ceilingColor ? parseInt(_p.ceilingColor, 16) : 0xfaf8f4 });
-        var trimMat = new THREE.MeshLambertMaterial({ color: _p.trimColor ? parseInt(_p.trimColor, 16) : 0xe8e0d4 });
+        // Use exact user-chosen colors: sRGB hex → linear → renderer applies sRGB encoding → exact color on screen
+        var floorColor = _p.floorColor ? srgbHexToLinear(_p.floorColor) : new THREE.Color(0xd4c4a8).convertSRGBToLinear();
+        var wallColor = _p.wallColor ? srgbHexToLinear(_p.wallColor) : new THREE.Color(0xf0ebe2).convertSRGBToLinear();
+        var ceilColor = _p.ceilingColor ? srgbHexToLinear(_p.ceilingColor) : new THREE.Color(0xfaf8f4).convertSRGBToLinear();
+        var trimColor = _p.trimColor ? srgbHexToLinear(_p.trimColor) : new THREE.Color(0xe8e0d4).convertSRGBToLinear();
+        // MeshBasicMaterial ignores scene lighting — colour is rendered exactly
+        var floorMat = new THREE.MeshBasicMaterial({ color: floorColor });
+        var wallMat = new THREE.MeshBasicMaterial({ color: wallColor });
+        var ceilMat = new THREE.MeshBasicMaterial({ color: ceilColor });
+        var trimMat = new THREE.MeshBasicMaterial({ color: trimColor });
         var floor = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd), floorMat);
         floor.rotation.x = -Math.PI / 2; floor.position.set(rw / 2, 0, rd / 2); floor.receiveShadow = true; roomGroup.add(floor);
         var gridDiv = Math.round(Math.max(rw, rd) * 2);
-        var grid = new THREE.GridHelper(Math.max(rw, rd), gridDiv, 0xb0a090, 0xc8b89a);
-        grid.position.set(rw / 2, 0.002, rd / 2); grid.scale.set(rw / Math.max(rw, rd), 1, rd / Math.max(rw, rd)); roomGroup.add(grid);
+        var floorHex = _p.floorColor ? parseInt(_p.floorColor, 16) : 0xd4c4a8;
+        var floorR = (floorHex >> 16 & 0xFF) / 255;
+        var floorBrightness = floorR * 0.3 + ((floorHex >> 8 & 0xFF) / 255) * 0.59 + ((floorHex & 0xFF) / 255) * 0.11;
+        var gridDark = floorBrightness > 0.5 ? 0x808080 : 0xffffff;
+        var gridLight = floorBrightness > 0.5 ? 0xa0a0a0 : 0xffffff;
+        var grid = new THREE.GridHelper(Math.max(rw, rd), gridDiv, gridDark, gridLight);
+        grid.position.set(rw / 2, 0.002, rd / 2); grid.scale.set(rw / Math.max(rw, rd), 1, rd / Math.max(rw, rd));
+        grid.material.opacity = 0.25; grid.material.transparent = true;
+        roomGroup.add(grid);
         function addWall(geo, pos, rotY) { var m = new THREE.Mesh(geo, wallMat.clone()); m.position.copy(pos); if (rotY) m.rotation.y = rotY; m.receiveShadow = true; roomGroup.add(m); }
         addWall(new THREE.PlaneGeometry(rw, WH), new THREE.Vector3(rw / 2, WH / 2, 0), 0);
         addWall(new THREE.PlaneGeometry(rw, WH), new THREE.Vector3(rw / 2, WH / 2, rd), Math.PI);
@@ -589,7 +615,7 @@
         addBoard(new THREE.BoxGeometry(rw, bh, bd), new THREE.Vector3(rw / 2, bh / 2, rd - bd / 2));
         addBoard(new THREE.BoxGeometry(bd, bh, rd), new THREE.Vector3(bd / 2, bh / 2, rd / 2));
         addBoard(new THREE.BoxGeometry(bd, bh, rd), new THREE.Vector3(rw - bd / 2, bh / 2, rd / 2));
-        var ch = 0.05, cd = 0.04, cornMat = new THREE.MeshLambertMaterial({ color: 0xe8e4de });
+        var ch = 0.05, cd = 0.04, cornMat = new THREE.MeshBasicMaterial({ color: _p.trimColor ? srgbHexToLinear(_p.trimColor) : new THREE.Color(0xe8e4de).convertSRGBToLinear() });
         function addCornice(geo, pos) { var m = new THREE.Mesh(geo, cornMat.clone()); m.position.copy(pos); roomGroup.add(m); }
         addCornice(new THREE.BoxGeometry(rw, ch, cd), new THREE.Vector3(rw / 2, WH - ch / 2, cd / 2));
         addCornice(new THREE.BoxGeometry(rw, ch, cd), new THREE.Vector3(rw / 2, WH - ch / 2, rd - cd / 2));

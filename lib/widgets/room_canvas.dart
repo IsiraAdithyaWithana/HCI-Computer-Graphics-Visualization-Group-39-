@@ -16,6 +16,9 @@ class RoomCanvas extends StatefulWidget {
   final VoidCallback? onChanged;
 
   // ── Colour scheme ──────────────────────────────────────────────────────
+  /// Background colour for the entire canvas viewport (area outside the room).
+  final Color canvasBgColour;
+
   /// Room floor colour shown in the 2D top-down canvas.
   final Color roomFloorColour;
 
@@ -36,6 +39,7 @@ class RoomCanvas extends StatefulWidget {
     this.roomWidthPx = 600,
     this.roomDepthPx = 500,
     this.onZoomChanged,
+    this.canvasBgColour = const Color(0xFF0D0D11),
     this.roomFloorColour = const Color(0xFFFAF8F5),
     this.roomWallColour = const Color(0xFF4A4A5A),
     // custom fields — null for all built-in types
@@ -412,7 +416,7 @@ class RoomCanvasState extends State<RoomCanvas> {
           child: Stack(
             children: [
               ColoredBox(
-                color: const Color(0xFFBABCC4),
+                color: widget.canvasBgColour,
                 child: ClipRect(
                   child: AnimatedBuilder(
                     animation: _transformationController,
@@ -680,6 +684,7 @@ class RoomCanvasState extends State<RoomCanvas> {
                                     roomDepth: widget.roomDepthPx,
                                     canvasW: _canvasW,
                                     canvasH: _canvasH,
+                                    canvasBgColour: widget.canvasBgColour,
                                     roomFloorColour: widget.roomFloorColour,
                                     roomWallColour: widget.roomWallColour,
                                   ),
@@ -804,6 +809,7 @@ class RoomPainter extends CustomPainter {
   final List<FurnitureModel> furnitureItems;
   final List<FurnitureModel> selectedItems;
   final double roomWidth, roomDepth, canvasW, canvasH;
+  final Color canvasBgColour;
   final Color roomFloorColour;
   final Color roomWallColour;
 
@@ -814,16 +820,17 @@ class RoomPainter extends CustomPainter {
     required this.roomDepth,
     required this.canvasW,
     required this.canvasH,
+    this.canvasBgColour = const Color(0xFF0D0D11),
     this.roomFloorColour = const Color(0xFFFAF8F5),
     this.roomWallColour = const Color(0xFF4A4A5A),
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Background (area outside the room) — match app dark theme
+    // Background (area outside the room) — uses the configurable canvas bg colour
     canvas.drawRect(
       Rect.fromLTWH(0, 0, canvasW, canvasH),
-      Paint()..color = const Color(0xFF0D0D11),
+      Paint()..color = canvasBgColour,
     );
     final rr = Rect.fromLTWH(0, 0, roomWidth, roomDepth);
     // Room floor — use the scheme colour

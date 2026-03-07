@@ -571,6 +571,12 @@ class _ColourSchemePickerState extends State<ColourSchemePicker>
                       currentColour: _currentEditColour,
                       onColourSelected: _updateSurface,
                     ),
+                    const SizedBox(height: 10),
+                    // ── Hex input ───────────────────────────────────────
+                    _HexInput(
+                      colour: _currentEditColour,
+                      onColourChanged: _updateSurface,
+                    ),
                     const SizedBox(height: 8),
                   ],
                 ],
@@ -704,19 +710,7 @@ class _RoomPainter extends CustomPainter {
       ..lineTo(left, floorY)
       ..close();
     canvas.drawPath(backWallPath, Paint()..color = scheme.wall);
-
-    // Subtle lighting gradient overlay on back wall
-    final wallGradPaint = Paint()
-      ..shader = LinearGradient(
-        begin: Alignment.topRight,
-        end: Alignment.bottomLeft,
-        colors: [
-          Colors.white.withOpacity(0.06),
-          Colors.transparent,
-          Colors.black.withOpacity(0.10),
-        ],
-      ).createShader(Rect.fromLTWH(left, ceilY, right - left, floorY - ceilY));
-    canvas.drawPath(backWallPath, wallGradPaint);
+    // No gradient overlay — wall shows the exact chosen colour
 
     // ── Floor ──────────────────────────────────────────────────────────────
     final floorPath = Path()
@@ -726,18 +720,7 @@ class _RoomPainter extends CustomPainter {
       ..lineTo(left, bottom)
       ..close();
     canvas.drawPath(floorPath, Paint()..color = scheme.floor);
-
-    // Floor grain gradient
-    final floorGradPaint = Paint()
-      ..shader =
-          LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.black.withOpacity(0.18), Colors.transparent],
-          ).createShader(
-            Rect.fromLTWH(left, floorY, right - left, bottom - floorY),
-          );
-    canvas.drawPath(floorPath, floorGradPaint);
+    // No gradient overlay — floor shows the exact chosen colour
 
     // Floor planks (subtle lines)
     final plankPaint = Paint()
@@ -1456,6 +1439,189 @@ class ColourSchemeButton extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _HexInput — type a hex value to set the colour exactly
+// ─────────────────────────────────────────────────────────────────────────────
+class _HexInput extends StatefulWidget {
+  final Color colour;
+  final void Function(Color) onColourChanged;
+  const _HexInput({required this.colour, required this.onColourChanged});
+
+  @override
+  State<_HexInput> createState() => _HexInputState();
+}
+
+class _HexInputState extends State<_HexInput> {
+  late TextEditingController _ctrl;
+  late FocusNode _focus;
+  bool _invalid = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: _colourToHex(widget.colour));
+    _focus = FocusNode()
+      ..addListener(() {
+        if (!_focus.hasFocus) _commit();
+      });
+  }
+
+  @override
+  void didUpdateWidget(_HexInput old) {
+    super.didUpdateWidget(old);
+    if (!_focus.hasFocus && old.colour != widget.colour) {
+      _ctrl.text = _colourToHex(widget.colour);
+      setState(() => _invalid = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  String _colourToHex(Color c) =>
+      c.value.toRadixString(16).substring(2).toUpperCase();
+
+  void _commit() {
+    final raw = _ctrl.text.replaceAll('#', '').trim();
+    if (raw.length == 6) {
+      final parsed = int.tryParse('FF$raw', radix: 16);
+      if (parsed != null) {
+        setState(() => _invalid = false);
+        widget.onColourChanged(Color(parsed));
+        return;
+      }
+    }
+    setState(() => _invalid = true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(
+        children: [
+          // Live preview swatch
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: widget.colour,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: _invalid
+                    ? const Color(0xFFE05252)
+                    : const Color(0xFF2C2C3E),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Hash prefix
+          const Text(
+            '#',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF56535F),
+              fontFamily: 'monospace',
+            ),
+          ),
+          const SizedBox(width: 2),
+          // Hex text field
+          Expanded(
+            child: TextField(
+              controller: _ctrl,
+              focusNode: _focus,
+              maxLength: 6,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: _invalid
+                    ? const Color(0xFFE05252)
+                    : const Color(0xFFF0EDE8),
+                fontFamily: 'monospace',
+                letterSpacing: 1.2,
+              ),
+              decoration: InputDecoration(
+                counterText: '',
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 8,
+                ),
+                filled: true,
+                fillColor: const Color(0xFF17171F),
+                hintText: 'RRGGBB',
+                hintStyle: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF3A3842),
+                  fontFamily: 'monospace',
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide(
+                    color: _invalid
+                        ? const Color(0xFFE05252)
+                        : const Color(0xFF2C2C3E),
+                  ),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide(
+                    color: _invalid
+                        ? const Color(0xFFE05252)
+                        : const Color(0xFF2C2C3E),
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide(
+                    color: _invalid
+                        ? const Color(0xFFE05252)
+                        : const Color(0xFFC9A96E),
+                    width: 1.5,
+                  ),
+                ),
+              ),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9a-fA-F]')),
+              ],
+              onSubmitted: (_) => _commit(),
+              onChanged: (v) {
+                if (v.length == 6) _commit();
+              },
+            ),
+          ),
+          const SizedBox(width: 6),
+          // Apply button
+          GestureDetector(
+            onTap: _commit,
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: const Color(0xFFC9A96E).withOpacity(0.12),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: const Color(0xFFC9A96E).withOpacity(0.35),
+                ),
+              ),
+              child: const Icon(
+                Icons.check_rounded,
+                size: 15,
+                color: Color(0xFFC9A96E),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
