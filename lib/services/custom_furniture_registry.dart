@@ -14,6 +14,11 @@ class CustomFurnitureEntry {
   final bool isCustomCategory; // true if user created a new category
   final int colorValue; // colour used for the 2D canvas tile
 
+  /// Default 2D footprint size in canvas pixels.
+  /// 1 px ≈ 1 cm (100 px = 1 m), so a 120×80 sofa ≈ 1.2m × 0.8m.
+  final double defaultWidthPx;
+  final double defaultHeightPx;
+
   const CustomFurnitureEntry({
     required this.id,
     required this.name,
@@ -21,6 +26,8 @@ class CustomFurnitureEntry {
     required this.glbFileName,
     this.isCustomCategory = false,
     this.colorValue = 0xFF607D8B,
+    this.defaultWidthPx = 80,
+    this.defaultHeightPx = 80,
   });
 
   Map<String, dynamic> toJson() => {
@@ -30,6 +37,8 @@ class CustomFurnitureEntry {
     'glbFileName': glbFileName,
     'isCustomCategory': isCustomCategory,
     'colorValue': colorValue,
+    'defaultWidthPx': defaultWidthPx,
+    'defaultHeightPx': defaultHeightPx,
   };
 
   factory CustomFurnitureEntry.fromJson(Map<String, dynamic> j) =>
@@ -40,6 +49,8 @@ class CustomFurnitureEntry {
         glbFileName: j['glbFileName'] as String,
         isCustomCategory: j['isCustomCategory'] as bool? ?? false,
         colorValue: j['colorValue'] as int? ?? 0xFF607D8B,
+        defaultWidthPx: (j['defaultWidthPx'] as num?)?.toDouble() ?? 80,
+        defaultHeightPx: (j['defaultHeightPx'] as num?)?.toDouble() ?? 80,
       );
 }
 
@@ -134,10 +145,11 @@ class CustomFurnitureRegistry extends ChangeNotifier {
     required String sourceGlbPath,
     bool isCustomCategory = false,
     int colorValue = 0xFF607D8B,
+    double defaultWidthPx = 80,
+    double defaultHeightPx = 80,
   }) async {
     await modelsDir.create(recursive: true);
 
-    // Build a safe, collision-free filename
     final ext = sourceGlbPath.split('.').last.toLowerCase();
     final safeBase = name
         .toLowerCase()
@@ -146,7 +158,6 @@ class CustomFurnitureRegistry extends ChangeNotifier {
     final uid = DateTime.now().millisecondsSinceEpoch.toString();
     final glbFileName = 'custom_${safeBase}_$uid.$ext';
 
-    // Copy the GLB into our models directory
     await File(
       sourceGlbPath,
     ).copy('${modelsDir.path}${Platform.pathSeparator}$glbFileName');
@@ -158,12 +169,39 @@ class CustomFurnitureRegistry extends ChangeNotifier {
       glbFileName: glbFileName,
       isCustomCategory: isCustomCategory,
       colorValue: colorValue,
+      defaultWidthPx: defaultWidthPx.clamp(20, 1200),
+      defaultHeightPx: defaultHeightPx.clamp(20, 1200),
     );
 
     _entries.add(entry);
     await _save();
     notifyListeners();
     return entry;
+  }
+
+  // ── Update natural footprint detected from 3D viewer ────────────────────
+  /// Called after the 3D viewer measures a GLB bounding box.
+  /// Persists the natural size so subsequent placements use the right shape.
+  Future<void> updateNaturalSize(
+    String id,
+    double widthPx,
+    double depthPx,
+  ) async {
+    final idx = _entries.indexWhere((e) => e.id == id);
+    if (idx == -1) return;
+    final old = _entries[idx];
+    _entries[idx] = CustomFurnitureEntry(
+      id: old.id,
+      name: old.name,
+      category: old.category,
+      glbFileName: old.glbFileName,
+      isCustomCategory: old.isCustomCategory,
+      colorValue: old.colorValue,
+      defaultWidthPx: widthPx.clamp(20, 1200),
+      defaultHeightPx: depthPx.clamp(20, 1200),
+    );
+    await _save();
+    notifyListeners();
   }
 
   // ── Remove an entry ──────────────────────────────────────────────────────

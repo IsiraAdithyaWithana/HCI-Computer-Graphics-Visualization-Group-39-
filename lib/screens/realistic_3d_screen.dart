@@ -19,6 +19,13 @@ class Realistic3DScreen extends StatefulWidget {
   /// [id] is the FurnitureModel.id, [scaleFactor] is the multiplier applied.
   final void Function(String id, double scaleFactor)? onSizeUpdated;
 
+  /// Called once per custom GLB when the scene first loads.
+  /// [id] is the FurnitureModel.id; [widthPx] and [depthPx] are the natural
+  /// canvas-pixel footprint dimensions derived from the GLB's bounding box.
+  /// Use these to update the 2D tile so it matches the real model shape.
+  final void Function(String id, double widthPx, double depthPx)?
+  onNaturalSizeDetected;
+
   const Realistic3DScreen({
     super.key,
     required this.furniture,
@@ -29,6 +36,7 @@ class Realistic3DScreen extends StatefulWidget {
     this.ceilingColour = const Color(0xFFFAF8F4),
     this.trimColour = const Color(0xFFE8E0D4),
     this.onSizeUpdated,
+    this.onNaturalSizeDetected,
   });
 
   @override
@@ -69,6 +77,16 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
             if (id != null && scaleFactor != null) {
               widget.onSizeUpdated?.call(id, scaleFactor);
               debugPrint('[3D→Flutter] sizeUpdate id=$id scale=$scaleFactor');
+            }
+          } else if (data['type'] == 'naturalSize') {
+            final id = data['id'] as String?;
+            final widthPx = (data['widthPx'] as num?)?.toDouble();
+            final depthPx = (data['depthPx'] as num?)?.toDouble();
+            if (id != null && widthPx != null && depthPx != null) {
+              widget.onNaturalSizeDetected?.call(id, widthPx, depthPx);
+              debugPrint(
+                '[3D→Flutter] naturalSize id=$id w=${widthPx.toStringAsFixed(1)} d=${depthPx.toStringAsFixed(1)}',
+              );
             }
           }
         } catch (e) {

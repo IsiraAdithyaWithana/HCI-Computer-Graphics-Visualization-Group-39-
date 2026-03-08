@@ -748,18 +748,65 @@
           obj = tmpl.clone();
           obj.traverse(function (c) { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
           obj.scale.set(1, 1, 1); obj.position.set(0, 0, 0); obj.rotation.set(0, 0, 0); obj.updateMatrixWorld(true);
-          var bbox = new THREE.Box3().setFromObject(obj), sz = bbox.getSize(new THREE.Vector3());
-          var th = MODEL_HEIGHT[item.type] || 0.85;
-          var sX = sz.x > 0.001 ? tw / sz.x : 1, sZ = sz.z > 0.001 ? td / sz.z : 1, sY = sz.y > 0.001 ? th / sz.y : 1;
-          var s = Math.min(sX, sZ, sY), sf = item.scaleFactor || 1.0;
-          baseScale = s; obj.scale.setScalar(s * sf);
-          var bbox2 = new THREE.Box3().setFromObject(obj); obj.position.y = -bbox2.min.y;
+          var bbox = new THREE.Box3().setFromObject(obj);
+          var sz = bbox.getSize(new THREE.Vector3());
+          var sf = item.scaleFactor || 1.0;
+
+          // item.size (= item.width/height) already has scaleFactor baked in by Flutter's
+          // onSizeUpdated: item.size = naturalSize × scaleFactor.
+          // So we must divide by sf FIRST to recover the natural footprint, then fit the
+          // model to that natural size, then multiply by sf exactly once.
+          // Without this step: s = naturalScale × sf → obj.scale = s × sf = naturalScale × sf²
+          var naturalTW = tw / sf;   // natural canvas-px width  × rs  (sf removed)
+          var naturalTD = td / sf;   // natural canvas-px height × rs
+
+          var s;
+          if (item.glbFile) {
+            // Custom GLB: fit inside natural tile while preserving X/Z proportions.
+            var sX = sz.x > 0.001 ? naturalTW / sz.x : 1.0;
+            var sZ = sz.z > 0.001 ? naturalTD / sz.z : 1.0;
+            s = Math.min(sX, sZ);
+          } else {
+            // Built-in model: fit natural footprint + target model height.
+            var th = MODEL_HEIGHT[item.type] || 0.85;
+            var sXb = sz.x > 0.001 ? naturalTW / sz.x : 1;
+            var sZb = sz.z > 0.001 ? naturalTD / sz.z : 1;
+            var sYb = sz.y > 0.001 ? th / sz.y : 1;
+            s = Math.min(sXb, sZb, sYb);
+          }
+
+          // s is now the scale at scaleFactor=1.0 (the "natural" scale).
+          // Storing it as baseScale means applyScale(f) → obj.scale = baseScale × f  ✓
+          baseScale = s;
+          obj.scale.setScalar(s * sf);   // apply sf exactly once
+
+          var bbox2 = new THREE.Box3().setFromObject(obj);
+          var center2 = bbox2.getCenter(new THREE.Vector3());
+          obj.position.set(cx - center2.x, -bbox2.min.y, cz - center2.z);
+
+          // Report the TRUE natural footprint (at sf=1) back to Flutter so the 2D tile
+          // is sized correctly on every visit, regardless of the current scaleFactor.
+          if (item.glbFile && item.id) {
+            var naturalW = (sz.x * s) / rs;   // s is natural scale, so this is always natural size
+            var naturalD = (sz.z * s) / rs;
+            try {
+              window.chrome.webview.postMessage(JSON.stringify({
+                type: 'naturalSize',
+                id: item.id,
+                widthPx: Math.round(naturalW),
+                depthPx: Math.round(naturalD),
+              }));
+            } catch (e) {
+              console.log('[3D] naturalSize postMessage unavailable:', e);
+            }
+          }
         } else {
           var h = (MODEL_HEIGHT[item.type] || 0.80) * (item.scaleFactor || 1.0);
           obj = new THREE.Mesh(new THREE.BoxGeometry(tw, h, td), new THREE.MeshLambertMaterial({ color: 0x888888 }));
           obj.position.y = h / 2; obj.castShadow = true; obj.receiveShadow = true; baseScale = 1.0;
+          obj.position.x = cx; obj.position.z = cz;
         }
-        obj.position.x = cx; obj.position.z = cz; obj.rotation.y = -(item.rotation || 0);
+        obj.rotation.y = -(item.rotation || 0);
         return { obj: obj, baseScale: baseScale };
       }
 
@@ -844,15 +891,17 @@
       if (!selectedEntry) return;
       factor = Math.max(0.01, Math.min(20, factor));
       selectedEntry.scaleFactor = factor;
+      // baseScale is the natural scale (at factor=1). Apply factor once only.
       selectedEntry.obj.scale.setScalar(selectedEntry.baseScale * factor);
       if (typeof THREE !== 'undefined') {
-        selectedEntry.obj.position.y = 0;
+        // Keep X/Z position (visual centre) fixed; only adjust Y to floor the model.
+        var savedX = selectedEntry.obj.position.x;
+        var savedZ = selectedEntry.obj.position.z;
         var bbox = new THREE.Box3().setFromObject(selectedEntry.obj);
-        selectedEntry.obj.position.y = -bbox.min.y;
+        selectedEntry.obj.position.set(savedX, -bbox.min.y, savedZ);
         if (selectionBox) selectionBox.update();
       }
       var slider = document.getElementById('scale-slider');
-      // Slider position is ln(factor) to give logarithmic distribution
       slider.value = Math.log(factor);
       updateSliderTrack(slider);
       document.getElementById('scale-value-badge').textContent = factor.toFixed(2) + '×';

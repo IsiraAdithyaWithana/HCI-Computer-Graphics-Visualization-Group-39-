@@ -32,6 +32,10 @@ class RoomCanvas extends StatefulWidget {
   final String? customLabelOverride;
   final Color? customColor;
 
+  /// The 2D footprint size stored in the registry entry for this custom type.
+  /// When set, overrides the generic 80×80 custom default.
+  final Size? customDefaultSize;
+
   const RoomCanvas({
     super.key,
     required this.selectedType,
@@ -46,6 +50,7 @@ class RoomCanvas extends StatefulWidget {
     this.customGlbOverride,
     this.customLabelOverride,
     this.customColor,
+    this.customDefaultSize,
     this.onChanged,
   });
 
@@ -96,6 +101,23 @@ class RoomCanvasState extends State<RoomCanvas> {
   void toggleResizeSnap() =>
       setState(() => snapResizeEnabled = !snapResizeEnabled);
   double get currentZoom => _transformationController.value.getMaxScaleOnAxis();
+
+  /// Called by the 3D screen when a custom GLB's real footprint is measured.
+  /// [widthPx]/[depthPx] are always the TRUE natural size (scaleFactor=1.0).
+  /// The displayed tile is set to naturalSize × scaleFactor so it matches the 3D model.
+  void updateItemNaturalSize(String id, double widthPx, double depthPx) {
+    final idx = furnitureItems.indexWhere((f) => f.id == id);
+    if (idx == -1) return;
+    final item = furnitureItems[idx];
+    final sf = item.scaleFactor > 0 ? item.scaleFactor : 1.0;
+    setState(() {
+      item.size = Size(
+        (widthPx * sf).clamp(20.0, 1200.0),
+        (depthPx * sf).clamp(20.0, 1200.0),
+      );
+    });
+    _save();
+  }
 
   void setZoom(double zoom) {
     final current = _transformationController.value;
@@ -209,10 +231,7 @@ class RoomCanvasState extends State<RoomCanvas> {
         _cursorAsset.value = 'assets/cursors/rotate_cursor.png';
         return;
       }
-      if (_onResize(selectedItem!, scenePos)) {
-        _cursorAsset.value = 'assets/cursors/expand_cursor.png';
-        return;
-      }
+      // Resize cursor disabled — resize is done via the 3D scale panel
     }
     for (final item in furnitureItems.reversed) {
       if (_inside(item, scenePos)) {
@@ -248,13 +267,18 @@ class RoomCanvasState extends State<RoomCanvas> {
       });
       _save();
     } else if (result == 'duplicate') {
+      final dupSize = selectedItem!.size;
+      final freePos = _findFreePosition(
+        selectedItem!.position + const Offset(20, 20),
+        dupSize,
+      );
       setState(() {
         furnitureItems.add(
           FurnitureModel(
             id: DateTime.now().toString(),
             type: selectedItem!.type,
-            position: selectedItem!.position + const Offset(20, 20),
-            size: selectedItem!.size,
+            position: freePos,
+            size: dupSize,
             color: selectedItem!.color,
             rotation: selectedItem!.rotation,
             glbOverride: selectedItem!.glbOverride,
@@ -314,7 +338,8 @@ class RoomCanvasState extends State<RoomCanvas> {
         return const Size(160, 120);
       // ── Custom furniture default footprint ────────────────────────────
       case FurnitureType.custom:
-        return const Size(80, 80);
+        // Use the size stored in the registry entry (set at import time)
+        return widget.customDefaultSize ?? const Size(80, 80);
     }
   }
 
@@ -366,21 +391,97 @@ class RoomCanvasState extends State<RoomCanvas> {
     }
   }
 
-  FurnitureModel _newItem({required Offset position, Size? size}) =>
-      FurnitureModel(
-        id: DateTime.now().toString(),
-        type: widget.selectedType,
-        position: _snapOffset(position),
-        size: size ?? _defaultSize(widget.selectedType),
-        color: _defaultColor(widget.selectedType),
-        // Attach custom overrides when placing a custom furniture item
-        glbOverride: widget.selectedType == FurnitureType.custom
-            ? widget.customGlbOverride
-            : null,
-        labelOverride: widget.selectedType == FurnitureType.custom
-            ? widget.customLabelOverride
-            : null,
+  /// Checks if [rect] overlaps any existing furniture item.
+  bool _overlapsAny(Rect rect) {
+    return furnitureItems.any((item) {
+      final ir = Rect.fromLTWH(
+        item.position.dx,
+        item.position.dy,
+        item.size.width,
+        item.size.height,
       );
+      return rect.overlaps(ir);
+    });
+  }
+
+  /// Returns a position near [preferred] that doesn't overlap existing items.
+  /// Tries a spiral of offsets; falls back to preferred if none found.
+  Offset _findFreePosition(Offset preferred, Size size) {
+    // First try the exact position — if it's free, use it
+    final prefRect = Rect.fromLTWH(
+      preferred.dx,
+      preferred.dy,
+      size.width,
+      size.height,
+    );
+    if (!_overlapsAny(prefRect)) return preferred;
+
+    // Spiral outwards in grid steps until a free slot is found
+    const step = 20.0;
+    final maxTries = 80;
+    for (var i = 1; i <= maxTries; i++) {
+      final offsets = [
+        Offset(step * i, 0),
+        Offset(-step * i, 0),
+        Offset(0, step * i),
+        Offset(0, -step * i),
+        Offset(step * i, step * i),
+        Offset(-step * i, step * i),
+        Offset(step * i, -step * i),
+        Offset(-step * i, -step * i),
+      ];
+      for (final off in offsets) {
+        final candidate = _snapOffset(preferred + off);
+        final r = Rect.fromLTWH(
+          candidate.dx,
+          candidate.dy,
+          size.width,
+          size.height,
+        );
+        if (!_overlapsAny(r)) return candidate;
+      }
+    }
+    return preferred; // give up — let it overlap
+  }
+
+  FurnitureModel _newItem({required Offset position, Size? size}) {
+    Size itemSize;
+    if (size != null) {
+      // Explicit size supplied (e.g. from draw-drag) — use it directly.
+      itemSize = size;
+    } else if (widget.selectedType == FurnitureType.custom &&
+        widget.customGlbOverride != null) {
+      // For custom GLBs: inherit the NATURAL size from an already-placed sibling
+      // (same GLB file). Since updateItemNaturalSize now stores naturalSize × sf,
+      // we back-calculate naturalSize = size / sf, then use it at sf=1.0.
+      final existing = furnitureItems
+          .where((f) => f.glbOverride == widget.customGlbOverride)
+          .firstOrNull;
+      if (existing != null) {
+        final sf = existing.scaleFactor > 0 ? existing.scaleFactor : 1.0;
+        itemSize = Size(existing.size.width / sf, existing.size.height / sf);
+      } else {
+        itemSize = widget.customDefaultSize ?? const Size(80, 80);
+      }
+    } else {
+      itemSize = _defaultSize(widget.selectedType);
+    }
+
+    final freePos = _findFreePosition(_snapOffset(position), itemSize);
+    return FurnitureModel(
+      id: DateTime.now().toString(),
+      type: widget.selectedType,
+      position: freePos,
+      size: itemSize,
+      color: _defaultColor(widget.selectedType),
+      glbOverride: widget.selectedType == FurnitureType.custom
+          ? widget.customGlbOverride
+          : null,
+      labelOverride: widget.selectedType == FurnitureType.custom
+          ? widget.customLabelOverride
+          : null,
+    );
+  }
 
   // ── Build ─────────────────────────────────────────────────────────────────
   @override
@@ -503,14 +604,7 @@ class RoomCanvasState extends State<RoomCanvas> {
                                 'assets/cursors/rotate_cursor.png';
                             return;
                           }
-                          if (selectedItem != null &&
-                              _onResize(selectedItem!, s)) {
-                            setState(() => _isResizing = true);
-                            _isResizingLive = true;
-                            _cursorAsset.value =
-                                'assets/cursors/expand_cursor.png';
-                            return;
-                          }
+                          // Resize gesture disabled — use 3D view scale panel instead
                           for (final item in furnitureItems.reversed) {
                             if (_inside(item, s)) {
                               setState(() {
@@ -567,14 +661,7 @@ class RoomCanvasState extends State<RoomCanvas> {
                             return;
                           }
                           if (_isResizing && selectedItem != null) {
-                            final l = _localRotated(selectedItem!, s);
-                            double w = l.dx.clamp(40.0, 800.0);
-                            double h = l.dy.clamp(40.0, 800.0);
-                            if (snapResizeEnabled) {
-                              w = _snap(w);
-                              h = _snap(h);
-                            }
-                            setState(() => selectedItem!.size = Size(w, h));
+                            // Resize disabled — no-op
                             return;
                           }
                           if (_isDragging &&
@@ -650,10 +737,14 @@ class RoomCanvasState extends State<RoomCanvas> {
                             setState(() {
                               for (final item in selectedItems) {
                                 item.position = _snapOffset(item.position);
-                                item.size = Size(
-                                  _snap(item.size.width).clamp(40.0, 800.0),
-                                  _snap(item.size.height).clamp(40.0, 800.0),
-                                );
+                                // Only snap the size when the user was actively
+                                // resizing — dragging must NEVER alter the size.
+                                if (_isResizing) {
+                                  item.size = Size(
+                                    _snap(item.size.width).clamp(40.0, 800.0),
+                                    _snap(item.size.height).clamp(40.0, 800.0),
+                                  );
+                                }
                               }
                             });
                             _save();
@@ -973,6 +1064,7 @@ class RoomPainter extends CustomPainter {
   void _drawHandles(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
+    // Selection rectangle
     canvas.drawRect(
       Rect.fromLTWH(-2, -2, w + 4, h + 4),
       Paint()
@@ -980,6 +1072,7 @@ class RoomPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2,
     );
+    // Rotation handle (blue dot above centre) — kept
     canvas.drawLine(
       Offset(w / 2, 0),
       Offset(w / 2, -25),
@@ -996,15 +1089,8 @@ class RoomPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5,
     );
-    canvas.drawCircle(Offset(w, h), 10, Paint()..color = Colors.red);
-    canvas.drawCircle(
-      Offset(w, h),
-      10,
-      Paint()
-        ..color = Colors.white
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5,
-    );
+    // Resize handle (red dot at bottom-right) REMOVED
+    // Use the 3D view scale panel to resize furniture
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

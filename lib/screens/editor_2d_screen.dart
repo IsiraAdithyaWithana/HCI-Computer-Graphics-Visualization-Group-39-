@@ -82,6 +82,20 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
     }
   }
 
+  /// Returns the 2D default footprint size stored in the selected registry entry.
+  Size? get _customDefaultSize {
+    if (_selectedType != FurnitureType.custom || _selectedCustomId == null)
+      return null;
+    try {
+      final entry = CustomFurnitureRegistry.instance.entries.firstWhere(
+        (e) => e.id == _selectedCustomId,
+      );
+      return Size(entry.defaultWidthPx, entry.defaultHeightPx);
+    } catch (_) {
+      return null;
+    }
+  }
+
   void _openRealistic3D() {
     final items = _canvasKey.currentState?.furnitureItems ?? [];
     if (items.isEmpty) {
@@ -102,13 +116,50 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             final canvasItems = _canvasKey.currentState?.furnitureItems ?? [];
             final idx = canvasItems.indexWhere((f) => f.id == id);
             if (idx != -1) {
-              setState(() => canvasItems[idx].scaleFactor = scaleFactor);
+              setState(() {
+                final item = canvasItems[idx];
+                // Recover base size (size at scaleFactor=1.0) then apply new scale
+                final oldFactor = item.scaleFactor > 0 ? item.scaleFactor : 1.0;
+                final baseW = item.size.width / oldFactor;
+                final baseH = item.size.height / oldFactor;
+                item.size = Size(
+                  (baseW * scaleFactor).clamp(20.0, 1200.0),
+                  (baseH * scaleFactor).clamp(20.0, 1200.0),
+                );
+                item.scaleFactor = scaleFactor;
+              });
               _saveLayout();
               _snack(
                 '${canvasItems[idx].labelOverride ?? canvasItems[idx].type.name} '
                 'size saved (${scaleFactor.toStringAsFixed(2)}×).',
               );
             }
+          },
+          onNaturalSizeDetected: (String id, double widthPx, double depthPx) {
+            // 1. Update the live canvas tile so it repaints immediately
+            _canvasKey.currentState?.updateItemNaturalSize(
+              id,
+              widthPx,
+              depthPx,
+            );
+            // 2. Persist to registry so the NEXT time this item is placed it
+            //    starts with the correct shape instead of the 80×80 default.
+            final items = _canvasKey.currentState?.furnitureItems ?? [];
+            final item = items.where((f) => f.id == id).firstOrNull;
+            if (item?.glbOverride != null) {
+              // Find the registry entry whose GLB file matches
+              final entry = CustomFurnitureRegistry.instance.entries
+                  .where((e) => item!.glbOverride!.endsWith(e.glbFileName))
+                  .firstOrNull;
+              if (entry != null) {
+                CustomFurnitureRegistry.instance.updateNaturalSize(
+                  entry.id,
+                  widthPx,
+                  depthPx,
+                );
+              }
+            }
+            _saveLayout();
           },
         ),
       ),
@@ -308,6 +359,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                   customGlbOverride: _customGlbOverride,
                   customLabelOverride: _customLabelOverride,
                   customColor: _customColor,
+                  customDefaultSize: _customDefaultSize,
                   onChanged: _saveLayout,
                   canvasBgColour: _canvasBgColour,
                   roomFloorColour: _currentScheme.floor,
@@ -1125,6 +1177,8 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
   String? _pickedFilePath, _pickedFileName;
   final _nameCtrl = TextEditingController();
   final _newCatCtrl = TextEditingController();
+  final _widthCtrl = TextEditingController(text: '80');
+  final _heightCtrl = TextEditingController(text: '80');
   bool _createNewCategory = false;
   String? _selectedBuiltinCategory;
   bool _isAdding = false;
@@ -1140,6 +1194,8 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
   void dispose() {
     _nameCtrl.dispose();
     _newCatCtrl.dispose();
+    _widthCtrl.dispose();
+    _heightCtrl.dispose();
     super.dispose();
   }
 
@@ -1196,6 +1252,8 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
         category: category,
         sourceGlbPath: _pickedFilePath!,
         isCustomCategory: isNewCat,
+        defaultWidthPx: double.tryParse(_widthCtrl.text.trim()) ?? 80,
+        defaultHeightPx: double.tryParse(_heightCtrl.text.trim()) ?? 80,
       );
       widget.onAdded();
       if (mounted) Navigator.of(context).pop();
@@ -1432,6 +1490,41 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
                         borderSide: BorderSide(color: const Color(0xFF2C2C3E)),
                       ),
                     ),
+                  ),
+
+                  // ── 2D footprint size ───────────────────────────────────
+                  const SizedBox(height: 18),
+                  _SectionLabel(
+                    icon: Icons.straighten_outlined,
+                    label: '2D Size (px)  —  100 px ≈ 1 metre',
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Sets how large the tile appears on the 2D canvas. '
+                    'You can also rescale later via the 3D view.',
+                    style: TextStyle(fontSize: 11, color: Color(0xFF56535F)),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _SizeField(
+                          label: 'Width',
+                          controller: _widthCtrl,
+                          enabled: !_isAdding,
+                          accent: _accent,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _SizeField(
+                          label: 'Height / Depth',
+                          controller: _heightCtrl,
+                          enabled: !_isAdding,
+                          accent: _accent,
+                        ),
+                      ),
+                    ],
                   ),
 
                   const SizedBox(height: 18),
@@ -2340,6 +2433,70 @@ class _CanvasBgPickerDialogState extends State<_CanvasBgPickerDialog> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _SizeField — compact numeric text field for 2D footprint width/height input
+// ─────────────────────────────────────────────────────────────────────────────
+class _SizeField extends StatelessWidget {
+  final String label;
+  final TextEditingController controller;
+  final bool enabled;
+  final Color accent;
+  const _SizeField({
+    required this.label,
+    required this.controller,
+    required this.enabled,
+    required this.accent,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(fontSize: 11, color: Color(0xFF8E8A9A)),
+        ),
+        const SizedBox(height: 4),
+        TextField(
+          controller: controller,
+          enabled: enabled,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+          ],
+          style: const TextStyle(fontSize: 13, color: Color(0xFFF0EDE8)),
+          decoration: InputDecoration(
+            suffixText: 'px',
+            suffixStyle: const TextStyle(
+              fontSize: 12,
+              color: Color(0xFF56535F),
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 10,
+            ),
+            filled: true,
+            fillColor: const Color(0xFF17171F),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: Color(0xFF2C2C3E)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: Color(0xFF2C2C3E)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: accent, width: 1.5),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
