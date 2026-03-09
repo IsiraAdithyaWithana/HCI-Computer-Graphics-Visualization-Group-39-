@@ -72,6 +72,10 @@ class RoomCanvasState extends State<RoomCanvas> {
   Offset? _selectionStart;
   Offset? _selectionCurrent;
 
+  /// Stores each dragged item's position at the moment dragging started.
+  /// Used to snap back to the original position if the drop would cause overlap.
+  Map<String, Offset> _preDragPositions = {};
+
   final _cursorPos = ValueNotifier<Offset?>(null);
   final _cursorAsset = ValueNotifier<String?>(
     'assets/cursors/canvas_cursor.png',
@@ -622,6 +626,11 @@ class RoomCanvasState extends State<RoomCanvas> {
                               _cursorAsset.value =
                                   'assets/cursors/move_cursor.png';
                               _dragStart = s;
+                              // Snapshot positions so we can revert if drop overlaps
+                              _preDragPositions = {
+                                for (final it in selectedItems)
+                                  it.id: it.position,
+                              };
                               return;
                             }
                           }
@@ -746,6 +755,44 @@ class RoomCanvasState extends State<RoomCanvas> {
                                   );
                                 }
                               }
+                              // Overlap check: if any dragged item overlaps a
+                              // non-dragged item, revert ALL dragged items to
+                              // their pre-drag positions.
+                              if (_isDragging && _preDragPositions.isNotEmpty) {
+                                final draggedIds = selectedItems
+                                    .map((i) => i.id)
+                                    .toSet();
+                                bool hasOverlap = false;
+                                for (final item in selectedItems) {
+                                  final r = Rect.fromLTWH(
+                                    item.position.dx,
+                                    item.position.dy,
+                                    item.size.width,
+                                    item.size.height,
+                                  );
+                                  for (final other in furnitureItems) {
+                                    if (draggedIds.contains(other.id)) continue;
+                                    final or2 = Rect.fromLTWH(
+                                      other.position.dx,
+                                      other.position.dy,
+                                      other.size.width,
+                                      other.size.height,
+                                    );
+                                    if (r.overlaps(or2)) {
+                                      hasOverlap = true;
+                                      break;
+                                    }
+                                  }
+                                  if (hasOverlap) break;
+                                }
+                                if (hasOverlap) {
+                                  for (final item in selectedItems) {
+                                    final orig = _preDragPositions[item.id];
+                                    if (orig != null) item.position = orig;
+                                  }
+                                }
+                              }
+                              _preDragPositions = {};
                             });
                             _save();
                           }
@@ -876,7 +923,7 @@ class RoomCanvasState extends State<RoomCanvas> {
   void _zoomAroundNoCursor(double factor, Offset screenFocal) {
     final current = _transformationController.value;
     final scale = current.getMaxScaleOnAxis();
-    final clamped = (scale * factor).clamp(0.3, 3.0);
+    final clamped = (scale * factor).clamp(0.05, 5.0);
     if ((clamped - scale).abs() < 0.0001) return;
     final f = clamped / scale;
     final tx = current.storage[12];

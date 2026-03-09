@@ -370,8 +370,8 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                   bottom: 16,
                   child: _ZoomControl(
                     zoom: _canvasZoom,
-                    min: 0.3,
-                    max: 3.0,
+                    min: 0.05,
+                    max: 5.0,
                     label: _zoomLabel,
                     onChanged: _setZoom,
                     onReset: () => _setZoom(1.0),
