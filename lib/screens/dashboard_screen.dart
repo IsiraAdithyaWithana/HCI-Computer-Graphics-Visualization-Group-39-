@@ -4,6 +4,7 @@ import 'login_screen.dart';
 import 'editor_2d_screen.dart';
 import '../theme/app_theme.dart';
 import '../models/design_project.dart';
+import '../services/layout_persistence_service.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DashboardScreen — main app hub
@@ -11,7 +12,11 @@ import '../models/design_project.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  /// The logged-in user's ID (derived from email at login).
+  /// Used to namespace all storage so multiple users can coexist.
+  final String userId;
+
+  const DashboardScreen({super.key, required this.userId});
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
@@ -19,41 +24,118 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   _NavItem _currentNav = _NavItem.home;
   bool _sidebarExpanded = true;
-  List<DesignProject> _projects = List.from(kSampleProjects);
+  List<PersistedProject> _projects = [];
   String _searchQuery = '';
   final _searchCtrl = TextEditingController();
 
-  List<DesignProject> get _filtered {
+  @override
+  void initState() {
+    super.initState();
+    _loadProjects();
+  }
+
+  Future<void> _loadProjects() async {
+    final projects = await LayoutPersistenceService.instance.loadProjects(
+      widget.userId,
+    );
+    setState(() => _projects = projects);
+  }
+
+  List<PersistedProject> get _filtered {
     if (_searchQuery.isEmpty) return _projects;
     final q = _searchQuery.toLowerCase();
     return _projects
         .where(
           (p) =>
               p.name.toLowerCase().contains(q) ||
-              p.roomType.label.toLowerCase().contains(q),
+              p.roomType.toLowerCase().contains(q),
         )
         .toList();
   }
 
-  void _openEditor({RoomTemplate? template}) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const Editor2DScreen()),
+  /// Open an existing project by ID.
+  void _openProject(String projectId) async {
+    final project = _projects.firstWhere(
+      (p) => p.id == projectId,
+      orElse: () => _projects.first,
     );
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Editor2DScreen(
+          projectId: project.id,
+          userId: widget.userId,
+          projectName: project.name,
+        ),
+      ),
+    );
+    // Refresh after returning — furniture count / lastModified may have changed
+    _loadProjects();
   }
 
-  void _toggleFavorite(String id) {
-    setState(() {
-      final i = _projects.indexWhere((p) => p.id == id);
-      if (i != -1)
-        _projects[i] = _projects[i].copyWith(
-          isFavorite: !_projects[i].isFavorite,
-        );
-    });
+  /// Create a brand new project and open the editor.
+  Future<void> _createNewProject({RoomTemplate? template}) async {
+    final id = 'proj_${DateTime.now().millisecondsSinceEpoch}';
+    final now = DateTime.now();
+    // Pick a colour based on template/room type
+    final rt = template?.type ?? RoomType.other;
+    final colorMap = {
+      RoomType.livingRoom: 0xFF7C9A92,
+      RoomType.bedroom: 0xFF9A7C8E,
+      RoomType.kitchen: 0xFFB8956A,
+      RoomType.office: 0xFF6A82B8,
+      RoomType.diningRoom: 0xFF8EA87C,
+      RoomType.bathroom: 0xFF6AA8B8,
+      RoomType.other: 0xFFB86A6A,
+    };
+    final project = PersistedProject(
+      id: id,
+      name: template?.name ?? 'New Design',
+      roomType: rt.name,
+      widthM: template?.widthM ?? 6.0,
+      depthM: template?.depthM ?? 5.0,
+      furnitureCount: 0,
+      lastModified: now,
+      createdAt: now,
+      previewColorValue: colorMap[rt] ?? 0xFF7C9A92,
+    );
+    await LayoutPersistenceService.instance.upsertProject(
+      widget.userId,
+      project,
+    );
+    await _loadProjects();
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Editor2DScreen(
+          projectId: project.id,
+          userId: widget.userId,
+          projectName: project.name,
+        ),
+      ),
+    );
+    _loadProjects();
   }
 
-  void _deleteProject(String id) {
+  void _toggleFavorite(String id) async {
+    final idx = _projects.indexWhere((p) => p.id == id);
+    if (idx == -1) return;
+    final updated = _projects[idx].copyWith(
+      isFavorite: !_projects[idx].isFavorite,
+    );
+    await LayoutPersistenceService.instance.upsertProject(
+      widget.userId,
+      updated,
+    );
+    setState(() => _projects[idx] = updated);
+  }
+
+  void _deleteProject(String id) async {
+    final backup = List<PersistedProject>.from(_projects);
     setState(() => _projects.removeWhere((p) => p.id == id));
+    await LayoutPersistenceService.instance.deleteProject(widget.userId, id);
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('Project deleted'),
@@ -62,7 +144,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
         action: SnackBarAction(
           label: 'Undo',
           textColor: AppTheme.accent,
-          onPressed: () {}, // Would restore from backup in real app
+          onPressed: () async {
+            // Restore: re-insert all projects from backup
+            await LayoutPersistenceService.instance.saveProjects(
+              widget.userId,
+              backup,
+            );
+            _loadProjects();
+          },
         ),
       ),
     );
@@ -87,7 +176,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             onNavChanged: (n) => setState(() => _currentNav = n),
             onToggle: () =>
                 setState(() => _sidebarExpanded = !_sidebarExpanded),
-            onNewDesign: () => _openEditor(),
+            onNewDesign: () => _createNewProject(),
             onLogout: () => Navigator.pushReplacement(
               context,
               MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -102,17 +191,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   title: _currentNav.label,
                   searchCtrl: _searchCtrl,
                   onSearchChanged: (v) => setState(() => _searchQuery = v),
-                  onNewDesign: () => _openEditor(),
+                  onNewDesign: () => _createNewProject(),
                 ),
                 Expanded(
                   child: _currentNav == _NavItem.home
                       ? _HomeContent(
                           projects: _filtered,
                           allProjects: _projects,
-                          onOpen: _openEditor,
+                          onOpen: (id) => _openProject(id),
                           onFavorite: _toggleFavorite,
                           onDelete: _deleteProject,
-                          onTemplate: (t) => _openEditor(template: t),
+                          onTemplate: (t) => _createNewProject(template: t),
                         )
                       : _PlaceholderContent(nav: _currentNav),
                 ),
@@ -672,8 +761,8 @@ class _IconChip extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _HomeContent extends StatelessWidget {
-  final List<DesignProject> projects, allProjects;
-  final VoidCallback onOpen;
+  final List<PersistedProject> projects, allProjects;
+  final ValueChanged<String> onOpen;
   final ValueChanged<String> onFavorite;
   final ValueChanged<String> onDelete;
   final ValueChanged<RoomTemplate> onTemplate;
@@ -749,7 +838,7 @@ class _HomeContent extends StatelessWidget {
           const SizedBox(height: 14),
 
           projects.isEmpty
-              ? _EmptyProjects(onNew: onOpen)
+              ? _EmptyProjects(onNew: () => onOpen(''))
               : GridView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
@@ -762,7 +851,7 @@ class _HomeContent extends StatelessWidget {
                   itemCount: projects.length,
                   itemBuilder: (_, i) => _ProjectCard(
                     project: projects[i],
-                    onOpen: onOpen,
+                    onOpen: () => onOpen(projects[i].id),
                     onFavorite: () => onFavorite(projects[i].id),
                     onDelete: () => onDelete(projects[i].id),
                   ),
@@ -832,7 +921,7 @@ class _HomeContent extends StatelessWidget {
 // ── Stats strip ────────────────────────────────────────────────────────────
 
 class _StatsStrip extends StatelessWidget {
-  final List<DesignProject> projects;
+  final List<PersistedProject> projects;
   const _StatsStrip({required this.projects});
 
   @override
@@ -962,7 +1051,7 @@ class _SectionHeader extends StatelessWidget {
 // ── Project card ───────────────────────────────────────────────────────────
 
 class _ProjectCard extends StatefulWidget {
-  final DesignProject project;
+  final PersistedProject project;
   final VoidCallback onOpen, onFavorite, onDelete;
   const _ProjectCard({
     required this.project,
@@ -977,9 +1066,33 @@ class _ProjectCard extends StatefulWidget {
 class _ProjectCardState extends State<_ProjectCard> {
   bool _hovered = false;
 
+  /// Resolve RoomType from persisted string name.
+  RoomType get _roomType => RoomType.values.firstWhere(
+    (e) => e.name == widget.project.roomType,
+    orElse: () => RoomType.other,
+  );
+
+  Color get _previewColor => Color(widget.project.previewColorValue);
+
+  String get _dimensions =>
+      '${widget.project.widthM.toStringAsFixed(1)} × '
+      '${widget.project.depthM.toStringAsFixed(1)} m';
+
+  String get _timeAgo {
+    final diff = DateTime.now().difference(widget.project.lastModified);
+    if (diff.inMinutes < 1) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    final d = widget.project.lastModified;
+    return '${d.day}/${d.month}/${d.year}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = widget.project;
+    final rt = _roomType;
+    final color = _previewColor;
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
@@ -1021,7 +1134,7 @@ class _ProjectCardState extends State<_ProjectCard> {
                       SizedBox.expand(
                         child: CustomPaint(
                           painter: _MiniFloorPlanPainter(
-                            color: p.previewColor,
+                            color: color,
                             widthM: p.widthM,
                             depthM: p.depthM,
                           ),
@@ -1039,25 +1152,19 @@ class _ProjectCardState extends State<_ProjectCard> {
                           decoration: BoxDecoration(
                             color: AppTheme.bgDark.withOpacity(0.75),
                             borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: p.previewColor.withOpacity(0.3),
-                            ),
+                            border: Border.all(color: color.withOpacity(0.3)),
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(
-                                p.roomType.icon,
-                                size: 11,
-                                color: p.previewColor,
-                              ),
+                              Icon(rt.icon, size: 11, color: color),
                               const SizedBox(width: 5),
                               Text(
-                                p.roomType.label,
+                                rt.label,
                                 style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.w600,
-                                  color: p.previewColor,
+                                  color: color,
                                 ),
                               ),
                             ],
@@ -1125,7 +1232,7 @@ class _ProjectCardState extends State<_ProjectCard> {
                       children: [
                         _MetaChip(
                           icon: Icons.straighten_rounded,
-                          label: p.dimensions,
+                          label: _dimensions,
                         ),
                         const SizedBox(width: 8),
                         _MetaChip(
@@ -1134,7 +1241,7 @@ class _ProjectCardState extends State<_ProjectCard> {
                         ),
                         const Spacer(),
                         Text(
-                          p.timeAgo,
+                          _timeAgo,
                           style: const TextStyle(
                             fontSize: 10,
                             color: AppTheme.textMuted,

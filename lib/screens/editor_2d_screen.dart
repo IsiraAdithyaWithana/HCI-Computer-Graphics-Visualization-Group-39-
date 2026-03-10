@@ -14,7 +14,22 @@ import '../services/layout_persistence_service.dart';
 // ─────────────────────────────────────────────────────────────────────────────
 
 class Editor2DScreen extends StatefulWidget {
-  const Editor2DScreen({super.key});
+  /// The unique ID of the project being edited. Every save/load uses this key.
+  final String projectId;
+
+  /// The ID of the logged-in user. Combined with projectId to namespace storage.
+  final String userId;
+
+  /// Optional human-readable project name shown in the app bar.
+  final String? projectName;
+
+  const Editor2DScreen({
+    super.key,
+    required this.projectId,
+    required this.userId,
+    this.projectName,
+  });
+
   @override
   State<Editor2DScreen> createState() => _Editor2DScreenState();
 }
@@ -31,6 +46,22 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   Color _canvasBgColour = const Color(0xFF0D0D11);
 
   final GlobalKey<RoomCanvasState> _canvasKey = GlobalKey<RoomCanvasState>();
+
+  // Live undo/redo state — ValueNotifier so the 3D screen reacts without being rebuilt.
+  final ValueNotifier<bool> _undoNotifier = ValueNotifier(false);
+  final ValueNotifier<bool> _redoNotifier = ValueNotifier(false);
+
+  void _onUndoStateChanged() {
+    _undoNotifier.value = _canvasKey.currentState?.canUndo ?? false;
+    _redoNotifier.value = _canvasKey.currentState?.canRedo ?? false;
+  }
+
+  @override
+  void dispose() {
+    _undoNotifier.dispose();
+    _redoNotifier.dispose();
+    super.dispose();
+  }
 
   double _roomWidthM = 6.0;
   double _roomDepthM = 5.0;
@@ -112,30 +143,35 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
           floorColour: _currentScheme.floor,
           ceilingColour: _currentScheme.ceiling,
           trimColour: _currentScheme.trim,
+          canUndoNotifier: _undoNotifier,
+          canRedoNotifier: _redoNotifier,
+          onUndo: () {
+            _canvasKey.currentState?.undo();
+            return _canvasKey.currentState?.exportToJson();
+          },
+          onRedo: () {
+            _canvasKey.currentState?.redo();
+            return _canvasKey.currentState?.exportToJson();
+          },
           onSizeUpdated: (String id, double scaleFactor) {
             final canvasItems = _canvasKey.currentState?.furnitureItems ?? [];
             final idx = canvasItems.indexWhere((f) => f.id == id);
             if (idx == -1) return;
 
+            // Push undo BEFORE mutating so size-save can be undone from 2D
+            _canvasKey.currentState?.pushUndoExternal();
+
             final saved = canvasItems[idx];
-            // Natural size of the resized item (size at scaleFactor = 1.0)
             final oldFactor = saved.scaleFactor > 0 ? saved.scaleFactor : 1.0;
             final naturalW = saved.size.width / oldFactor;
             final naturalH = saved.size.height / oldFactor;
 
             setState(() {
-              // Update every item that is the same furniture piece:
-              // — custom GLB: match on glbOverride filename
-              // — built-in : match on FurnitureType
               for (final item in canvasItems) {
                 final isSibling = saved.glbOverride != null
                     ? item.glbOverride == saved.glbOverride
                     : item.type == saved.type;
                 if (!isSibling) continue;
-
-                // Each sibling shares the same natural size but may keep its
-                // own scaleFactor if you want per-item scale in the future.
-                // For now, unify to the saved scaleFactor for consistency.
                 item.size = Size(
                   (naturalW * scaleFactor).clamp(20.0, 1200.0),
                   (naturalH * scaleFactor).clamp(20.0, 1200.0),
@@ -144,11 +180,6 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
               }
             });
             _saveLayout();
-            _snack(
-              '${saved.labelOverride ?? saved.type.name} '
-              'size saved (${scaleFactor.toStringAsFixed(2)}×) — '
-              'all matching items updated.',
-            );
           },
           onNaturalSizeDetected: (String id, double widthPx, double depthPx) {
             _canvasKey.currentState?.updateItemNaturalSize(
@@ -230,7 +261,10 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   }
 
   Future<void> _loadSavedLayout() async {
-    final snapshot = await LayoutPersistenceService.instance.load();
+    final snapshot = await LayoutPersistenceService.instance.load(
+      userId: widget.userId,
+      projectId: widget.projectId,
+    );
     if (snapshot == null) return;
     setState(() {
       _roomWidthM = snapshot.roomWidthM;
@@ -245,10 +279,28 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
     final json = _canvasKey.currentState?.exportToJson();
     if (json == null) return;
     await LayoutPersistenceService.instance.save(
+      userId: widget.userId,
+      projectId: widget.projectId,
       furnitureJson: json,
       roomWidthM: _roomWidthM,
       roomDepthM: _roomDepthM,
     );
+    // Update project metadata (furniture count + lastModified) in the list
+    final count = _canvasKey.currentState?.furnitureItems.length ?? 0;
+    final existing = (await LayoutPersistenceService.instance.loadProjects(
+      widget.userId,
+    )).where((p) => p.id == widget.projectId).firstOrNull;
+    if (existing != null) {
+      await LayoutPersistenceService.instance.upsertProject(
+        widget.userId,
+        existing.copyWith(
+          furnitureCount: count,
+          lastModified: DateTime.now(),
+          widthM: _roomWidthM,
+          depthM: _roomDepthM,
+        ),
+      );
+    }
   }
 
   @override
@@ -256,8 +308,45 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
     final snapEnabled = _canvasKey.currentState?.isSnapResizeEnabled ?? true;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('2D Room Editor'),
+        title: Text(widget.projectName ?? '2D Room Editor'),
         actions: [
+          // ── Undo ────────────────────────────────────────────────────────
+          ValueListenableBuilder<bool>(
+            valueListenable: _undoNotifier,
+            builder: (_, canUndo, __) => Tooltip(
+              message: 'Undo (Ctrl+Z)',
+              child: IconButton(
+                icon: Icon(
+                  Icons.undo_rounded,
+                  color: canUndo
+                      ? const Color(0xFFC9A96E)
+                      : const Color(0xFF4A4A6A),
+                ),
+                onPressed: canUndo
+                    ? () => _canvasKey.currentState?.undo()
+                    : null,
+              ),
+            ),
+          ),
+          // ── Redo ────────────────────────────────────────────────────────
+          ValueListenableBuilder<bool>(
+            valueListenable: _redoNotifier,
+            builder: (_, canRedo, __) => Tooltip(
+              message: 'Redo (Ctrl+Shift+Z)',
+              child: IconButton(
+                icon: Icon(
+                  Icons.redo_rounded,
+                  color: canRedo
+                      ? const Color(0xFFC9A96E)
+                      : const Color(0xFF4A4A6A),
+                ),
+                onPressed: canRedo
+                    ? () => _canvasKey.currentState?.redo()
+                    : null,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
           // ── Room colour scheme picker ───────────────────────────────────
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
@@ -380,6 +469,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                   customColor: _customColor,
                   customDefaultSize: _customDefaultSize,
                   onChanged: _saveLayout,
+                  onUndoStateChanged: _onUndoStateChanged,
                   canvasBgColour: _canvasBgColour,
                   roomFloorColour: _currentScheme.floor,
                   roomWallColour: _currentScheme.wall,

@@ -67,9 +67,14 @@ class _LoginScreenState extends State<LoginScreen>
     await Future.delayed(const Duration(milliseconds: 900));
     if (!mounted) return;
     setState(() => _loading = false);
+    // Derive a stable userId from the email (lowercase, trimmed).
+    // Later this can be replaced with a real auth token/UID.
+    final userId = _emailCtrl.text.trim().toLowerCase().isNotEmpty
+        ? _emailCtrl.text.trim().toLowerCase()
+        : 'guest';
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (_) => const DashboardScreen()),
+      MaterialPageRoute(builder: (_) => DashboardScreen(userId: userId)),
     );
   }
 

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:webview_windows/webview_windows.dart';
 import '../models/furniture_model.dart';
 import '../services/asset_server.dart';
@@ -30,6 +31,14 @@ class Realistic3DScreen extends StatefulWidget {
   /// [tintHex] is null when tint is cleared.
   final void Function(String id, String? tintHex)? onTintUpdated;
 
+  /// Undo / Redo — ValueNotifier so the appbar reacts live to canvas history changes.
+  final ValueNotifier<bool>? canUndoNotifier;
+  final ValueNotifier<bool>? canRedoNotifier;
+
+  /// Returns JSON of updated furniture items so the 3D scene can live-update.
+  final String? Function()? onUndo;
+  final String? Function()? onRedo;
+
   const Realistic3DScreen({
     super.key,
     required this.furniture,
@@ -42,6 +51,10 @@ class Realistic3DScreen extends StatefulWidget {
     this.onSizeUpdated,
     this.onNaturalSizeDetected,
     this.onTintUpdated,
+    this.onUndo,
+    this.onRedo,
+    this.canUndoNotifier,
+    this.canRedoNotifier,
   });
 
   @override
@@ -58,13 +71,58 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
   @override
   void initState() {
     super.initState();
+    // Global keyboard handler — fires even when the WebView owns focus.
+    HardwareKeyboard.instance.addHandler(_globalKeyHandler);
     WidgetsBinding.instance.addPostFrameCallback((_) => _boot());
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_globalKeyHandler);
     _controller.dispose();
     super.dispose();
+  }
+
+  /// Intercepts Ctrl+Z / Ctrl+Shift+Z at the OS level regardless of focus.
+  bool _globalKeyHandler(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    final ctrl = HardwareKeyboard.instance.isControlPressed;
+    final shift = HardwareKeyboard.instance.isShiftPressed;
+    if (ctrl && !shift && event.logicalKey == LogicalKeyboardKey.keyZ) {
+      _handleUndo();
+      return true; // consumed
+    }
+    if (ctrl && shift && event.logicalKey == LogicalKeyboardKey.keyZ) {
+      _handleRedo();
+      return true;
+    }
+    return false;
+  }
+
+  /// Call undo on the 2D canvas and immediately push updated items to the 3D scene.
+  void _handleUndo() {
+    final json = widget.onUndo?.call();
+    if (json != null && _sceneReady) {
+      _pushItemsToScene(json);
+    }
+  }
+
+  /// Call redo on the 2D canvas and immediately push updated items to the 3D scene.
+  void _handleRedo() {
+    final json = widget.onRedo?.call();
+    if (json != null && _sceneReady) {
+      _pushItemsToScene(json);
+    }
+  }
+
+  /// Call `window.flutterUpdateItems` in the webview with the current item states.
+  void _pushItemsToScene(String itemsJson) {
+    final escaped = itemsJson
+        .replaceAll('\\', '\\\\')
+        .replaceAll("'", "\\'")
+        .replaceAll('\n', '')
+        .replaceAll('\r', '');
+    _controller.executeScript("window.flutterUpdateItems('$escaped');");
   }
 
   Future<void> _boot() async {
@@ -76,7 +134,11 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
       _controller.webMessage.listen((msg) {
         try {
           final data = jsonDecode(msg) as Map<String, dynamic>;
-          if (data['type'] == 'sizeUpdate') {
+          if (data['type'] == 'undo') {
+            _handleUndo();
+          } else if (data['type'] == 'redo') {
+            _handleRedo();
+          } else if (data['type'] == 'sizeUpdate') {
             final id = data['id'] as String?;
             final scaleFactor = (data['scaleFactor'] as num?)?.toDouble();
             if (id != null && scaleFactor != null) {
@@ -166,7 +228,13 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
       backgroundColor: const Color(0xFF0D0D1A),
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(56),
-        child: _AppBar(itemCount: widget.furniture.length),
+        child: _AppBar(
+          itemCount: widget.furniture.length,
+          canUndoNotifier: widget.canUndoNotifier,
+          canRedoNotifier: widget.canRedoNotifier,
+          onUndo: _handleUndo,
+          onRedo: _handleRedo,
+        ),
       ),
       body: Stack(
         children: [
@@ -212,7 +280,18 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
 
 class _AppBar extends StatelessWidget {
   final int itemCount;
-  const _AppBar({required this.itemCount});
+  final ValueNotifier<bool>? canUndoNotifier;
+  final ValueNotifier<bool>? canRedoNotifier;
+  final VoidCallback? onUndo;
+  final VoidCallback? onRedo;
+
+  const _AppBar({
+    required this.itemCount,
+    this.canUndoNotifier,
+    this.canRedoNotifier,
+    this.onUndo,
+    this.onRedo,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -245,6 +324,31 @@ class _AppBar extends StatelessWidget {
               ),
             ),
             const Spacer(),
+            // ── Undo / Redo buttons — react live via ValueNotifier ─────────
+            ValueListenableBuilder<bool>(
+              valueListenable: canUndoNotifier ?? ValueNotifier(false),
+              builder: (_, canUndo, __) => Tooltip(
+                message: 'Undo (Ctrl+Z)',
+                child: _AppBarIconBtn(
+                  icon: Icons.undo_rounded,
+                  enabled: canUndo,
+                  onTap: canUndo ? onUndo : null,
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+            ValueListenableBuilder<bool>(
+              valueListenable: canRedoNotifier ?? ValueNotifier(false),
+              builder: (_, canRedo, __) => Tooltip(
+                message: 'Redo (Ctrl+Shift+Z)',
+                child: _AppBarIconBtn(
+                  icon: Icons.redo_rounded,
+                  enabled: canRedo,
+                  onTap: canRedo ? onRedo : null,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
             _Chip(
               icon: Icons.chair_outlined,
               label: '$itemCount item${itemCount == 1 ? '' : 's'}',
@@ -258,6 +362,34 @@ class _AppBar extends StatelessWidget {
             ),
             const SizedBox(width: 16),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AppBarIconBtn extends StatelessWidget {
+  final IconData icon;
+  final bool enabled;
+  final VoidCallback? onTap;
+
+  const _AppBarIconBtn({required this.icon, required this.enabled, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: enabled ? Colors.white.withOpacity(0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(
+          icon,
+          size: 20,
+          color: enabled ? Colors.white : Colors.white.withOpacity(0.25),
         ),
       ),
     );

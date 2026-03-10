@@ -15,6 +15,10 @@ class RoomCanvas extends StatefulWidget {
   final void Function(double zoom)? onZoomChanged;
   final VoidCallback? onChanged;
 
+  /// Fired whenever canUndo or canRedo changes so the parent can rebuild its
+  /// undo/redo buttons with the correct enabled state.
+  final VoidCallback? onUndoStateChanged;
+
   // ── Colour scheme ──────────────────────────────────────────────────────
   /// Background colour for the entire canvas viewport (area outside the room).
   final Color canvasBgColour;
@@ -52,6 +56,7 @@ class RoomCanvas extends StatefulWidget {
     this.customColor,
     this.customDefaultSize,
     this.onChanged,
+    this.onUndoStateChanged,
   });
 
   @override
@@ -62,6 +67,59 @@ class RoomCanvasState extends State<RoomCanvas> {
   List<FurnitureModel> furnitureItems = [];
   List<FurnitureModel> selectedItems = [];
   FurnitureModel? selectedItem;
+
+  // ── Undo / Redo ────────────────────────────────────────────────────────────
+  final List<String> _undoStack = [];
+  final List<String> _redoStack = [];
+  static const int _maxHistory = 50;
+
+  bool get canUndo => _undoStack.isNotEmpty;
+  bool get canRedo => _redoStack.isNotEmpty;
+
+  /// Snapshot the current state before a mutation so it can be undone.
+  void _pushUndo() {
+    _undoStack.add(_exportSnapshot());
+    if (_undoStack.length > _maxHistory) _undoStack.removeAt(0);
+    _redoStack.clear();
+    widget.onUndoStateChanged?.call();
+  }
+
+  String _exportSnapshot() {
+    return jsonEncode(furnitureItems.map((f) => f.toJson()).toList());
+  }
+
+  void _restoreSnapshot(String snapshot) {
+    try {
+      final list = jsonDecode(snapshot) as List;
+      setState(() {
+        furnitureItems = list
+            .map((e) => FurnitureModel.fromJson(e as Map<String, dynamic>))
+            .toList();
+        selectedItems.clear();
+        selectedItem = null;
+      });
+    } catch (_) {}
+  }
+
+  void undo() {
+    if (_undoStack.isEmpty) return;
+    _redoStack.add(_exportSnapshot());
+    _restoreSnapshot(_undoStack.removeLast());
+    widget.onUndoStateChanged?.call();
+    widget.onChanged?.call();
+  }
+
+  void redo() {
+    if (_redoStack.isEmpty) return;
+    _undoStack.add(_exportSnapshot());
+    _restoreSnapshot(_redoStack.removeLast());
+    widget.onUndoStateChanged?.call();
+    widget.onChanged?.call();
+  }
+
+  /// Called externally (e.g. from the 3D size-save callback) to snapshot the
+  /// current state so the mutation that follows can be undone from the 2D canvas.
+  void pushUndoExternal() => _pushUndo();
 
   Offset? _dragStart;
   bool _isRotating = false;
@@ -264,6 +322,7 @@ class RoomCanvasState extends State<RoomCanvas> {
       ],
     );
     if (result == 'delete') {
+      _pushUndo();
       setState(() {
         furnitureItems.removeWhere((i) => selectedItems.contains(i));
         selectedItems.clear();
@@ -271,6 +330,7 @@ class RoomCanvasState extends State<RoomCanvas> {
       });
       _save();
     } else if (result == 'duplicate') {
+      _pushUndo();
       final dupSize = selectedItem!.size;
       final freePos = _findFreePosition(
         selectedItem!.position + const Offset(20, 20),
@@ -292,6 +352,7 @@ class RoomCanvasState extends State<RoomCanvas> {
       });
       _save();
     } else if (result == 'rotate') {
+      _pushUndo();
       setState(() => selectedItem!.rotation += 1.5708);
       _save();
     }
@@ -504,9 +565,23 @@ class RoomCanvasState extends State<RoomCanvas> {
       focusNode: _focusNode,
       autofocus: true,
       onKey: (event) {
-        if (event is RawKeyDownEvent &&
-            event.logicalKey == LogicalKeyboardKey.delete &&
+        if (event is! RawKeyDownEvent) return;
+        final ctrl = HardwareKeyboard.instance.isControlPressed;
+        final shift = HardwareKeyboard.instance.isShiftPressed;
+        // Ctrl+Z → undo
+        if (ctrl && !shift && event.logicalKey == LogicalKeyboardKey.keyZ) {
+          undo();
+          return;
+        }
+        // Ctrl+Shift+Z → redo
+        if (ctrl && shift && event.logicalKey == LogicalKeyboardKey.keyZ) {
+          redo();
+          return;
+        }
+        // Delete → remove selected
+        if (event.logicalKey == LogicalKeyboardKey.delete &&
             selectedItems.isNotEmpty) {
+          _pushUndo();
           setState(() {
             furnitureItems.removeWhere((i) => selectedItems.contains(i));
             selectedItems.clear();
@@ -577,6 +652,7 @@ class RoomCanvasState extends State<RoomCanvas> {
                         onTapUp: (d) {
                           if (widget.currentMode == MouseMode.draw &&
                               _drawTapPos != null) {
+                            _pushUndo();
                             setState(
                               () => furnitureItems.add(
                                 _newItem(position: _drawTapPos!),
@@ -612,6 +688,7 @@ class RoomCanvasState extends State<RoomCanvas> {
                           final s = _globalToScene(d.globalPosition);
                           if (selectedItem != null &&
                               _onRotate(selectedItem!, s)) {
+                            _pushUndo();
                             setState(() => _isRotating = true);
                             _isRotatingLive = true;
                             _cursorAsset.value =
@@ -636,6 +713,7 @@ class RoomCanvasState extends State<RoomCanvas> {
                               _cursorAsset.value =
                                   'assets/cursors/move_cursor.png';
                               _dragStart = s;
+                              _pushUndo();
                               // Snapshot positions so we can revert if drop overlaps
                               _preDragPositions = {
                                 for (final it in selectedItems)
@@ -712,6 +790,7 @@ class RoomCanvasState extends State<RoomCanvas> {
                             );
                             if (rect.width.abs() > 10 &&
                                 rect.height.abs() > 10) {
+                              _pushUndo();
                               setState(
                                 () => furnitureItems.add(
                                   _newItem(
@@ -799,6 +878,11 @@ class RoomCanvasState extends State<RoomCanvas> {
                                   for (final item in selectedItems) {
                                     final orig = _preDragPositions[item.id];
                                     if (orig != null) item.position = orig;
+                                  }
+                                  // Drag was cancelled — discard the undo snapshot
+                                  if (_undoStack.isNotEmpty) {
+                                    _undoStack.removeLast();
+                                    widget.onUndoStateChanged?.call();
                                   }
                                 }
                               }

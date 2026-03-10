@@ -162,7 +162,7 @@
       pointer-events: all;
       isolation: isolate;
       transition: bottom 0.38s cubic-bezier(0.34, 1.56, 0.64, 1);
-      overflow: hidden;
+      overflow: visible;
       box-shadow: 0 -4px 40px rgba(99, 102, 241, 0.2), 0 8px 32px rgba(0, 0, 0, 0.6);
     }
 
@@ -269,11 +269,20 @@
       font: 600 12px/1 'Courier New', monospace;
       color: #c7d2fe;
       background: rgba(99, 102, 241, 0.15);
-      border: 1px solid rgba(99, 102, 241, 0.25);
+      border: 1px solid rgba(99, 102, 241, 0.35);
       border-radius: 6px;
-      padding: 4px 8px;
-      min-width: 46px;
+      padding: 4px 6px;
+      min-width: 52px;
+      width: 52px;
       text-align: center;
+      outline: none;
+      cursor: text;
+      transition: border-color 0.15s, background 0.15s;
+    }
+
+    #scale-value-badge:focus {
+      border-color: rgba(99, 102, 241, 0.8);
+      background: rgba(99, 102, 241, 0.25);
     }
 
     .scale-presets {
@@ -389,19 +398,18 @@
       transform: scale(1.05);
     }
 
-    /* Custom colour picker popup */
+    /* Custom colour picker popup — fixed position, never clipped */
     #tint-colour-popup {
       display: none;
-      position: absolute;
-      bottom: 42px;
-      left: 0;
-      width: 240px;
-      background: rgba(14, 16, 36, 0.97);
-      border: 1px solid rgba(99, 102, 241, 0.4);
-      border-radius: 12px;
-      padding: 12px;
-      z-index: 99999;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+      position: fixed;
+      width: 280px;
+      background: rgba(14, 16, 36, 0.98);
+      border: 1px solid rgba(99, 102, 241, 0.5);
+      border-radius: 14px;
+      padding: 14px;
+      z-index: 999999;
+      box-shadow: 0 12px 48px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(99, 102, 241, 0.2);
+      backdrop-filter: blur(12px);
     }
 
     #tint-colour-popup.open {
@@ -419,9 +427,9 @@
     /* Preset swatches grid */
     .tcp-presets {
       display: grid;
-      grid-template-columns: repeat(8, 1fr);
+      grid-template-columns: repeat(10, 1fr);
       gap: 5px;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
     }
 
     .tcp-preset {
@@ -434,7 +442,7 @@
     }
 
     .tcp-preset:hover {
-      transform: scale(1.15);
+      transform: scale(1.18);
     }
 
     .tcp-preset.active {
@@ -510,11 +518,20 @@
       font: 600 11px/1 'Courier New', monospace;
       color: #c9a96e;
       background: rgba(201, 169, 110, 0.12);
-      border: 1px solid rgba(201, 169, 110, 0.25);
+      border: 1px solid rgba(201, 169, 110, 0.35);
       border-radius: 6px;
-      padding: 3px 6px;
-      min-width: 34px;
+      padding: 3px 5px;
+      min-width: 38px;
+      width: 38px;
       text-align: center;
+      outline: none;
+      cursor: text;
+      transition: border-color 0.15s, background 0.15s;
+    }
+
+    #tint-strength-badge:focus {
+      border-color: rgba(201, 169, 110, 0.8);
+      background: rgba(201, 169, 110, 0.22);
     }
 
     .tint-actions {
@@ -608,7 +625,7 @@
         <!-- Slider internal value is logarithmic: sliderVal = ln(scaleFactor).
              Range: ln(0.01)≈-4.605  →  ln(20)≈2.996  -->
         <input type="range" id="scale-slider" min="-4.605" max="2.996" step="0.01" value="0">
-        <span id="scale-value-badge">1.00×</span>
+        <input type="text" id="scale-value-badge" value="1.00×" title="Type a value (e.g. 1.5) and press Enter">
       </div>
       <div class="scale-presets">
         <div class="preset-btn" data-preset="0.1">0.1×</div>
@@ -631,24 +648,25 @@
         <span class="slider-label">Tint</span>
         <!-- Custom colour swatch — opens the picker popup -->
         <div id="tint-swatch" title="Pick tint colour"></div>
-        <!-- Colour picker popup -->
-        <div id="tint-colour-popup">
-          <div class="tcp-label">Preset colours</div>
-          <div class="tcp-presets" id="tcp-presets"></div>
-          <div class="tcp-label">Custom hex</div>
-          <div class="tcp-hex-row">
-            <span class="tcp-hex-label">#</span>
-            <input type="text" id="tint-hex-input" maxlength="6" placeholder="C9A96E">
-            <button id="tint-hex-apply">OK</button>
-          </div>
-        </div>
         <input type="range" id="tint-strength" min="0" max="1" step="0.01" value="0.4">
-        <span id="tint-strength-badge">40%</span>
+        <input type="text" id="tint-strength-badge" value="40%" title="Type a percentage (e.g. 65) and press Enter">
       </div>
       <div class="tint-actions">
         <button id="btn-tint-clear">✕ Clear Tint</button>
         <button id="btn-tint-save">🎨 Save Tint</button>
       </div>
+    </div>
+  </div>
+
+  <!-- Colour picker popup lives at body level — never clipped by panel overflow -->
+  <div id="tint-colour-popup">
+    <div class="tcp-label">Preset colours</div>
+    <div class="tcp-presets" id="tcp-presets"></div>
+    <div class="tcp-label">Custom hex</div>
+    <div class="tcp-hex-row">
+      <span class="tcp-hex-label">#</span>
+      <input type="text" id="tint-hex-input" maxlength="6" placeholder="C9A96E">
+      <button id="tint-hex-apply">OK</button>
     </div>
   </div>
 
@@ -1144,7 +1162,7 @@
       var slider = document.getElementById('scale-slider');
       slider.value = Math.log(Math.max(0.01, entry.scaleFactor));
       updateSliderTrack(slider);
-      document.getElementById('scale-value-badge').textContent = entry.scaleFactor.toFixed(2) + '×';
+      document.getElementById('scale-value-badge').value = entry.scaleFactor.toFixed(2) + '×';
       updatePresets(entry.scaleFactor);
       // Restore tint picker to this item's saved tint (gold default if none saved)
       var tintSlider = document.getElementById('tint-strength');
@@ -1153,7 +1171,7 @@
       var savedStr = (entry.tintHex && entry.tintStrength !== undefined) ? entry.tintStrength : 0.4;
       _setTintColour(savedTint);
       tintSlider.value = savedStr;
-      tintBadge.textContent = Math.round(savedStr * 100) + '%';
+      tintBadge.value = Math.round(savedStr * 100) + '%';
       updateTintTrack(tintSlider);
       document.getElementById('size-panel').classList.add('visible');
     }
@@ -1206,7 +1224,17 @@
     })();
 
     function openTCP() {
-      document.getElementById('tint-colour-popup').classList.add('open');
+      var popup = document.getElementById('tint-colour-popup');
+      var swatch = document.getElementById('tint-swatch');
+      // Position popup above the swatch using fixed coordinates
+      var rect = swatch.getBoundingClientRect();
+      var popupW = 280;
+      var left = Math.max(8, Math.min(rect.left, window.innerWidth - popupW - 8));
+      var bottom = window.innerHeight - rect.top + 8;
+      popup.style.left = left + 'px';
+      popup.style.bottom = bottom + 'px';
+      popup.style.top = 'auto';
+      popup.classList.add('open');
       document.getElementById('tint-hex-input').value = _tintHex.replace('#', '');
       // Highlight active preset
       document.querySelectorAll('.tcp-preset').forEach(function (el) {
@@ -1288,7 +1316,7 @@
       _setTintColour('#c9a96e');
       var ts = document.getElementById('tint-strength');
       ts.value = 0.4; updateTintTrack(ts);
-      document.getElementById('tint-strength-badge').textContent = '40%';
+      document.getElementById('tint-strength-badge').value = '40%';
     }
 
     function saveTint() {
@@ -1340,12 +1368,78 @@
       var slider = document.getElementById('scale-slider');
       slider.value = Math.log(factor);
       updateSliderTrack(slider);
-      document.getElementById('scale-value-badge').textContent = factor.toFixed(2) + '×';
+      document.getElementById('scale-value-badge').value = factor.toFixed(2) + '×';
       updatePresets(factor);
     }
 
     function applyPreset(val) { applyScale(val); }
     function resetScale() { applyScale(1.0); }
+
+    // ── Live update from Flutter (undo / redo) ─────────────────────────────
+    // Called via executeScript after the 2D canvas is mutated by undo/redo.
+    // items: Array of { id, scaleFactor, x, y, width, height, rotation, tint }
+    window.flutterUpdateItems = function (itemsJson) {
+      try {
+        var items = typeof itemsJson === 'string' ? JSON.parse(itemsJson) : itemsJson;
+        items.forEach(function (data) {
+          var entry = placedItems.find(function (e) { return e.data.id === data.id; });
+          if (!entry) return;
+          // Update scale
+          var newSF = data.scaleFactor || 1.0;
+          if (Math.abs(entry.scaleFactor - newSF) > 0.001) {
+            entry.scaleFactor = newSF;
+            entry.obj.scale.setScalar(entry.baseScale * newSF);
+            if (typeof THREE !== 'undefined') {
+              var sx = entry.obj.position.x, sz = entry.obj.position.z;
+              var bb = new THREE.Box3().setFromObject(entry.obj);
+              entry.obj.position.set(sx, -bb.min.y, sz);
+            }
+          }
+          // Update tint
+          var newTint = data.tint || data.tintHex || null;
+          if (newTint !== entry.tintHex) {
+            entry.tintHex = newTint;
+            if (newTint) {
+              _applyTintToEntry(entry, newTint, entry.tintStrength || 0.4);
+            } else {
+              // Clear tint — restore original colours
+              entry.obj.traverse(function (c) {
+                if (c.isMesh && c.material) {
+                  var mats = Array.isArray(c.material) ? c.material : [c.material];
+                  mats.forEach(function (m) {
+                    if (m.userData && m.userData.origColor) {
+                      m.color.copy(m.userData.origColor);
+                      m.needsUpdate = true;
+                    }
+                  });
+                }
+              });
+            }
+          }
+        });
+        // Refresh panel if selected item was updated
+        if (selectedEntry) {
+          var upd = items.find(function (d) { return d.id === selectedEntry.data.id; });
+          if (upd) {
+            var sf = selectedEntry.scaleFactor;
+            var slider = document.getElementById('scale-slider');
+            slider.value = Math.log(Math.max(0.01, sf));
+            updateSliderTrack(slider);
+            document.getElementById('scale-value-badge').value = sf.toFixed(2) + '×';
+            updatePresets(sf);
+            // Refresh tint UI too
+            var tintSlider = document.getElementById('tint-strength');
+            var tintBadge = document.getElementById('tint-strength-badge');
+            var str = selectedEntry.tintStrength !== undefined ? selectedEntry.tintStrength : 0.4;
+            _setTintColour(selectedEntry.tintHex || '#c9a96e');
+            tintSlider.value = str;
+            tintBadge.value = Math.round(str * 100) + '%';
+            updateTintTrack(tintSlider);
+          }
+        }
+        if (selectionBox) selectionBox.update();
+      } catch (e) { console.warn('[3D] flutterUpdateItems error:', e); }
+    };
 
     function saveSize() {
       if (!selectedEntry) return;
@@ -1387,6 +1481,46 @@
       });
       document.getElementById('scale-slider').addEventListener('click', function (e) { e.stopPropagation(); });
 
+      // ── Scale value editable input ────────────────────────────────────────
+      (function () {
+        var scaleBadge = document.getElementById('scale-value-badge');
+        scaleBadge.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+        scaleBadge.addEventListener('click', function (e) {
+          e.stopPropagation();
+          // Select all text for easy replacement
+          this.select();
+        });
+        scaleBadge.addEventListener('keydown', function (e) {
+          e.stopPropagation();
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            commitScaleInput(this);
+            this.blur();
+          } else if (e.key === 'Escape') {
+            // Restore current value
+            if (selectedEntry) this.value = selectedEntry.scaleFactor.toFixed(2) + '×';
+            this.blur();
+          }
+        });
+        scaleBadge.addEventListener('blur', function () {
+          commitScaleInput(this);
+        });
+        function commitScaleInput(el) {
+          // Accept formats: "1.5", "1.5x", "1.5×", "150%"
+          var raw = el.value.replace(/[×xX%]/g, '').trim();
+          var parsed = parseFloat(raw);
+          // If user typed percentage like "150" with % sign detected
+          if (el.value.trim().endsWith('%')) parsed = parsed / 100;
+          if (!isNaN(parsed) && parsed > 0) {
+            var clamped = Math.max(0.01, Math.min(20, parsed));
+            applyScale(clamped);
+          } else {
+            // Restore
+            if (selectedEntry) el.value = selectedEntry.scaleFactor.toFixed(2) + '×';
+          }
+        }
+      })();
+
       document.querySelectorAll('.preset-btn').forEach(function (btn) {
         btn.addEventListener('mousedown', function (e) { e.stopPropagation(); });
         btn.addEventListener('click', function (e) { e.stopPropagation(); applyPreset(parseFloat(this.dataset.preset)); });
@@ -1403,9 +1537,38 @@
         document.getElementById('tint-swatch').addEventListener(ev, function (e) { e.stopPropagation(); });
         document.getElementById('tint-colour-popup').addEventListener(ev, function (e) { e.stopPropagation(); });
         tintStrength.addEventListener(ev, function (e) { e.stopPropagation(); });
+        tintBadge.addEventListener(ev, function (e) { e.stopPropagation(); });
         document.getElementById('btn-tint-clear').addEventListener(ev, function (e) { e.stopPropagation(); });
         document.getElementById('btn-tint-save').addEventListener(ev, function (e) { e.stopPropagation(); });
       });
+
+      // ── Tint strength editable input ──────────────────────────────────────
+      tintBadge.addEventListener('click', function (e) { e.stopPropagation(); this.select(); });
+      tintBadge.addEventListener('keydown', function (e) {
+        e.stopPropagation();
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commitTintStrengthInput(this);
+          this.blur();
+        } else if (e.key === 'Escape') {
+          this.value = Math.round(parseFloat(tintStrength.value) * 100) + '%';
+          this.blur();
+        }
+      });
+      tintBadge.addEventListener('blur', function () { commitTintStrengthInput(this); });
+      function commitTintStrengthInput(el) {
+        var raw = el.value.replace('%', '').trim();
+        var parsed = parseFloat(raw);
+        if (!isNaN(parsed)) {
+          var clamped = Math.max(0, Math.min(100, parsed)) / 100;
+          tintStrength.value = clamped;
+          updateTintTrack(tintStrength);
+          el.value = Math.round(clamped * 100) + '%';
+          applyTintLive();
+        } else {
+          el.value = Math.round(parseFloat(tintStrength.value) * 100) + '%';
+        }
+      }
 
       // Open/close the popup when the swatch is clicked
       document.getElementById('tint-swatch').addEventListener('click', function (e) {
@@ -1437,7 +1600,7 @@
       tintStrength.addEventListener('input', function (e) {
         e.stopPropagation();
         updateTintTrack(tintStrength);
-        tintBadge.textContent = Math.round(parseFloat(tintStrength.value) * 100) + '%';
+        tintBadge.value = Math.round(parseFloat(tintStrength.value) * 100) + '%';
         applyTintLive();
       });
       document.getElementById('btn-tint-clear').addEventListener('click', function (e) { e.stopPropagation(); clearTint(); });
