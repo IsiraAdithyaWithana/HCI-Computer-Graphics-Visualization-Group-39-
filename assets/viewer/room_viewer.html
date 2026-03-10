@@ -148,7 +148,7 @@
 
     #size-panel {
       position: fixed;
-      bottom: -220px;
+      bottom: -600px;
       left: 50%;
       transform: translateX(-50%);
       width: 360px;
@@ -359,6 +359,218 @@
     body.select-active canvas {
       cursor: crosshair !important;
     }
+
+    /* ── Tint row ─────────────────────────────────────────────────────────── */
+    .tint-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 4px;
+      margin-bottom: 14px;
+      position: relative;
+    }
+
+    /* Clickable colour swatch button */
+    #tint-swatch {
+      width: 36px;
+      height: 28px;
+      border-radius: 7px;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+      cursor: pointer;
+      flex-shrink: 0;
+      background: #c9a96e;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+      transition: border-color 0.15s, transform 0.1s;
+      position: relative;
+    }
+
+    #tint-swatch:hover {
+      border-color: rgba(255, 255, 255, 0.5);
+      transform: scale(1.05);
+    }
+
+    /* Custom colour picker popup */
+    #tint-colour-popup {
+      display: none;
+      position: absolute;
+      bottom: 42px;
+      left: 0;
+      width: 240px;
+      background: rgba(14, 16, 36, 0.97);
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      border-radius: 12px;
+      padding: 12px;
+      z-index: 99999;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+    }
+
+    #tint-colour-popup.open {
+      display: block;
+    }
+
+    .tcp-label {
+      font: 600 10px/1 sans-serif;
+      color: rgba(255, 255, 255, 0.4);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 8px;
+    }
+
+    /* Preset swatches grid */
+    .tcp-presets {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 5px;
+      margin-bottom: 10px;
+    }
+
+    .tcp-preset {
+      width: 100%;
+      aspect-ratio: 1;
+      border-radius: 5px;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: transform 0.1s, border-color 0.1s;
+    }
+
+    .tcp-preset:hover {
+      transform: scale(1.15);
+    }
+
+    .tcp-preset.active {
+      border-color: #fff;
+    }
+
+    /* Hex input row */
+    .tcp-hex-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .tcp-hex-label {
+      font: 11px/1 'Courier New', monospace;
+      color: rgba(255, 255, 255, 0.4);
+    }
+
+    #tint-hex-input {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      color: #fff;
+      font: 13px/1 'Courier New', monospace;
+      padding: 5px 8px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      outline: none;
+    }
+
+    #tint-hex-input:focus {
+      border-color: rgba(99, 102, 241, 0.7);
+    }
+
+    #tint-hex-apply {
+      padding: 5px 10px;
+      background: #6366f1;
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      font: 600 11px/1 sans-serif;
+      cursor: pointer;
+    }
+
+    #tint-hex-apply:hover {
+      background: #4f52d4;
+    }
+
+    #tint-strength {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 4px;
+      border-radius: 2px;
+      background: linear-gradient(to right, #c9a96e var(--pct, 50%), rgba(255, 255, 255, 0.12) var(--pct, 50%));
+      outline: none;
+      cursor: pointer;
+    }
+
+    #tint-strength::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #c9a96e;
+      box-shadow: 0 0 0 3px rgba(201, 169, 110, 0.25), 0 2px 6px rgba(0, 0, 0, 0.4);
+      cursor: pointer;
+    }
+
+    #tint-strength-badge {
+      font: 600 11px/1 'Courier New', monospace;
+      color: #c9a96e;
+      background: rgba(201, 169, 110, 0.12);
+      border: 1px solid rgba(201, 169, 110, 0.25);
+      border-radius: 6px;
+      padding: 3px 6px;
+      min-width: 34px;
+      text-align: center;
+    }
+
+    .tint-actions {
+      display: flex;
+      gap: 7px;
+      margin-bottom: 14px;
+    }
+
+    #btn-tint-clear {
+      flex: 1;
+      padding: 8px 0;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      color: rgba(255, 255, 255, 0.6);
+      font: 600 11px/1 sans-serif;
+      cursor: pointer;
+      letter-spacing: 0.3px;
+      transition: background 0.15s;
+    }
+
+    #btn-tint-clear:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+    }
+
+    #btn-tint-save {
+      flex: 2;
+      padding: 8px 0;
+      border: none;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #c9a96e, #a8844f);
+      color: #fff;
+      font: 700 11px/1 sans-serif;
+      cursor: pointer;
+      letter-spacing: 0.3px;
+      transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+    }
+
+    #btn-tint-save:hover {
+      box-shadow: 0 4px 14px rgba(201, 169, 110, 0.45);
+    }
+
+    #btn-tint-save:active {
+      transform: scale(0.97);
+    }
+
+    #btn-tint-save.saved {
+      background: linear-gradient(135deg, #16a34a, #15803d);
+    }
+
+    .tint-divider {
+      height: 1px;
+      background: rgba(255, 255, 255, 0.07);
+      margin: 4px 0 14px;
+    }
   </style>
 </head>
 
@@ -382,7 +594,7 @@
 
   <div id="select-toggle">
     <span class="dot"></span>
-    <span id="select-toggle-label">Select &amp; Resize</span>
+    <span id="select-toggle-label">Select</span>
   </div>
 
   <div id="size-panel">
@@ -410,6 +622,32 @@
       <div class="panel-actions">
         <button id="btn-reset">↺ Reset</button>
         <button id="btn-save">💾 Save Size</button>
+      </div>
+
+      <div class="tint-divider"></div>
+
+      <!-- Colour Tint -->
+      <div class="tint-row">
+        <span class="slider-label">Tint</span>
+        <!-- Custom colour swatch — opens the picker popup -->
+        <div id="tint-swatch" title="Pick tint colour"></div>
+        <!-- Colour picker popup -->
+        <div id="tint-colour-popup">
+          <div class="tcp-label">Preset colours</div>
+          <div class="tcp-presets" id="tcp-presets"></div>
+          <div class="tcp-label">Custom hex</div>
+          <div class="tcp-hex-row">
+            <span class="tcp-hex-label">#</span>
+            <input type="text" id="tint-hex-input" maxlength="6" placeholder="C9A96E">
+            <button id="tint-hex-apply">OK</button>
+          </div>
+        </div>
+        <input type="range" id="tint-strength" min="0" max="1" step="0.01" value="0.4">
+        <span id="tint-strength-badge">40%</span>
+      </div>
+      <div class="tint-actions">
+        <button id="btn-tint-clear">✕ Clear Tint</button>
+        <button id="btn-tint-save">🎨 Save Tint</button>
       </div>
     </div>
   </div>
@@ -692,7 +930,10 @@
         payload.items.forEach(function (item, idx) {
           var result = placeItem(item, rs);
           fg.add(result.obj);
-          placedItems.push({ obj: result.obj, data: item, baseScale: result.baseScale, scaleFactor: item.scaleFactor || 1.0, index: idx });
+          var entry = { obj: result.obj, data: item, baseScale: result.baseScale, scaleFactor: item.scaleFactor || 1.0, tintHex: item.tint || null, tintStrength: item.tintStrength !== undefined ? item.tintStrength : 0.5, index: idx };
+          placedItems.push(entry);
+          // Apply saved tint immediately after placement
+          if (entry.tintHex) _applyTintToEntry(entry, entry.tintHex, entry.tintStrength);
         });
 
         // ── Raycasting setup ────────────────────────────────────────────────
@@ -746,6 +987,19 @@
         var tmpl = item.glbFile ? bank[item.glbFile] : bank[item.type];
         if (tmpl) {
           obj = tmpl.clone();
+          // ── CRITICAL: deep-clone every material so each placed instance owns
+          // its own material objects.  tmpl.clone() is a shallow clone — without
+          // this step all instances share the same material, so tinting one item
+          // instantly changes the colour of every other item of the same type.
+          obj.traverse(function (c) {
+            if (c.isMesh && c.material) {
+              if (Array.isArray(c.material)) {
+                c.material = c.material.map(function (m) { return m.clone(); });
+              } else {
+                c.material = c.material.clone();
+              }
+            }
+          });
           obj.traverse(function (c) { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
           obj.scale.set(1, 1, 1); obj.position.set(0, 0, 0); obj.rotation.set(0, 0, 0); obj.updateMatrixWorld(true);
           var bbox = new THREE.Box3().setFromObject(obj);
@@ -807,6 +1061,20 @@
           obj.position.x = cx; obj.position.z = cz;
         }
         obj.rotation.y = -(item.rotation || 0);
+
+        // Snapshot original material colours so tinting can always be reversed.
+        obj.traverse(function (c) {
+          if (c.isMesh && c.material) {
+            var mats = Array.isArray(c.material) ? c.material : [c.material];
+            mats.forEach(function (mat) {
+              if (!mat.userData) mat.userData = {};
+              if (!mat.userData.origColor) {
+                mat.userData.origColor = mat.color ? mat.color.clone() : new THREE.Color(1, 1, 1);
+              }
+            });
+          }
+        });
+
         return { obj: obj, baseScale: baseScale };
       }
 
@@ -844,7 +1112,7 @@
       var label = document.getElementById('select-toggle-label');
       if (selectMode) {
         toggle.classList.add('active');
-        label.textContent = 'Select Mode ON';
+        label.textContent = 'Select ON';
         document.body.classList.add('select-active');
         // ── KEY FIX: disable left-button orbit so clicks reach the raycaster
         if (_controls) {
@@ -852,7 +1120,7 @@
         }
       } else {
         toggle.classList.remove('active');
-        label.textContent = 'Select & Resize';
+        label.textContent = 'Select';
         document.body.classList.remove('select-active');
         deselectFurniture();
         // Restore normal orbit
@@ -878,6 +1146,15 @@
       updateSliderTrack(slider);
       document.getElementById('scale-value-badge').textContent = entry.scaleFactor.toFixed(2) + '×';
       updatePresets(entry.scaleFactor);
+      // Restore tint picker to this item's saved tint (gold default if none saved)
+      var tintSlider = document.getElementById('tint-strength');
+      var tintBadge = document.getElementById('tint-strength-badge');
+      var savedTint = entry.tintHex || '#c9a96e';
+      var savedStr = (entry.tintHex && entry.tintStrength !== undefined) ? entry.tintStrength : 0.4;
+      _setTintColour(savedTint);
+      tintSlider.value = savedStr;
+      tintBadge.textContent = Math.round(savedStr * 100) + '%';
+      updateTintTrack(tintSlider);
       document.getElementById('size-panel').classList.add('visible');
     }
 
@@ -887,20 +1164,179 @@
       document.getElementById('size-panel').classList.remove('visible');
     }
 
+    // ── Custom tint colour picker ─────────────────────────────────────────
+    var _tintHex = '#c9a96e';   // currently chosen colour
+
+    var TCP_PRESETS = [
+      // Neutrals
+      '#ffffff', '#d4d4d4', '#9ca3af', '#4b5563',
+      // Warm
+      '#c9a96e', '#f59e0b', '#ef4444', '#dc2626',
+      // Cool
+      '#6366f1', '#3b82f6', '#06b6d4', '#10b981',
+      // Rich
+      '#8b5cf6', '#ec4899', '#f97316', '#84cc16',
+      // Dark
+      '#1e1b4b', '#1e3a5f', '#14532d', '#1c0a00',
+      // Browns / wood
+      '#92400e', '#78350f', '#d97706', '#b45309',
+      // Black / white
+      '#000000', '#1a1a1a', '#333333', '#f5f5f5',
+      // Metallics
+      '#c0c0c0', '#ffd700', '#b87333', '#708090',
+    ];
+
+    (function buildTCP() {
+      var grid = document.getElementById('tcp-presets');
+      TCP_PRESETS.forEach(function (hex) {
+        var el = document.createElement('div');
+        el.className = 'tcp-preset';
+        el.style.background = hex;
+        el.dataset.hex = hex;
+        if (hex === _tintHex) el.classList.add('active');
+        el.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+        el.addEventListener('click', function (e) {
+          e.stopPropagation();
+          _setTintColour(hex);
+          closeTCP();
+          applyTintLive();
+        });
+        grid.appendChild(el);
+      });
+    })();
+
+    function openTCP() {
+      document.getElementById('tint-colour-popup').classList.add('open');
+      document.getElementById('tint-hex-input').value = _tintHex.replace('#', '');
+      // Highlight active preset
+      document.querySelectorAll('.tcp-preset').forEach(function (el) {
+        el.classList.toggle('active', el.dataset.hex === _tintHex);
+      });
+    }
+
+    function closeTCP() {
+      document.getElementById('tint-colour-popup').classList.remove('open');
+    }
+
+    function _setTintColour(hex) {
+      _tintHex = hex;
+      document.getElementById('tint-swatch').style.background = hex;
+      document.querySelectorAll('.tcp-preset').forEach(function (el) {
+        el.classList.toggle('active', el.dataset.hex === hex);
+      });
+    }
+
+    function _hexToColor(hex) {
+      var h = parseInt(hex.replace('#', ''), 16);
+      return new THREE.Color(
+        ((h >> 16) & 0xFF) / 255,
+        ((h >> 8) & 0xFF) / 255,
+        (h & 0xFF) / 255
+      );
+    }
+
+    function _applyTintToEntry(entry, tintHex, strength) {
+      var tintColor = _hexToColor(tintHex);
+      entry.obj.traverse(function (c) {
+        if (c.isMesh && c.material) {
+          var mats = Array.isArray(c.material) ? c.material : [c.material];
+          mats.forEach(function (mat) {
+            var orig = (mat.userData && mat.userData.origColor)
+              ? mat.userData.origColor.clone()
+              : new THREE.Color(1, 1, 1);
+            // Lerp: result = orig*(1-strength) + tintColor*strength
+            // At 0%  → exact original colour (no tint)
+            // At 50% → even mix of original and chosen colour
+            // At 100% → pure chosen colour
+            // NOTE: must use setRGB() not set() — in Three.js r128 color.set()
+            // only accepts a single argument; passing 3 floats would interpret
+            // only the first as a hex int (near-zero = black).
+            mat.color.setRGB(
+              orig.r * (1 - strength) + tintColor.r * strength,
+              orig.g * (1 - strength) + tintColor.g * strength,
+              orig.b * (1 - strength) + tintColor.b * strength
+            );
+            mat.needsUpdate = true;
+          });
+        }
+      });
+    }
+
+    function _clearTintOnEntry(entry) {
+      entry.obj.traverse(function (c) {
+        if (c.isMesh && c.material) {
+          var mats = Array.isArray(c.material) ? c.material : [c.material];
+          mats.forEach(function (mat) {
+            var orig = mat.userData && mat.userData.origColor;
+            if (orig) mat.color.copy(orig);
+          });
+        }
+      });
+    }
+
+    function applyTintLive() {
+      if (!selectedEntry) return;
+      var str = parseFloat(document.getElementById('tint-strength').value);
+      _applyTintToEntry(selectedEntry, _tintHex, str);
+    }
+
+    function clearTint() {
+      if (!selectedEntry) return;
+      selectedEntry.tintHex = null;
+      selectedEntry.tintStrength = 0.4;
+      _clearTintOnEntry(selectedEntry);
+      _setTintColour('#c9a96e');
+      var ts = document.getElementById('tint-strength');
+      ts.value = 0.4; updateTintTrack(ts);
+      document.getElementById('tint-strength-badge').textContent = '40%';
+    }
+
+    function saveTint() {
+      if (!selectedEntry) return;
+      var str = parseFloat(document.getElementById('tint-strength').value);
+      selectedEntry.tintHex = _tintHex;
+      selectedEntry.tintStrength = str;
+      var msg = { type: 'tintUpdate', id: selectedEntry.data.id, tintHex: selectedEntry.tintHex, tintStrength: str };
+      try { window.chrome.webview.postMessage(JSON.stringify(msg)); } catch (e) { console.log('[3D] tint postMessage unavailable:', e); }
+      var btn = document.getElementById('btn-tint-save');
+      btn.textContent = '✓ Saved!'; btn.classList.add('saved');
+      setTimeout(function () { btn.textContent = '🎨 Save Tint'; btn.classList.remove('saved'); }, 1800);
+    }
+
+    function updateTintTrack(slider) {
+      var val = parseFloat(slider.value);
+      slider.style.setProperty('--pct', (val * 100).toFixed(1) + '%');
+    }
+
     function applyScale(factor) {
       if (!selectedEntry) return;
       factor = Math.max(0.01, Math.min(20, factor));
-      selectedEntry.scaleFactor = factor;
-      // baseScale is the natural scale (at factor=1). Apply factor once only.
-      selectedEntry.obj.scale.setScalar(selectedEntry.baseScale * factor);
-      if (typeof THREE !== 'undefined') {
-        // Keep X/Z position (visual centre) fixed; only adjust Y to floor the model.
-        var savedX = selectedEntry.obj.position.x;
-        var savedZ = selectedEntry.obj.position.z;
-        var bbox = new THREE.Box3().setFromObject(selectedEntry.obj);
-        selectedEntry.obj.position.set(savedX, -bbox.min.y, savedZ);
-        if (selectionBox) selectionBox.update();
+
+      // Helper: scale one entry and re-floor it
+      function _scaleEntry(entry, f) {
+        entry.scaleFactor = f;
+        entry.obj.scale.setScalar(entry.baseScale * f);
+        if (typeof THREE !== 'undefined') {
+          var sx = entry.obj.position.x, sz = entry.obj.position.z;
+          var bb = new THREE.Box3().setFromObject(entry.obj);
+          entry.obj.position.set(sx, -bb.min.y, sz);
+        }
       }
+
+      // Determine which other placed items are siblings of the selected one.
+      // Custom GLBs match on glbFile; built-ins match on type.
+      var selGlb = selectedEntry.data.glbFile || null;
+      var selType = selectedEntry.data.type || null;
+      placedItems.forEach(function (entry) {
+        var isSibling = selGlb
+          ? entry.data.glbFile === selGlb
+          : entry.data.type === selType;
+        if (isSibling) _scaleEntry(entry, factor);
+      });
+
+      // Keep selection box on the primary item
+      if (selectionBox) selectionBox.update();
+
       var slider = document.getElementById('scale-slider');
       slider.value = Math.log(factor);
       updateSliderTrack(slider);
@@ -959,6 +1395,56 @@
       document.getElementById('btn-reset').addEventListener('click', function (e) { e.stopPropagation(); resetScale(); });
       document.getElementById('btn-save').addEventListener('click', function (e) { e.stopPropagation(); saveSize(); });
       document.getElementById('size-panel').addEventListener('click', function (e) { e.stopPropagation(); });
+
+      // Tint controls
+      var tintStrength = document.getElementById('tint-strength');
+      var tintBadge = document.getElementById('tint-strength-badge');
+      ['mousedown', 'pointerdown'].forEach(function (ev) {
+        document.getElementById('tint-swatch').addEventListener(ev, function (e) { e.stopPropagation(); });
+        document.getElementById('tint-colour-popup').addEventListener(ev, function (e) { e.stopPropagation(); });
+        tintStrength.addEventListener(ev, function (e) { e.stopPropagation(); });
+        document.getElementById('btn-tint-clear').addEventListener(ev, function (e) { e.stopPropagation(); });
+        document.getElementById('btn-tint-save').addEventListener(ev, function (e) { e.stopPropagation(); });
+      });
+
+      // Open/close the popup when the swatch is clicked
+      document.getElementById('tint-swatch').addEventListener('click', function (e) {
+        e.stopPropagation();
+        var popup = document.getElementById('tint-colour-popup');
+        popup.classList.contains('open') ? closeTCP() : openTCP();
+      });
+
+      // Hex input: apply on Enter or OK button
+      document.getElementById('tint-hex-input').addEventListener('keydown', function (e) {
+        e.stopPropagation();
+        if (e.key === 'Enter') applyHexInput();
+      });
+      document.getElementById('tint-hex-input').addEventListener('mousedown', function (e) { e.stopPropagation(); });
+      document.getElementById('tint-hex-apply').addEventListener('mousedown', function (e) { e.stopPropagation(); });
+      document.getElementById('tint-hex-apply').addEventListener('click', function (e) {
+        e.stopPropagation(); applyHexInput();
+      });
+
+      function applyHexInput() {
+        var raw = document.getElementById('tint-hex-input').value.replace('#', '').trim();
+        if (/^[0-9a-fA-F]{6}$/.test(raw)) {
+          _setTintColour('#' + raw.toUpperCase());
+          closeTCP();
+          applyTintLive();
+        }
+      }
+
+      tintStrength.addEventListener('input', function (e) {
+        e.stopPropagation();
+        updateTintTrack(tintStrength);
+        tintBadge.textContent = Math.round(parseFloat(tintStrength.value) * 100) + '%';
+        applyTintLive();
+      });
+      document.getElementById('btn-tint-clear').addEventListener('click', function (e) { e.stopPropagation(); clearTint(); });
+      document.getElementById('btn-tint-save').addEventListener('click', function (e) { e.stopPropagation(); saveTint(); });
+
+      // Click anywhere outside popup to close it
+      document.addEventListener('click', function () { closeTCP(); });
     })();
   </script>
 </body>

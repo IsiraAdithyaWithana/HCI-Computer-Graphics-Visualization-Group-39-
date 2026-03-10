@@ -115,39 +115,50 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
           onSizeUpdated: (String id, double scaleFactor) {
             final canvasItems = _canvasKey.currentState?.furnitureItems ?? [];
             final idx = canvasItems.indexWhere((f) => f.id == id);
-            if (idx != -1) {
-              setState(() {
-                final item = canvasItems[idx];
-                // Recover base size (size at scaleFactor=1.0) then apply new scale
-                final oldFactor = item.scaleFactor > 0 ? item.scaleFactor : 1.0;
-                final baseW = item.size.width / oldFactor;
-                final baseH = item.size.height / oldFactor;
+            if (idx == -1) return;
+
+            final saved = canvasItems[idx];
+            // Natural size of the resized item (size at scaleFactor = 1.0)
+            final oldFactor = saved.scaleFactor > 0 ? saved.scaleFactor : 1.0;
+            final naturalW = saved.size.width / oldFactor;
+            final naturalH = saved.size.height / oldFactor;
+
+            setState(() {
+              // Update every item that is the same furniture piece:
+              // — custom GLB: match on glbOverride filename
+              // — built-in : match on FurnitureType
+              for (final item in canvasItems) {
+                final isSibling = saved.glbOverride != null
+                    ? item.glbOverride == saved.glbOverride
+                    : item.type == saved.type;
+                if (!isSibling) continue;
+
+                // Each sibling shares the same natural size but may keep its
+                // own scaleFactor if you want per-item scale in the future.
+                // For now, unify to the saved scaleFactor for consistency.
                 item.size = Size(
-                  (baseW * scaleFactor).clamp(20.0, 1200.0),
-                  (baseH * scaleFactor).clamp(20.0, 1200.0),
+                  (naturalW * scaleFactor).clamp(20.0, 1200.0),
+                  (naturalH * scaleFactor).clamp(20.0, 1200.0),
                 );
                 item.scaleFactor = scaleFactor;
-              });
-              _saveLayout();
-              _snack(
-                '${canvasItems[idx].labelOverride ?? canvasItems[idx].type.name} '
-                'size saved (${scaleFactor.toStringAsFixed(2)}×).',
-              );
-            }
+              }
+            });
+            _saveLayout();
+            _snack(
+              '${saved.labelOverride ?? saved.type.name} '
+              'size saved (${scaleFactor.toStringAsFixed(2)}×) — '
+              'all matching items updated.',
+            );
           },
           onNaturalSizeDetected: (String id, double widthPx, double depthPx) {
-            // 1. Update the live canvas tile so it repaints immediately
             _canvasKey.currentState?.updateItemNaturalSize(
               id,
               widthPx,
               depthPx,
             );
-            // 2. Persist to registry so the NEXT time this item is placed it
-            //    starts with the correct shape instead of the 80×80 default.
             final items = _canvasKey.currentState?.furnitureItems ?? [];
             final item = items.where((f) => f.id == id).firstOrNull;
             if (item?.glbOverride != null) {
-              // Find the registry entry whose GLB file matches
               final entry = CustomFurnitureRegistry.instance.entries
                   .where((e) => item!.glbOverride!.endsWith(e.glbFileName))
                   .firstOrNull;
@@ -160,6 +171,14 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
               }
             }
             _saveLayout();
+          },
+          onTintUpdated: (String id, String? tintHex) {
+            final canvasItems = _canvasKey.currentState?.furnitureItems ?? [];
+            final idx = canvasItems.indexWhere((f) => f.id == id);
+            if (idx != -1) {
+              setState(() => canvasItems[idx].tintHex = tintHex);
+              _saveLayout();
+            }
           },
         ),
       ),

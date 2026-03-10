@@ -214,6 +214,11 @@ class FurnitureModel {
   /// Persisted so reopening the 3D view respects saved sizes.
   double scaleFactor;
 
+  /// Optional colour tint applied in the 3D view (e.g. '#C9A96E').
+  /// null means no tint (original textures unchanged).
+  /// Also used to tint the 2D canvas tile so both views stay in sync.
+  String? tintHex;
+
   FurnitureModel({
     required this.id,
     required this.type,
@@ -224,6 +229,7 @@ class FurnitureModel {
     this.glbOverride,
     this.labelOverride,
     this.scaleFactor = 1.0,
+    this.tintHex,
   });
 
   Map<String, dynamic> toJson() => {
@@ -238,6 +244,7 @@ class FurnitureModel {
     'scaleFactor': scaleFactor,
     if (glbOverride != null) 'glbOverride': glbOverride,
     if (labelOverride != null) 'labelOverride': labelOverride,
+    if (tintHex != null) 'tintHex': tintHex,
   };
 
   factory FurnitureModel.fromJson(Map<String, dynamic> json) => FurnitureModel(
@@ -259,5 +266,6 @@ class FurnitureModel {
     scaleFactor: (json['scaleFactor'] as num?)?.toDouble() ?? 1.0,
     glbOverride: json['glbOverride'] as String?,
     labelOverride: json['labelOverride'] as String?,
+    tintHex: json['tintHex'] as String?,
   );
 }

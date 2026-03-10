@@ -455,9 +455,8 @@ class RoomCanvasState extends State<RoomCanvas> {
       itemSize = size;
     } else if (widget.selectedType == FurnitureType.custom &&
         widget.customGlbOverride != null) {
-      // For custom GLBs: inherit the NATURAL size from an already-placed sibling
-      // (same GLB file). Since updateItemNaturalSize now stores naturalSize × sf,
-      // we back-calculate naturalSize = size / sf, then use it at sf=1.0.
+      // Custom GLB: inherit NATURAL size from an already-placed sibling
+      // (same GLB file). Back-calculate naturalSize = size / sf, then use at sf=1.
       final existing = furnitureItems
           .where((f) => f.glbOverride == widget.customGlbOverride)
           .firstOrNull;
@@ -468,7 +467,18 @@ class RoomCanvasState extends State<RoomCanvas> {
         itemSize = widget.customDefaultSize ?? const Size(80, 80);
       }
     } else {
-      itemSize = _defaultSize(widget.selectedType);
+      // Built-in type: if a sibling has been resized, inherit its natural size
+      // so new placements match the user's saved size preference.
+      final sibling = furnitureItems
+          .where((f) => f.type == widget.selectedType)
+          .firstOrNull;
+      if (sibling != null) {
+        final sf = sibling.scaleFactor > 0 ? sibling.scaleFactor : 1.0;
+        // Natural size = size at scaleFactor=1; new items always start at sf=1
+        itemSize = Size(sibling.size.width / sf, sibling.size.height / sf);
+      } else {
+        itemSize = _defaultSize(widget.selectedType);
+      }
     }
 
     final freePos = _findFreePosition(_snapOffset(position), itemSize);
@@ -1034,6 +1044,20 @@ class RoomPainter extends CustomPainter {
       canvas.rotate(item.rotation);
       canvas.translate(-item.size.width / 2, -item.size.height / 2);
       _drawFurniture(canvas, item);
+      // Tint overlay: a semi-transparent rectangle in the chosen colour.
+      // Blended at 45% opacity so original art shows through.
+      if (item.tintHex != null && item.tintHex!.isNotEmpty) {
+        final tint = _hexToColor(item.tintHex!);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(0, 0, item.size.width, item.size.height),
+            const Radius.circular(4),
+          ),
+          Paint()
+            ..color = tint.withOpacity(0.45)
+            ..blendMode = BlendMode.multiply,
+        );
+      }
       if (selectedItems.contains(item)) _drawHandles(canvas, item);
       canvas.restore();
     }
@@ -1146,6 +1170,13 @@ class RoomPainter extends CustomPainter {
         RRect.fromRectAndRadius(Rect.fromLTWH(3, 3, w, h), Radius.circular(r)),
         Paint()..color = Colors.black.withOpacity(.15),
       );
+
+  /// Parses a '#RRGGBB' hex string into a [Color].
+  Color _hexToColor(String hex) {
+    final h = hex.replaceFirst('#', '');
+    if (h.length != 6) return Colors.transparent;
+    return Color(int.parse('FF$h', radix: 16));
+  }
 
   Color _dk(Color c, double a) => Color.fromARGB(
     c.alpha,

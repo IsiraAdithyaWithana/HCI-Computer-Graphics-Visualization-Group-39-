@@ -26,6 +26,10 @@ class Realistic3DScreen extends StatefulWidget {
   final void Function(String id, double widthPx, double depthPx)?
   onNaturalSizeDetected;
 
+  /// Called when the user saves a tint on a selected furniture item.
+  /// [tintHex] is null when tint is cleared.
+  final void Function(String id, String? tintHex)? onTintUpdated;
+
   const Realistic3DScreen({
     super.key,
     required this.furniture,
@@ -37,6 +41,7 @@ class Realistic3DScreen extends StatefulWidget {
     this.trimColour = const Color(0xFFE8E0D4),
     this.onSizeUpdated,
     this.onNaturalSizeDetected,
+    this.onTintUpdated,
   });
 
   @override
@@ -88,6 +93,13 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
                 '[3D→Flutter] naturalSize id=$id w=${widthPx.toStringAsFixed(1)} d=${depthPx.toStringAsFixed(1)}',
               );
             }
+          } else if (data['type'] == 'tintUpdate') {
+            final id = data['id'] as String?;
+            final tintHex = data['tintHex'] as String?;
+            if (id != null) {
+              widget.onTintUpdated?.call(id, tintHex);
+              debugPrint('[3D→Flutter] tintUpdate id=$id tint=$tintHex');
+            }
           }
         } catch (e) {
           debugPrint('[3D] webMessage parse error: $e');
@@ -119,17 +131,17 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
     final items = widget.furniture
         .map(
           (f) => {
-            'id': f.id, // needed for sizeUpdate mapping
+            'id': f.id,
             'type': f.type.name,
             'x': f.position.dx,
             'y': f.position.dy,
             'width': f.size.width,
             'height': f.size.height,
             'rotation': f.rotation,
-            'scaleFactor': f.scaleFactor, // persisted 3D scale override
-            // ── Custom furniture: tell Three.js which GLB to load ──────────
+            'scaleFactor': f.scaleFactor,
             if (f.glbOverride != null) 'glbFile': f.glbOverride,
             if (f.labelOverride != null) 'label': f.labelOverride,
+            if (f.tintHex != null) 'tint': f.tintHex,
           },
         )
         .toList();
