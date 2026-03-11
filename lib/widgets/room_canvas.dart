@@ -249,6 +249,14 @@ class RoomCanvasState extends State<RoomCanvas> {
         l.dy <= item.size.height;
   }
 
+  // Returns true if scene point [p] lies within the room rectangle
+  bool _insideRoom(Offset p) {
+    return p.dx >= 0 &&
+        p.dx <= widget.roomWidthPx &&
+        p.dy >= 0 &&
+        p.dy <= widget.roomDepthPx;
+  }
+
   bool _onResize(FurnitureModel item, Offset p) {
     final l = _localRotated(item, p);
     return (l - Offset(item.size.width, item.size.height)).distance <= 18;
@@ -274,6 +282,12 @@ class RoomCanvasState extends State<RoomCanvas> {
   // ── Cursor ────────────────────────────────────────────────────────────────
   void _updateCursor(Offset scenePos, Offset localPos) {
     _cursorPos.value = localPos;
+
+    // Always show default cursor when hovering outside the room floor
+    if (!_insideRoom(scenePos)) {
+      _cursorAsset.value = 'assets/cursors/main_cursor.png';
+      return;
+    }
 
     // Hand mode — canvas pan cursor (grab state is set in pan handlers)
     if (widget.currentMode == MouseMode.hand) {
@@ -631,7 +645,8 @@ class RoomCanvasState extends State<RoomCanvas> {
                         onTapDown: (d) {
                           final s = _globalToScene(d.globalPosition);
                           if (widget.currentMode == MouseMode.draw) {
-                            _drawTapPos = s;
+                            // Only allow placement inside the room
+                            if (_insideRoom(s)) _drawTapPos = s;
                             return;
                           }
                           if (widget.currentMode != MouseMode.select) return;
@@ -759,6 +774,10 @@ class RoomCanvasState extends State<RoomCanvas> {
                                   ?.globalToLocal(d.globalPosition);
                           if (_isSelectingBox && _selectionStart != null) {
                             setState(() => _selectionCurrent = s);
+                            final localPos =
+                                (context.findRenderObject() as RenderBox?)
+                                    ?.globalToLocal(d.globalPosition);
+                            if (localPos != null) _updateCursor(s, localPos);
                             return;
                           }
                           if (_isRotating && selectedItem != null) {

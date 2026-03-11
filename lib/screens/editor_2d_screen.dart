@@ -66,7 +66,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   double _roomWidthM = 6.0;
   double _roomDepthM = 5.0;
   static const double _minRoomM = 3.0;
-  static const double _maxRoomM = 15.0;
+  static const double _maxRoomM = 50.0;
   static const double _mPerPx = 100.0;
 
   double get _roomWidthPx => _roomWidthM * _mPerPx;
