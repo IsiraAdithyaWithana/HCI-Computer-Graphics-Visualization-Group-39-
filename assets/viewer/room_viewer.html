@@ -588,6 +588,241 @@
       background: rgba(255, 255, 255, 0.07);
       margin: 4px 0 14px;
     }
+
+    /* ── Lighting toggle button ─────────────────────────────────────────────── */
+    #lighting-toggle {
+      position: fixed;
+      top: 14px;
+      right: 110px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: rgba(0, 0, 0, 0.55);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 20px;
+      padding: 7px 14px 7px 10px;
+      color: rgba(255, 255, 255, 0.65);
+      font: 12px/1 sans-serif;
+      font-weight: 500;
+      cursor: pointer;
+      z-index: 9999;
+      pointer-events: all;
+      isolation: isolate;
+      transition: background 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #lighting-toggle:hover {
+      background: rgba(201, 169, 110, 0.22);
+      border-color: rgba(201, 169, 110, 0.5);
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    #lighting-toggle.active {
+      background: rgba(201, 169, 110, 0.28);
+      border-color: rgba(201, 169, 110, 0.7);
+      color: #fff;
+      box-shadow: 0 0 14px rgba(201, 169, 110, 0.35);
+    }
+
+    #lighting-toggle .lt-icon {
+      font-size: 14px;
+      line-height: 1;
+    }
+
+    /* ── Lighting panel ─────────────────────────────────────────────────────── */
+    #lighting-panel {
+      position: fixed;
+      top: 58px;
+      right: 14px;
+      width: 300px;
+      background: rgba(10, 12, 30, 0.94);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(201, 169, 110, 0.28);
+      border-radius: 16px;
+      z-index: 9998;
+      pointer-events: all;
+      isolation: isolate;
+      overflow: hidden;
+      transform: translateY(-8px) scale(0.97);
+      opacity: 0;
+      transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
+      pointer-events: none;
+    }
+
+    #lighting-panel.open {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: all;
+    }
+
+    #lp-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    }
+
+    #lp-title {
+      font: 600 12px/1 sans-serif;
+      color: #c9a96e;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    #lp-title::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #c9a96e;
+      box-shadow: 0 0 6px #c9a96e;
+    }
+
+    #lp-close {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 16px;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      line-height: 1;
+    }
+
+    #lp-close:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+    }
+
+    #lp-body {
+      padding: 14px 16px 16px;
+    }
+
+    .lp-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 13px;
+    }
+
+    .lp-label {
+      font: 11px/1 sans-serif;
+      color: rgba(255, 255, 255, 0.45);
+      white-space: nowrap;
+      width: 52px;
+      flex-shrink: 0;
+    }
+
+    .lp-slider {
+      flex: 1;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 4px;
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+      background: linear-gradient(to right, #c9a96e var(--pct, 50%), rgba(255, 255, 255, 0.12) var(--pct, 50%));
+    }
+
+    .lp-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #c9a96e;
+      box-shadow: 0 0 0 3px rgba(201, 169, 110, 0.25), 0 2px 6px rgba(0, 0, 0, 0.4);
+      cursor: pointer;
+      transition: box-shadow 0.15s;
+    }
+
+    .lp-slider::-webkit-slider-thumb:hover {
+      box-shadow: 0 0 0 5px rgba(201, 169, 110, 0.35), 0 2px 8px rgba(0, 0, 0, 0.5);
+    }
+
+    .lp-badge {
+      font: 600 11px/1 'Courier New', monospace;
+      color: #c9a96e;
+      background: rgba(201, 169, 110, 0.12);
+      border: 1px solid rgba(201, 169, 110, 0.3);
+      border-radius: 6px;
+      padding: 3px 5px;
+      width: 38px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .lp-divider {
+      height: 1px;
+      background: rgba(255, 255, 255, 0.07);
+      margin: 4px 0 13px;
+    }
+
+    .lp-section-label {
+      font: 600 10px/1 sans-serif;
+      color: rgba(255, 255, 255, 0.3);
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      margin-bottom: 10px;
+    }
+
+    .lp-presets {
+      display: flex;
+      gap: 5px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+
+    .lp-preset {
+      flex: 1 1 auto;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      color: rgba(255, 255, 255, 0.5);
+      font: 11px/1 sans-serif;
+      padding: 6px 4px;
+      cursor: pointer;
+      text-align: center;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      white-space: nowrap;
+    }
+
+    .lp-preset:hover,
+    .lp-preset.active {
+      background: rgba(201, 169, 110, 0.18);
+      border-color: rgba(201, 169, 110, 0.5);
+      color: #c9a96e;
+    }
+
+    #lp-reset {
+      width: 100%;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+      color: rgba(255, 255, 255, 0.55);
+      font: 600 12px/1 sans-serif;
+      padding: 10px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      margin-top: 2px;
+    }
+
+    #lp-reset:hover {
+      background: rgba(255, 255, 255, 0.10);
+      color: #fff;
+    }
   </style>
 </head>
 
@@ -667,6 +902,67 @@
       <span class="tcp-hex-label">#</span>
       <input type="text" id="tint-hex-input" maxlength="6" placeholder="C9A96E">
       <button id="tint-hex-apply">OK</button>
+    </div>
+  </div>
+
+
+  <!-- Lighting toggle button -->
+  <div id="lighting-toggle" title="Lighting controls">
+    <span class="lt-icon">☀</span>
+    <span>Lighting</span>
+  </div>
+
+  <!-- Lighting panel -->
+  <div id="lighting-panel">
+    <div id="lp-header">
+      <div id="lp-title">Lighting</div>
+      <div id="lp-close">×</div>
+    </div>
+    <div id="lp-body">
+
+      <div class="lp-section-label">Presets</div>
+      <div class="lp-presets">
+        <div class="lp-preset" data-lp-preset="bright">☀ Bright</div>
+        <div class="lp-preset active" data-lp-preset="natural">🌤 Natural</div>
+        <div class="lp-preset" data-lp-preset="warm">🕯 Warm</div>
+        <div class="lp-preset" data-lp-preset="dim">🌑 Dim</div>
+        <div class="lp-preset" data-lp-preset="night">🌙 Night</div>
+      </div>
+
+      <div class="lp-divider"></div>
+
+      <div class="lp-row">
+        <span class="lp-label">Ambient</span>
+        <input type="range" class="lp-slider" id="lp-ambient" min="0" max="2" step="0.01" value="0.55">
+        <span class="lp-badge" id="lp-ambient-val">0.55</span>
+      </div>
+
+      <div class="lp-row">
+        <span class="lp-label">Sunlight</span>
+        <input type="range" class="lp-slider" id="lp-sun" min="0" max="3" step="0.01" value="1.2">
+        <span class="lp-badge" id="lp-sun-val">1.20</span>
+      </div>
+
+      <div class="lp-row">
+        <span class="lp-label">Fill</span>
+        <input type="range" class="lp-slider" id="lp-fill" min="0" max="1.5" step="0.01" value="0.3">
+        <span class="lp-badge" id="lp-fill-val">0.30</span>
+      </div>
+
+      <div class="lp-row">
+        <span class="lp-label">Room</span>
+        <input type="range" class="lp-slider" id="lp-room" min="0" max="2" step="0.01" value="0.7">
+        <span class="lp-badge" id="lp-room-val">0.70</span>
+      </div>
+
+      <div class="lp-row">
+        <span class="lp-label">Sky</span>
+        <input type="range" class="lp-slider" id="lp-hemi" min="0" max="1.5" step="0.01" value="0.4">
+        <span class="lp-badge" id="lp-hemi-val">0.40</span>
+      </div>
+
+      <div class="lp-divider"></div>
+      <button id="lp-reset">↺ Reset to Natural</button>
     </div>
   </div>
 
@@ -816,14 +1112,18 @@
       }
 
       // ── Lights ───────────────────────────────────────────────────────────
-      scene.add(new THREE.AmbientLight(0xfff5e8, 0.55));
-      scene.add(new THREE.HemisphereLight(0xfff0d0, 0x6a5a40, 0.4));
+      var ambientLight = new THREE.AmbientLight(0xfff5e8, 0.55);
+      scene.add(ambientLight);
+      var hemiLight = new THREE.HemisphereLight(0xfff0d0, 0x6a5a40, 0.4);
+      scene.add(hemiLight);
       var sun = new THREE.DirectionalLight(0xfff8f0, 1.2);
       sun.position.set(8, 14, 6); sun.castShadow = true;
       sun.shadow.mapSize.set(2048, 2048); sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 60;
       sun.shadow.camera.left = sun.shadow.camera.bottom = -20; sun.shadow.camera.right = sun.shadow.camera.top = 20; sun.shadow.bias = -0.001;
       scene.add(sun);
       var fill = new THREE.DirectionalLight(0xc8d8ff, 0.3); fill.position.set(-6, 8, -6); scene.add(fill);
+      // roomLight (point light) is created inside buildRoom and stored here so the panel can adjust it
+      var roomLight = null;
 
       // ── Room builder ─────────────────────────────────────────────────────
       // sRGB → Linear: converts a hex string chosen by the user (sRGB space)
@@ -886,7 +1186,7 @@
         addCornice(new THREE.BoxGeometry(cd, ch, rd), new THREE.Vector3(rw - cd / 2, WH - ch / 2, rd / 2));
         var lf = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.05, 20), new THREE.MeshLambertMaterial({ color: 0xffffff }));
         lf.position.set(rw / 2, WH - 0.025, rd / 2); roomGroup.add(lf);
-        var pl = new THREE.PointLight(0xffe8c0, 0.7, rw * 2.5, 1.8); pl.position.set(rw / 2, WH - 0.15, rd / 2); roomGroup.add(pl);
+        var pl = new THREE.PointLight(0xffe8c0, 0.7, rw * 2.5, 1.8); pl.position.set(rw / 2, WH - 0.15, rd / 2); roomGroup.add(pl); roomLight = pl;
         sun.shadow.camera.left = -(rw + 3); sun.shadow.camera.right = rw + 3; sun.shadow.camera.top = rd + 3; sun.shadow.camera.bottom = -(rd + 3); sun.shadow.camera.updateProjectionMatrix();
         var roomMax = Math.max(rw, rd);
         controls.target.set(rw / 2, WH * 0.35, rd / 2);
@@ -1608,6 +1908,132 @@
 
       // Click anywhere outside popup to close it
       document.addEventListener('click', function () { closeTCP(); });
+
+      // ── Lighting Panel ────────────────────────────────────────────────────
+      (function () {
+        var lpToggle = document.getElementById('lighting-toggle');
+        var lpPanel = document.getElementById('lighting-panel');
+        var lpClose = document.getElementById('lp-close');
+        var lpReset = document.getElementById('lp-reset');
+
+        // Sliders + badges
+        var sliders = {
+          ambient: { el: document.getElementById('lp-ambient'), badge: document.getElementById('lp-ambient-val'), min: 0, max: 2 },
+          sun: { el: document.getElementById('lp-sun'), badge: document.getElementById('lp-sun-val'), min: 0, max: 3 },
+          fill: { el: document.getElementById('lp-fill'), badge: document.getElementById('lp-fill-val'), min: 0, max: 1.5 },
+          room: { el: document.getElementById('lp-room'), badge: document.getElementById('lp-room-val'), min: 0, max: 2 },
+          hemi: { el: document.getElementById('lp-hemi'), badge: document.getElementById('lp-hemi-val'), min: 0, max: 1.5 },
+        };
+
+        // Lighting presets: { ambient, sun, fill, room, hemi }
+        var LP_PRESETS = {
+          bright: { ambient: 1.0, sun: 2.2, fill: 0.6, room: 1.2, hemi: 0.8 },
+          natural: { ambient: 0.55, sun: 1.2, fill: 0.3, room: 0.7, hemi: 0.4 },
+          warm: { ambient: 0.5, sun: 0.9, fill: 0.15, room: 1.2, hemi: 0.25 },
+          dim: { ambient: 0.25, sun: 0.5, fill: 0.1, room: 0.4, hemi: 0.15 },
+          night: { ambient: 0.05, sun: 0.0, fill: 0.0, room: 0.8, hemi: 0.05 },
+        };
+
+        function updateSliderTrack(slider) {
+          var s = slider.el;
+          var min = parseFloat(s.min), max = parseFloat(s.max), val = parseFloat(s.value);
+          var pct = ((val - min) / (max - min) * 100).toFixed(1);
+          s.style.setProperty('--pct', pct + '%');
+        }
+
+        function setValues(vals) {
+          Object.keys(vals).forEach(function (key) {
+            var sd = sliders[key]; if (!sd) return;
+            sd.el.value = vals[key];
+            sd.badge.textContent = parseFloat(vals[key]).toFixed(2);
+            updateSliderTrack(sd);
+          });
+          applyLights(vals);
+        }
+
+        function applyLights(vals) {
+          if (ambientLight) ambientLight.intensity = parseFloat(vals.ambient !== undefined ? vals.ambient : sliders.ambient.el.value);
+          if (sun) sun.intensity = parseFloat(vals.sun !== undefined ? vals.sun : sliders.sun.el.value);
+          if (fill) fill.intensity = parseFloat(vals.fill !== undefined ? vals.fill : sliders.fill.el.value);
+          if (roomLight) roomLight.intensity = parseFloat(vals.room !== undefined ? vals.room : sliders.room.el.value);
+          if (hemiLight) hemiLight.intensity = parseFloat(vals.hemi !== undefined ? vals.hemi : sliders.hemi.el.value);
+        }
+
+        function currentVals() {
+          var v = {};
+          Object.keys(sliders).forEach(function (k) { v[k] = parseFloat(sliders[k].el.value); });
+          return v;
+        }
+
+        function clearPresetActive() {
+          document.querySelectorAll('.lp-preset').forEach(function (el) { el.classList.remove('active'); });
+        }
+
+        // Attach slider listeners
+        Object.keys(sliders).forEach(function (key) {
+          var sd = sliders[key];
+          sd.el.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+          sd.el.addEventListener('input', function (e) {
+            e.stopPropagation();
+            var val = parseFloat(this.value);
+            sd.badge.textContent = val.toFixed(2);
+            updateSliderTrack(sd);
+            clearPresetActive();
+            applyLights(currentVals());
+          });
+          updateSliderTrack(sd);
+        });
+
+        // Preset buttons
+        document.querySelectorAll('.lp-preset').forEach(function (btn) {
+          btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            var key = this.dataset.lpPreset;
+            if (!LP_PRESETS[key]) return;
+            clearPresetActive();
+            this.classList.add('active');
+            setValues(LP_PRESETS[key]);
+          });
+          btn.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+        });
+
+        // Toggle panel open/close
+        lpToggle.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var open = lpPanel.classList.toggle('open');
+          lpToggle.classList.toggle('active', open);
+        });
+        lpToggle.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+
+        // Close button
+        lpClose.addEventListener('click', function (e) {
+          e.stopPropagation();
+          lpPanel.classList.remove('open');
+          lpToggle.classList.remove('active');
+        });
+        lpClose.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+
+        // Stop panel clicks from leaking
+        lpPanel.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+        lpPanel.addEventListener('click', function (e) { e.stopPropagation(); });
+
+        // Reset button
+        lpReset.addEventListener('click', function (e) {
+          e.stopPropagation();
+          clearPresetActive();
+          document.querySelector('[data-lp-preset="natural"]').classList.add('active');
+          setValues(LP_PRESETS.natural);
+        });
+        lpReset.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+
+        // Close panel when clicking elsewhere
+        document.addEventListener('click', function () {
+          if (lpPanel.classList.contains('open')) {
+            lpPanel.classList.remove('open');
+            lpToggle.classList.remove('active');
+          }
+        });
+      })();
     })();
   </script>
 </body>

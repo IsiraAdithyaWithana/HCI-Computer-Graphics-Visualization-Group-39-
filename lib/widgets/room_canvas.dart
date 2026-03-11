@@ -1054,7 +1054,7 @@ class RoomCanvasState extends State<RoomCanvas> {
     final tx = current.storage[12];
     final ty = current.storage[13];
     _transformationController.value = Matrix4.identity()
-      ..scale(clamped, clamped, 1.0)
+      ..scale(clamped, clamped, clamped)
       ..setTranslationRaw(
         (1.0 - f) * screenFocal.dx + f * tx,
         (1.0 - f) * screenFocal.dy + f * ty,

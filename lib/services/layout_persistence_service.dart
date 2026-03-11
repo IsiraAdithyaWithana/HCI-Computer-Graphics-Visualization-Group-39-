@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../widgets/colour_scheme_picker.dart';
 
 /// Persists layouts and project metadata to disk.
 /// All data is namespaced by [userId] so multiple users can coexist.
@@ -20,6 +22,10 @@ class LayoutPersistenceService {
       'user:$userId:project:$projectId:roomWidth';
   static String _depthKey(String userId, String projectId) =>
       'user:$userId:project:$projectId:roomDepth';
+  static String _schemeKey(String userId, String projectId) =>
+      'user:$userId:project:$projectId:colourScheme';
+  static String _canvasBgKey(String userId, String projectId) =>
+      'user:$userId:project:$projectId:canvasBg';
 
   // ── Project list ──────────────────────────────────────────────────────────
 
@@ -67,6 +73,8 @@ class LayoutPersistenceService {
     await prefs.remove(_furnitureKey(userId, projectId));
     await prefs.remove(_widthKey(userId, projectId));
     await prefs.remove(_depthKey(userId, projectId));
+    await prefs.remove(_schemeKey(userId, projectId));
+    await prefs.remove(_canvasBgKey(userId, projectId));
   }
 
   // ── Layout (furniture + room dims) ────────────────────────────────────────
@@ -77,11 +85,22 @@ class LayoutPersistenceService {
     required String furnitureJson,
     required double roomWidthM,
     required double roomDepthM,
+    RoomColourScheme? colourScheme,
+    Color? canvasBgColour,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_furnitureKey(userId, projectId), furnitureJson);
     await prefs.setDouble(_widthKey(userId, projectId), roomWidthM);
     await prefs.setDouble(_depthKey(userId, projectId), roomDepthM);
+    if (colourScheme != null) {
+      await prefs.setString(
+        _schemeKey(userId, projectId),
+        jsonEncode(colourScheme.toJson()),
+      );
+    }
+    if (canvasBgColour != null) {
+      await prefs.setInt(_canvasBgKey(userId, projectId), canvasBgColour.value);
+    }
   }
 
   Future<LayoutSnapshot?> load({
@@ -98,10 +117,24 @@ class LayoutPersistenceService {
     } catch (_) {
       return null;
     }
+    RoomColourScheme? scheme;
+    final schemeRaw = prefs.getString(_schemeKey(userId, projectId));
+    if (schemeRaw != null) {
+      try {
+        scheme = RoomColourScheme.fromJson(
+          jsonDecode(schemeRaw) as Map<String, dynamic>,
+        );
+      } catch (_) {}
+    }
+    Color? canvasBg;
+    final bgVal = prefs.getInt(_canvasBgKey(userId, projectId));
+    if (bgVal != null) canvasBg = Color(bgVal);
     return LayoutSnapshot(
       furnitureJson: json,
       roomWidthM: w ?? 6.0,
       roomDepthM: d ?? 5.0,
+      colourScheme: scheme,
+      canvasBgColour: canvasBg,
     );
   }
 
@@ -131,10 +164,14 @@ class LayoutSnapshot {
   final String furnitureJson;
   final double roomWidthM;
   final double roomDepthM;
+  final RoomColourScheme? colourScheme;
+  final Color? canvasBgColour;
   const LayoutSnapshot({
     required this.furnitureJson,
     required this.roomWidthM,
     required this.roomDepthM,
+    this.colourScheme,
+    this.canvasBgColour,
   });
 }
 

@@ -251,7 +251,10 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       context: ctx,
       builder: (_) => _CanvasBgPickerDialog(initial: _canvasBgColour),
     );
-    if (picked != null) setState(() => _canvasBgColour = picked);
+    if (picked != null) {
+      setState(() => _canvasBgColour = picked);
+      _saveLayout();
+    }
   }
 
   @override
@@ -269,6 +272,12 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
     setState(() {
       _roomWidthM = snapshot.roomWidthM;
       _roomDepthM = snapshot.roomDepthM;
+      if (snapshot.colourScheme != null) {
+        _currentScheme = snapshot.colourScheme!;
+      }
+      if (snapshot.canvasBgColour != null) {
+        _canvasBgColour = snapshot.canvasBgColour!;
+      }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _canvasKey.currentState?.loadFromJson(snapshot.furnitureJson);
@@ -284,6 +293,8 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       furnitureJson: json,
       roomWidthM: _roomWidthM,
       roomDepthM: _roomDepthM,
+      colourScheme: _currentScheme,
+      canvasBgColour: _canvasBgColour,
     );
     // Update project metadata (furniture count + lastModified) in the list
     final count = _canvasKey.currentState?.furnitureItems.length ?? 0;
@@ -352,7 +363,10 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
             child: ColourSchemeButton(
               current: _currentScheme,
-              onSchemeChanged: (s) => setState(() => _currentScheme = s),
+              onSchemeChanged: (s) {
+                setState(() => _currentScheme = s);
+                _saveLayout();
+              },
             ),
           ),
           // ── Canvas background colour picker ────────────────────────────

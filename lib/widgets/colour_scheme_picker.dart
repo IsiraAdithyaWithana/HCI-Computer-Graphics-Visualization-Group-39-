@@ -49,6 +49,30 @@ class RoomColourScheme {
   }
 
   List<Color> get paletteSwatches => [wall, floor, ceiling, accent, trim];
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'description': description,
+    'mood': mood,
+    'wall': wall.value,
+    'floor': floor.value,
+    'ceiling': ceiling.value,
+    'accent': accent.value,
+    'trim': trim.value,
+  };
+
+  factory RoomColourScheme.fromJson(Map<String, dynamic> j) => RoomColourScheme(
+    id: j['id'] as String? ?? 'custom',
+    name: j['name'] as String? ?? 'Custom',
+    description: j['description'] as String? ?? '',
+    mood: j['mood'] as String? ?? '',
+    wall: Color((j['wall'] as num).toInt()),
+    floor: Color((j['floor'] as num).toInt()),
+    ceiling: Color((j['ceiling'] as num).toInt()),
+    accent: Color((j['accent'] as num).toInt()),
+    trim: Color((j['trim'] as num).toInt()),
+  );
 }
 
 // ── Curated presets ───────────────────────────────────────────────────────────
