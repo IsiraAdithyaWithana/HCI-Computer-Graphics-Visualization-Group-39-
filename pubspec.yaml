@@ -68,6 +68,9 @@ flutter:
     - assets/cursors/rotate_cursor.png
     - assets/cursors/move_cursor.png
     - assets/cursors/canvas_cursor.png
+    - assets/cursors/add_cursor.png
+    - assets/cursors/main_cursor.png
+    - assets/cursors/grab_cursor.png
   #3d models
     - assets/models/chair.glb
     - assets/models/table.glb

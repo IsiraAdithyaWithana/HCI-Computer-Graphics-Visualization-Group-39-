@@ -135,9 +135,7 @@ class RoomCanvasState extends State<RoomCanvas> {
   Map<String, Offset> _preDragPositions = {};
 
   final _cursorPos = ValueNotifier<Offset?>(null);
-  final _cursorAsset = ValueNotifier<String?>(
-    'assets/cursors/canvas_cursor.png',
-  );
+  final _cursorAsset = ValueNotifier<String?>('assets/cursors/main_cursor.png');
   bool _isRotatingLive = false;
   bool _isResizingLive = false;
   bool _isDraggingLive = false;
@@ -276,6 +274,22 @@ class RoomCanvasState extends State<RoomCanvas> {
   // ── Cursor ────────────────────────────────────────────────────────────────
   void _updateCursor(Offset scenePos, Offset localPos) {
     _cursorPos.value = localPos;
+
+    // Hand mode — canvas pan cursor (grab state is set in pan handlers)
+    if (widget.currentMode == MouseMode.hand) {
+      if (!_isPanningCanvas) {
+        _cursorAsset.value = 'assets/cursors/canvas_cursor.png';
+      }
+      return;
+    }
+
+    // Draw / add mode
+    if (widget.currentMode == MouseMode.draw) {
+      _cursorAsset.value = 'assets/cursors/add_cursor.png';
+      return;
+    }
+
+    // Select mode
     if (_isRotatingLive) {
       _cursorAsset.value = 'assets/cursors/rotate_cursor.png';
       return;
@@ -301,7 +315,7 @@ class RoomCanvasState extends State<RoomCanvas> {
         return;
       }
     }
-    _cursorAsset.value = 'assets/cursors/canvas_cursor.png';
+    _cursorAsset.value = 'assets/cursors/main_cursor.png';
   }
 
   // ── Context menu ──────────────────────────────────────────────────────────
@@ -682,6 +696,8 @@ class RoomCanvasState extends State<RoomCanvas> {
                           _drawTapPos = null;
                           if (widget.currentMode == MouseMode.hand) {
                             setState(() => _isPanningCanvas = true);
+                            _cursorAsset.value =
+                                'assets/cursors/grab_cursor.png';
                             _dragStart = d.globalPosition;
                             return;
                           }
@@ -695,6 +711,8 @@ class RoomCanvasState extends State<RoomCanvas> {
                                 'assets/cursors/rotate_cursor.png';
                             return;
                           }
+                          // Draw mode — no marquee, no drag on empty canvas
+                          if (widget.currentMode == MouseMode.draw) return;
                           // Resize gesture disabled — use 3D view scale panel instead
                           for (final item in furnitureItems.reversed) {
                             if (_inside(item, s)) {
@@ -722,17 +740,16 @@ class RoomCanvasState extends State<RoomCanvas> {
                               return;
                             }
                           }
+                          // Select mode only — start marquee box
+                          if (widget.currentMode != MouseMode.select) return;
                           setState(() {
                             _isSelectingBox = true;
                             _selectionStart = s;
                             _selectionCurrent = s;
-                            if (widget.currentMode == MouseMode.select) {
-                              selectedItems.clear();
-                              selectedItem = null;
-                            }
+                            selectedItems.clear();
+                            selectedItem = null;
                           });
-                          _cursorAsset.value =
-                              'assets/cursors/canvas_cursor.png';
+                          _cursorAsset.value = 'assets/cursors/main_cursor.png';
                         },
                         onPanUpdate: (d) {
                           if (_isTrackpadActive) return;
@@ -780,30 +797,10 @@ class RoomCanvasState extends State<RoomCanvas> {
                         },
                         onPanEnd: (_) {
                           if (_isTrackpadActive) return;
-                          if (widget.currentMode == MouseMode.draw &&
-                              _isSelectingBox &&
-                              _selectionStart != null &&
-                              _selectionCurrent != null) {
-                            final rect = Rect.fromPoints(
-                              _selectionStart!,
-                              _selectionCurrent!,
-                            );
-                            if (rect.width.abs() > 10 &&
-                                rect.height.abs() > 10) {
-                              _pushUndo();
-                              setState(
-                                () => furnitureItems.add(
-                                  _newItem(
-                                    position: rect.topLeft,
-                                    size: Size(
-                                      _snap(rect.width.abs()),
-                                      _snap(rect.height.abs()),
-                                    ),
-                                  ),
-                                ),
-                              );
-                              _save();
-                            }
+                          // Restore hand-mode cursor after releasing grab
+                          if (_isPanningCanvas) {
+                            _cursorAsset.value =
+                                'assets/cursors/canvas_cursor.png';
                           }
                           if (widget.currentMode == MouseMode.select &&
                               _isSelectingBox &&
@@ -899,8 +896,17 @@ class RoomCanvasState extends State<RoomCanvas> {
                           _isRotatingLive = _isResizingLive = _isDraggingLive =
                               false;
                           _dragStart = null;
-                          _cursorAsset.value =
-                              'assets/cursors/canvas_cursor.png';
+                          // Restore the correct idle cursor for the active mode
+                          if (widget.currentMode == MouseMode.hand) {
+                            _cursorAsset.value =
+                                'assets/cursors/canvas_cursor.png';
+                          } else if (widget.currentMode == MouseMode.draw) {
+                            _cursorAsset.value =
+                                'assets/cursors/add_cursor.png';
+                          } else {
+                            _cursorAsset.value =
+                                'assets/cursors/main_cursor.png';
+                          }
                         },
                         child: SizedBox(
                           width: _canvasW,
@@ -1008,7 +1014,13 @@ class RoomCanvasState extends State<RoomCanvas> {
     _isTrackpadActive = false;
     _trackpadLastScale = 1.0;
     _trackpadFocal = Offset.zero;
-    _cursorAsset.value = 'assets/cursors/canvas_cursor.png';
+    if (widget.currentMode == MouseMode.hand) {
+      _cursorAsset.value = 'assets/cursors/canvas_cursor.png';
+    } else if (widget.currentMode == MouseMode.draw) {
+      _cursorAsset.value = 'assets/cursors/add_cursor.png';
+    } else {
+      _cursorAsset.value = 'assets/cursors/main_cursor.png';
+    }
   }
 
   void _zoomAround(double factor, Offset screenFocal) =>
