@@ -8,6 +8,9 @@ import '../models/furniture_model.dart';
 import '../services/custom_furniture_registry.dart';
 import 'realistic_3d_screen.dart';
 import '../services/layout_persistence_service.dart';
+import '../services/thumbnail_cache.dart';
+import '../services/thumbnail_generator_service.dart';
+import 'dart:ui' as ui;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Editor2DScreen
@@ -47,6 +50,13 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
 
   final GlobalKey<RoomCanvasState> _canvasKey = GlobalKey<RoomCanvasState>();
 
+  // Thumbnails for 2D canvas — updated whenever ThumbnailCache notifies
+  Map<String, ui.Image> _thumbnails = {};
+  void _onThumbsUpdated() {
+    if (mounted)
+      setState(() => _thumbnails = Map.of(ThumbnailCache.instance.images));
+  }
+
   // Live undo/redo state — ValueNotifier so the 3D screen reacts without being rebuilt.
   final ValueNotifier<bool> _undoNotifier = ValueNotifier(false);
   final ValueNotifier<bool> _redoNotifier = ValueNotifier(false);
@@ -58,6 +68,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
 
   @override
   void dispose() {
+    ThumbnailCache.instance.removeListener(_onThumbsUpdated);
     _undoNotifier.dispose();
     _redoNotifier.dispose();
     super.dispose();
@@ -260,7 +271,13 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadSavedLayout());
+    ThumbnailCache.instance.addListener(_onThumbsUpdated);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadSavedLayout();
+      // Start silent background thumbnail generation for all built-in GLBs.
+      // If already cached from a previous session this returns instantly.
+      ThumbnailGeneratorService.instance.generateBuiltinsInBackground(context);
+    });
   }
 
   Future<void> _loadSavedLayout() async {
@@ -487,6 +504,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                   canvasBgColour: _canvasBgColour,
                   roomFloorColour: _currentScheme.floor,
                   roomWallColour: _currentScheme.wall,
+                  thumbnails: _thumbnails,
                 ),
                 Positioned(
                   right: 16,
@@ -1305,6 +1323,8 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
   bool _createNewCategory = false;
   String? _selectedBuiltinCategory;
   bool _isAdding = false;
+  bool _generatingThumbnail = false;
+  String? _statusMessage;
   String? _errorMsg;
 
   final List<String> _builtinCategories = kFurnitureCategories
@@ -1368,9 +1388,12 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
       isNewCat = false;
     }
 
-    setState(() => _isAdding = true);
+    setState(() {
+      _isAdding = true;
+      _statusMessage = 'Importing model…';
+    });
     try {
-      await CustomFurnitureRegistry.instance.addEntry(
+      final entry = await CustomFurnitureRegistry.instance.addEntry(
         name: name,
         category: category,
         sourceGlbPath: _pickedFilePath!,
@@ -1379,12 +1402,30 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
         defaultHeightPx: double.tryParse(_heightCtrl.text.trim()) ?? 80,
       );
       widget.onAdded();
+
+      // ── Generate top-down thumbnail in background ────────────────────────
+      // Keep dialog open with a spinner while Three.js renders the top-down view.
+      if (mounted) {
+        setState(() {
+          _generatingThumbnail = true;
+          _statusMessage = 'Generating 3D preview…';
+        });
+        await ThumbnailGeneratorService.instance.generateForGlb(
+          context,
+          entry.glbFileName,
+          entry.glbFileName,
+        );
+      }
+
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      setState(() {
-        _errorMsg = 'Failed to add: $e';
-        _isAdding = false;
-      });
+      if (mounted)
+        setState(() {
+          _errorMsg = 'Failed to add: $e';
+          _isAdding = false;
+          _generatingThumbnail = false;
+          _statusMessage = null;
+        });
     }
   }
 
@@ -1885,62 +1926,95 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-              child: Row(
+              child: Column(
                 children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: _isAdding
-                          ? null
-                          : () => Navigator.of(context).pop(),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        side: BorderSide(color: const Color(0xFF2C2C3E)),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      child: const Text(
-                        'Cancel',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: const Color(0xFF8E8A9A),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton.icon(
-                      onPressed: _isAdding ? null : _handleAdd,
-                      icon: _isAdding
-                          ? const SizedBox(
-                              width: 15,
-                              height: 15,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.add, size: 17),
-                      label: Text(
-                        _isAdding ? 'Adding…' : 'Add Furniture',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _accent,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
+                  // ── Status message shown during thumbnail generation ──────
+                  if (_generatingThumbnail)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Color(0xFFC9A96E),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            _statusMessage ?? 'Generating 3D preview…',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFFC9A96E),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: _isAdding
+                              ? null
+                              : () => Navigator.of(context).pop(),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                            side: BorderSide(color: const Color(0xFF2C2C3E)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          child: const Text(
+                            'Cancel',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF8E8A9A),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton.icon(
+                          onPressed: _isAdding ? null : _handleAdd,
+                          icon: _isAdding
+                              ? const SizedBox(
+                                  width: 15,
+                                  height: 15,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.add, size: 17),
+                          label: Text(
+                            _generatingThumbnail
+                                ? 'Generating preview…'
+                                : (_isAdding ? 'Importing…' : 'Add Furniture'),
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _accent,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

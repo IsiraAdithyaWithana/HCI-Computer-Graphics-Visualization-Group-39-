@@ -1006,14 +1006,126 @@
       document.head.appendChild(s);
     }
 
+    // ── Detect thumbonly mode ──────────────────────────────────────────────
+    var _thumbOnly = (location.search.indexOf('thumbonly=1') >= 0);
+    var _thumbGlb = null;
+    var _thumbKey = null;
+    (function () {
+      var p = new URLSearchParams(location.search);
+      _thumbGlb = p.get('glb');
+      _thumbKey = p.get('key');
+    })();
+
     setStatus('Loading Three.js…', 5);
     loadScript('three.min.js', function () {
       setStatus('Loading controls…', 20);
       loadScript('OrbitControls.js', function () {
         setStatus('Loading GLTF loader…', 35);
-        loadScript('GLTFLoader.js', function () { setTimeout(boot, 60); });
+        loadScript('GLTFLoader.js', function () {
+          if (_thumbOnly) { setTimeout(bootThumbOnly, 60); }
+          else { setTimeout(boot, 60); }
+        });
       });
     });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // THUMBONLY MODE — no scene, no UI, just top-down GLB rendering
+    // ══════════════════════════════════════════════════════════════════════
+    function bootThumbOnly() {
+      if (typeof THREE === 'undefined') return;
+
+      var THUMB_SIZE = 256;
+      var tr = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+      tr.setSize(THUMB_SIZE, THUMB_SIZE);
+      tr.setPixelRatio(1);
+      tr.setClearColor(0x000000, 0);
+      tr.shadowMap.enabled = false;
+
+      var ts = new THREE.Scene();
+      var ambL = new THREE.AmbientLight(0xffffff, 1.5);
+      ts.add(ambL);
+      var dirL1 = new THREE.DirectionalLight(0xffffff, 1.0);
+      dirL1.position.set(3, 8, 4); ts.add(dirL1);
+      var dirL2 = new THREE.DirectionalLight(0xffffff, 0.5);
+      dirL2.position.set(-4, 6, -2); ts.add(dirL2);
+
+      var tc = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 500);
+
+      // All 20 built-in GLBs
+      var BUILTIN_DEFS = [
+        ['chair', 'chair.glb'], ['sofa', 'sofa.glb'], ['armchair', 'arm_chair.glb'],
+        ['bench', 'bench.glb'], ['stool', 'stool.glb'], ['table', 'table.glb'],
+        ['coffeeTable', 'coffee_table.glb'], ['desk', 'desk.glb'], ['sideTable', 'side_table.glb'],
+        ['wardrobe', 'wardrobe.glb'], ['bookshelf', 'book_shelf.glb'], ['cabinet', 'cabinet.glb'],
+        ['dresser', 'dresser.glb'], ['bed', 'double_bed.glb'], ['singleBed', 'single_bed.glb'],
+        ['nightstand', 'night_stand.glb'], ['plant', 'plant.glb'], ['lamp', 'floor_lamp.glb'],
+        ['tvStand', 'tv_stand.glb'], ['rug', 'rug.glb'],
+      ];
+
+      // If a specific GLB was requested, just do that one
+      var queue = _thumbGlb && _thumbKey
+        ? [[_thumbKey, _thumbGlb]]
+        : BUILTIN_DEFS;
+
+      var loader = new THREE.GLTFLoader();
+
+      function renderThumb(key, scene3d, onDone) {
+        var clone = scene3d.clone(true);
+        ts.add(clone);
+        // Ensure materials are visible from above
+        clone.traverse(function (n) {
+          if (n.isMesh && n.material) {
+            var mats = Array.isArray(n.material) ? n.material : [n.material];
+            mats.forEach(function (m) { m.side = THREE.DoubleSide; });
+          }
+        });
+        var bbox = new THREE.Box3().setFromObject(clone);
+        var size3 = bbox.getSize(new THREE.Vector3());
+        var center = bbox.getCenter(new THREE.Vector3());
+        var extent = Math.max(size3.x, size3.z) * 0.65;
+        if (extent < 0.01) extent = 0.5;
+        tc.left = -extent; tc.right = extent;
+        tc.top = extent; tc.bottom = -extent;
+        tc.near = -size3.y - 50; tc.far = size3.y + 200;
+        tc.position.set(center.x, bbox.max.y + 20, center.z);
+        tc.lookAt(center.x, center.y, center.z);
+        tc.up.set(0, 0, -1);
+        tc.updateProjectionMatrix();
+        tr.render(ts, tc);
+        var base64 = tr.domElement.toDataURL('image/png');
+        try {
+          window.chrome.webview.postMessage(JSON.stringify({
+            type: 'thumbnail', key: key, base64: base64
+          }));
+        } catch (e) { console.log('[Thumb] postMessage failed for ' + key); }
+        ts.remove(clone);
+        setTimeout(onDone, 80);
+      }
+
+      function processQueue(idx) {
+        if (idx >= queue.length) {
+          // Signal completion
+          try { window.chrome.webview.postMessage(JSON.stringify({ type: 'thumbDone' })); }
+          catch (e) { }
+          tr.dispose();
+          return;
+        }
+        var def = queue[idx];
+        var key = def[0], file = def[1];
+        setStatus('Thumbnailing ' + key + '…', Math.round(idx * 100 / queue.length));
+        loader.load(
+          file,
+          function (gltf) { renderThumb(key, gltf.scene, function () { processQueue(idx + 1); }); },
+          undefined,
+          function (err) {
+            console.warn('[Thumb] failed to load ' + file + ': ' + err);
+            processQueue(idx + 1);
+          }
+        );
+      }
+
+      processQueue(0);
+    }
 
     function boot() {
       if (typeof THREE === 'undefined') { setStatus('Error: Three.js failed'); return; }
@@ -1294,6 +1406,10 @@
 
         console.log('Scene ready — ' + payload.items.length + ' items placed');
         setStatus('Done!', 100);
+
+        // ── Generate top-down thumbnails and send to Flutter ────────────────
+        setTimeout(function () { generateThumbnails(); }, 400);
+
         hideLoading();
       }
 
@@ -2034,6 +2150,48 @@
           }
         });
       })();
+
+      // ── Top-down thumbnail generator ─────────────────────────────────────
+      function generateThumbnails() {
+        var keys = Object.keys(bank);
+        if (keys.length === 0) return;
+        var THUMB_SIZE = 256;
+        var tr = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+        tr.setSize(THUMB_SIZE, THUMB_SIZE);
+        tr.setPixelRatio(1);
+        tr.setClearColor(0x000000, 0);
+        var ts = new THREE.Scene();
+        ts.add(new THREE.AmbientLight(0xffffff, 1.2));
+        var td = new THREE.DirectionalLight(0xffffff, 0.8);
+        td.position.set(2, 5, 3); ts.add(td);
+        var tc = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 200);
+        function renderOneKey(idx) {
+          if (idx >= keys.length) { tr.dispose(); return; }
+          var key = keys[idx];
+          var modelScene = bank[key];
+          if (!modelScene) { renderOneKey(idx + 1); return; }
+          var clone = modelScene.clone(true);
+          ts.add(clone);
+          var bbox = new THREE.Box3().setFromObject(clone);
+          var size3 = bbox.getSize(new THREE.Vector3());
+          var center = bbox.getCenter(new THREE.Vector3());
+          var extent = Math.max(size3.x, size3.z) * 1.25 * 0.5;
+          if (extent < 0.001) extent = 0.5;
+          tc.left = -extent; tc.right = extent; tc.top = extent; tc.bottom = -extent;
+          tc.near = -size3.y - 10; tc.far = size3.y + 100;
+          tc.position.set(center.x, bbox.max.y + 10, center.z);
+          tc.lookAt(center.x, center.y, center.z);
+          tc.up.set(0, 0, -1); tc.updateProjectionMatrix();
+          tr.render(ts, tc);
+          var base64 = tr.domElement.toDataURL('image/png');
+          try { window.chrome.webview.postMessage(JSON.stringify({ type: 'thumbnail', key: key, base64: base64 })); }
+          catch (e) { console.log('[Thumb] postMessage unavailable for: ' + key); }
+          ts.remove(clone);
+          setTimeout(function () { renderOneKey(idx + 1); }, 60);
+        }
+        renderOneKey(0);
+      }
+
     })();
   </script>
 </body>

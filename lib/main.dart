@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'screens/login_screen.dart';
 import 'services/custom_furniture_registry.dart';
 import 'services/furniture_scale_service.dart';
+import 'services/thumbnail_cache.dart';
 import 'theme/app_theme.dart';
 
 void main() async {
@@ -15,6 +16,10 @@ void main() async {
   // Load persisted per-type scale factors so resized furniture remembers
   // its size across sessions, hot reloads, and full app restarts.
   await FurnitureScaleService.instance.load();
+
+  // Load previously generated thumbnails from disk so the 2D canvas
+  // shows real top-down renders immediately without opening 3D view first.
+  await ThumbnailCache.instance.loadAll();
 
   runApp(const FurnitureApp());
 }

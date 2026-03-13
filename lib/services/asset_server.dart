@@ -117,6 +117,17 @@ class AssetServer {
     }
   }
 
+  /// Public: re-sync custom GLB files into the serve directory.
+  /// Call this before loading the thumbonly viewer so new imports are visible.
+  static Future<void> syncCustomModels() async {
+    final serveDir = Directory(
+      '\${Directory.systemTemp.path}/furniture_viewer',
+    );
+    if (await serveDir.exists()) {
+      await _syncCustomModels(serveDir);
+    }
+  }
+
   // ── Stop the server ──────────────────────────────────────────────────────
 
   static Future<void> stop() async {

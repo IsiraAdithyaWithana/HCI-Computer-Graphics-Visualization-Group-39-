@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:webview_windows/webview_windows.dart';
 import '../models/furniture_model.dart';
 import '../services/asset_server.dart';
+import '../services/thumbnail_cache.dart';
 
 class Realistic3DScreen extends StatefulWidget {
   final List<FurnitureModel> furniture;
@@ -161,6 +162,13 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
             if (id != null) {
               widget.onTintUpdated?.call(id, tintHex);
               debugPrint('[3D→Flutter] tintUpdate id=$id tint=$tintHex');
+            }
+          } else if (data['type'] == 'thumbnail') {
+            final key = data['key'] as String?;
+            final base64 = data['base64'] as String?;
+            if (key != null && base64 != null && base64.length > 100) {
+              ThumbnailCache.instance.store(key, base64);
+              debugPrint('[3D→Flutter] thumbnail key=$key');
             }
           }
         } catch (e) {

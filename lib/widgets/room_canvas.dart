@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -40,6 +41,10 @@ class RoomCanvas extends StatefulWidget {
   /// When set, overrides the generic 80×80 custom default.
   final Size? customDefaultSize;
 
+  /// Top-down PNG thumbnails from the 3D viewer.
+  /// Key: FurnitureType.name for built-ins, glbFileName for custom GLBs.
+  final Map<String, ui.Image> thumbnails;
+
   const RoomCanvas({
     super.key,
     required this.selectedType,
@@ -57,6 +62,7 @@ class RoomCanvas extends StatefulWidget {
     this.customDefaultSize,
     this.onChanged,
     this.onUndoStateChanged,
+    this.thumbnails = const {},
   });
 
   @override
@@ -944,6 +950,7 @@ class RoomCanvasState extends State<RoomCanvas> {
                                     canvasBgColour: widget.canvasBgColour,
                                     roomFloorColour: widget.roomFloorColour,
                                     roomWallColour: widget.roomWallColour,
+                                    thumbnails: widget.thumbnails,
                                   ),
                                   size: const Size(_canvasW, _canvasH),
                                 ),
@@ -1075,6 +1082,7 @@ class RoomPainter extends CustomPainter {
   final Color canvasBgColour;
   final Color roomFloorColour;
   final Color roomWallColour;
+  final Map<String, ui.Image> thumbnails;
 
   const RoomPainter({
     required this.furnitureItems,
@@ -1086,6 +1094,7 @@ class RoomPainter extends CustomPainter {
     this.canvasBgColour = const Color(0xFF0D0D11),
     this.roomFloorColour = const Color(0xFFFAF8F5),
     this.roomWallColour = const Color(0xFF4A4A5A),
+    this.thumbnails = const {},
   });
 
   @override
@@ -1158,9 +1167,19 @@ class RoomPainter extends CustomPainter {
       );
       canvas.rotate(item.rotation);
       canvas.translate(-item.size.width / 2, -item.size.height / 2);
-      _drawFurniture(canvas, item);
-      // Tint overlay: a semi-transparent rectangle in the chosen colour.
-      // Blended at 45% opacity so original art shows through.
+
+      // Use top-down 3D thumbnail when available, else vector fallback
+      final thumbKey = item.type == FurnitureType.custom
+          ? (item.glbOverride ?? '')
+          : item.type.name;
+      final thumb = thumbnails[thumbKey];
+      if (thumb != null) {
+        _drawThumbnailTile(canvas, item, thumb);
+      } else {
+        _drawFurniture(canvas, item);
+      }
+
+      // Tint overlay
       if (item.tintHex != null && item.tintHex!.isNotEmpty) {
         final tint = _hexToColor(item.tintHex!);
         canvas.drawRRect(
@@ -1176,6 +1195,42 @@ class RoomPainter extends CustomPainter {
       if (selectedItems.contains(item)) _drawHandles(canvas, item);
       canvas.restore();
     }
+  }
+
+  /// Draws a real top-down 3D thumbnail image fitted inside the item tile.
+  void _drawThumbnailTile(Canvas canvas, FurnitureModel item, ui.Image img) {
+    final w = item.size.width;
+    final h = item.size.height;
+    final rect = Rect.fromLTWH(0, 0, w, h);
+
+    // Drop shadow
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect.translate(0, 3), const Radius.circular(4)),
+      Paint()..color = Colors.black.withOpacity(0.25),
+    );
+
+    // Clip to rounded rect
+    canvas.save();
+    canvas.clipRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)));
+
+    // Draw the thumbnail image stretched to fill the tile
+    canvas.drawImageRect(
+      img,
+      Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+      rect,
+      Paint()..filterQuality = FilterQuality.medium,
+    );
+
+    canvas.restore();
+
+    // Thin border
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, const Radius.circular(4)),
+      Paint()
+        ..color = Colors.black.withOpacity(0.35)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2,
+    );
   }
 
   void _drawFurniture(Canvas canvas, FurnitureModel item) {
@@ -1357,47 +1412,58 @@ class RoomPainter extends CustomPainter {
     canvas.restore();
   }
 
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  // Wood-grain fill: base colour + thin horizontal lines
+  void _woodGrain(Canvas canvas, double w, double h, Color base) {
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), Paint()..color = base);
+    final p = Paint()
+      ..color = _dk(base, .08)
+      ..strokeWidth = 0.8;
+    final spacing = (h / 6).clamp(4.0, 12.0);
+    for (double y = spacing; y < h; y += spacing) {
+      canvas.drawLine(Offset(0, y), Offset(w, y), p);
+    }
+  }
+
+  // Soft drop shadow
+  void _dropShadow(Canvas canvas, double w, double h, {double r = 5}) {
+    final sp = Paint()
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4)
+      ..color = Colors.black.withOpacity(0.22);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(Rect.fromLTWH(3, 4, w, h), Radius.circular(r)),
+      sp,
+    );
+  }
+
+  // Thin outline
+  void _ol(Canvas canvas, Rect r, Color c, {double rad = 3, double sw = 1.0}) {
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(r, Radius.circular(rad)),
+      Paint()
+        ..color = c
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = sw,
+    );
+  }
+
   // ── Custom furniture tile ─────────────────────────────────────────────────
   void _custom(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
     final c = item.color;
-    _shadow(canvas, w, h, r: 6);
-    // Body
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, h),
-        const Radius.circular(6),
-      ),
-      Paint()..color = c,
+    _dropShadow(canvas, w, h, r: 6);
+    // Body with wood-like texture
+    _woodGrain(canvas, w, h, c);
+    // Border frame
+    canvas.drawRect(
+      Rect.fromLTWH(w * .06, h * .06, w * .88, h * .88),
+      Paint()
+        ..color = _lt(c, .22)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
     );
-    // Top accent stripe
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, h * .20),
-        const Radius.circular(6),
-      ),
-      Paint()..color = _dk(c, .28),
-    );
-    // Subtle inner highlight
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(w * .08, h * .28, w * .84, h * .55),
-        const Radius.circular(4),
-      ),
-      Paint()..color = _lt(c, .12),
-    );
-    // Star / custom badge icon drawn as simple lines
-    final bp = Paint()
-      ..color = Colors.white.withOpacity(.55)
-      ..strokeWidth = 1.2
-      ..style = PaintingStyle.stroke;
-    final bx = w * .85, by = h * .13, br = Math.min(w, h) * .07;
-    canvas.drawCircle(Offset(bx, by), br, bp);
-    canvas.drawLine(Offset(bx - br * .6, by), Offset(bx + br * .6, by), bp);
-    canvas.drawLine(Offset(bx, by - br * .6), Offset(bx, by + br * .6), bp);
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .40), radius: 6);
-    // Label — use the user-supplied name, truncated to fit
+    _ol(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .40), rad: 4);
     final label = (item.labelOverride ?? 'CUSTOM').toUpperCase();
     _lbl(canvas, label, w, h);
   }
@@ -1407,818 +1473,897 @@ class RoomPainter extends CustomPainter {
     final w = item.size.width;
     final h = item.size.height;
     final c = item.color;
-    _shadow(canvas, w, h);
-    final bH = h * .22;
+    final wood = const Color(0xFFB8895A);
+    _dropShadow(canvas, w, h, r: 4);
+    // Seat cushion (bottom 75%)
+    final seatTop = h * .22;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, bH),
-        const Radius.circular(3),
-      ),
-      Paint()..color = _dk(c, .3),
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, bH, w, h - bH),
-        const Radius.circular(3),
+        Rect.fromLTWH(w * .04, seatTop, w * .92, h - seatTop - h * .02),
+        const Radius.circular(4),
       ),
       Paint()..color = c,
     );
-    _outline(canvas, Rect.fromLTWH(0, 0, w, bH), _dk(c, .45));
-    _outline(canvas, Rect.fromLTWH(0, bH, w, h - bH), _dk(c, .45));
-    canvas.drawLine(
-      Offset(w * .1, bH + (h - bH) * .5),
-      Offset(w * .9, bH + (h - bH) * .5),
-      Paint()
-        ..color = _dk(c, .15)
-        ..strokeWidth = 1,
+    // Seat cushion highlight
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(w * .1, seatTop + h * .06, w * .8, h * .22),
+        const Radius.circular(3),
+      ),
+      Paint()..color = _lt(c, .18),
     );
-    final lp = Paint()..color = _dk(c, .5);
+    // Backrest (top 22%) — darker wood
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, 0, w, seatTop),
+        const Radius.circular(4),
+      ),
+      Paint()..color = wood,
+    );
+    // Backrest slats
+    final slatP = Paint()
+      ..color = _dk(wood, .2)
+      ..strokeWidth = 1;
+    for (int i = 1; i < 4; i++) {
+      final x = w * i / 4;
+      canvas.drawLine(Offset(x, 2), Offset(x, seatTop - 2), slatP);
+    }
+    // 4 legs (small circles at corners)
+    final legP = Paint()..color = wood;
+    final lr = (w * .065).clamp(3.0, 6.0);
     for (final p in [
-      Offset(w * .12, h * .85),
-      Offset(w * .88, h * .85),
-      Offset(w * .12, h * .97),
-      Offset(w * .88, h * .97),
+      Offset(w * .13, h * .88),
+      Offset(w * .87, h * .88),
+      Offset(w * .13, h * .97),
+      Offset(w * .87, h * .97),
     ])
-      canvas.drawCircle(p, w * .07, lp);
-    _lbl(canvas, 'CHAIR', w, h);
+      canvas.drawCircle(p, lr, legP);
+    _ol(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .45), rad: 4);
   }
 
   void _sofa(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
     final c = item.color;
-    _shadow(canvas, w, h, r: 5);
+    final dark = _dk(c, .3);
+    _dropShadow(canvas, w, h, r: 6);
+    // Overall body
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(0, 0, w, h),
-        const Radius.circular(5),
+        const Radius.circular(6),
       ),
-      Paint()..color = _dk(c, .2),
+      Paint()..color = dark,
     );
-    final bH = h * .28;
-    final aW = w * .10;
+    final bH = h * .26; // backrest height
+    final aW = w * .09; // armrest width
+    // Backrest
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(0, 0, w, bH),
-        const Radius.circular(5),
+        const Radius.circular(6),
       ),
-      Paint()..color = _dk(c, .3),
+      Paint()..color = _dk(c, .38),
     );
+    // Left armrest
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(0, bH, aW, h - bH),
-        const Radius.circular(3),
+        const Radius.circular(4),
       ),
-      Paint()..color = _dk(c, .3),
+      Paint()..color = _dk(c, .25),
     );
+    // Right armrest
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(w - aW, bH, aW, h - bH),
-        const Radius.circular(3),
+        const Radius.circular(4),
       ),
-      Paint()..color = _dk(c, .3),
+      Paint()..color = _dk(c, .25),
     );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(aW, bH, w - aW * 2, h - bH),
-        const Radius.circular(3),
-      ),
-      Paint()..color = c,
-    );
-    final sW = w - aW * 2;
-    final dp = Paint()
-      ..color = _dk(c, .2)
-      ..strokeWidth = 1.2;
-    canvas.drawLine(
-      Offset(aW + sW / 3, bH + 4),
-      Offset(aW + sW / 3, h - 4),
-      dp,
-    );
-    canvas.drawLine(
-      Offset(aW + sW * 2 / 3, bH + 4),
-      Offset(aW + sW * 2 / 3, h - 4),
-      dp,
-    );
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .45), radius: 5);
-    _lbl(canvas, 'SOFA', w, h);
+    // Seat area
+    final seatRect = Rect.fromLTWH(aW, bH, w - aW * 2, h - bH);
+    canvas.drawRect(seatRect, Paint()..color = c);
+    // Cushion dividers
+    final nCushions = w > 200 ? 3 : 2;
+    final cW = seatRect.width / nCushions;
+    final divP = Paint()
+      ..color = _dk(c, .22)
+      ..strokeWidth = 1.5;
+    for (int i = 1; i < nCushions; i++) {
+      final x = aW + cW * i;
+      canvas.drawLine(Offset(x, bH + 4), Offset(x, h - 4), divP);
+    }
+    // Cushion highlight on each section
+    for (int i = 0; i < nCushions; i++) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(aW + cW * i + 4, bH + 4, cW - 8, (h - bH) * .35),
+          const Radius.circular(3),
+        ),
+        Paint()..color = _lt(c, .15),
+      );
+    }
+    _ol(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .5), rad: 6, sw: 1.2);
   }
 
   void _armchair(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
     final c = item.color;
-    _shadow(canvas, w, h, r: 6);
+    _dropShadow(canvas, w, h, r: 5);
+    final bH = h * .28;
     final aW = w * .12;
-    final bH = h * .30;
+    // Body
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, 0, w, h),
+        const Radius.circular(5),
+      ),
+      Paint()..color = _dk(c, .28),
+    );
+    // Backrest
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(0, 0, w, bH),
-        const Radius.circular(6),
+        const Radius.circular(5),
       ),
-      Paint()..color = _dk(c, .3),
+      Paint()..color = _dk(c, .38),
     );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, bH, aW, h - bH),
-        const Radius.circular(4),
-      ),
-      Paint()..color = _dk(c, .25),
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(w - aW, bH, aW, h - bH),
-        const Radius.circular(4),
-      ),
-      Paint()..color = _dk(c, .25),
-    );
+    // Armrests
+    for (final x in [0.0, w - aW]) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(x, bH, aW, h - bH),
+          const Radius.circular(3),
+        ),
+        Paint()..color = _dk(c, .25),
+      );
+    }
+    // Seat
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(aW, bH, w - aW * 2, h - bH),
-        const Radius.circular(4),
+        const Radius.circular(3),
       ),
       Paint()..color = c,
     );
-    canvas.drawCircle(
-      Offset(w / 2, bH + (h - bH) * .45),
-      5,
-      Paint()..color = _dk(c, .2),
+    // Single cushion highlight
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(aW + 4, bH + 4, w - aW * 2 - 8, (h - bH) * .38),
+        const Radius.circular(3),
+      ),
+      Paint()..color = _lt(c, .18),
     );
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .4), radius: 6);
-    _lbl(canvas, 'ARM', w, h);
+    _ol(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .45), rad: 5);
   }
 
   void _bench(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
-    _shadow(canvas, w, h);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, h * .6),
-        const Radius.circular(3),
-      ),
-      Paint()..color = c,
-    );
-    canvas.drawLine(
-      Offset(w * .05, h * .55),
-      Offset(w * .95, h * .55),
-      Paint()
-        ..color = _dk(c, .2)
-        ..strokeWidth = 1.5,
-    );
-    final legW = w * .08;
-    final legH = h * .4;
-    final lp = Paint()..color = _dk(c, .35);
-    canvas.drawRect(Rect.fromLTWH(w * .05, h * .6, legW, legH), lp);
-    canvas.drawRect(Rect.fromLTWH(w * .45, h * .6, legW, legH), lp);
-    canvas.drawRect(Rect.fromLTWH(w - w * .05 - legW, h * .6, legW, legH), lp);
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h * .6), _dk(c, .4), radius: 3);
-    _lbl(canvas, 'BENCH', w, h * .6);
+    final wood = const Color(0xFFA0784A);
+    _dropShadow(canvas, w, h, r: 3);
+    // Top planks
+    _woodGrain(canvas, w, h, wood);
+    // Plank lines
+    final nPlanks = (w / 40).round().clamp(2, 8);
+    final pw = w / nPlanks;
+    final lp = Paint()
+      ..color = _dk(wood, .25)
+      ..strokeWidth = 1.2;
+    for (int i = 1; i < nPlanks; i++) {
+      canvas.drawLine(Offset(pw * i, 0), Offset(pw * i, h), lp);
+    }
+    // Legs
+    final legW = (w * .08).clamp(5.0, 12.0);
+    final legH = h * .2;
+    final legP = Paint()..color = _dk(wood, .35);
+    for (final x in [w * .08, w - w * .08 - legW]) {
+      canvas.drawRect(Rect.fromLTWH(x, h - legH, legW, legH), legP);
+    }
+    _ol(canvas, Rect.fromLTWH(0, 0, w, h), _dk(wood, .4), rad: 2);
   }
 
   void _stool(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
     final c = item.color;
-    _shadow(canvas, w, h);
-    canvas.drawOval(Rect.fromLTWH(0, 0, w, h * .55), Paint()..color = c);
-    canvas.drawOval(
-      Rect.fromLTWH(0, 0, w, h * .55),
+    final r = Math.min(w, h) / 2;
+    _dropShadow(canvas, w, h, r: r);
+    // Round seat
+    canvas.drawCircle(Offset(w / 2, h / 2), r - 2, Paint()..color = c);
+    // Highlight
+    canvas.drawCircle(
+      Offset(w / 2 - r * .2, h / 2 - r * .2),
+      r * .35,
+      Paint()..color = _lt(c, .22),
+    );
+    // Seat edge
+    canvas.drawCircle(
+      Offset(w / 2, h / 2),
+      r - 2,
       Paint()
         ..color = _dk(c, .4)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.2,
     );
-    canvas.drawOval(
-      Rect.fromLTWH(w * .35, h * .15, w * .3, h * .25),
-      Paint()..color = _dk(c, .25),
+    // Cross brace at centre
+    final bp = Paint()
+      ..color = _dk(c, .3)
+      ..strokeWidth = 1;
+    canvas.drawLine(
+      Offset(w / 2, h / 2 - r * .4),
+      Offset(w / 2, h / 2 + r * .4),
+      bp,
     );
     canvas.drawLine(
-      Offset(w * .5, h * .55),
-      Offset(w * .5, h * .85),
-      Paint()
-        ..color = _dk(c, .4)
-        ..strokeWidth = w * .15,
+      Offset(w / 2 - r * .4, h / 2),
+      Offset(w / 2 + r * .4, h / 2),
+      bp,
     );
-    canvas.drawOval(
-      Rect.fromLTWH(w * .15, h * .8, w * .7, h * .2),
-      Paint()..color = _dk(c, .3),
-    );
-    _lbl(canvas, 'STOOL', w, h * .55);
   }
 
   // ── Tables ────────────────────────────────────────────────────────────────
   void _table(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(4, 4, w, h),
-        const Radius.circular(3),
-      ),
-      Paint()..color = Colors.black.withOpacity(.15),
+    final wood = const Color(0xFFD4A96A);
+    _dropShadow(canvas, w, h, r: 4);
+    _woodGrain(canvas, w, h, wood);
+    // Outer border frame
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
+      Paint()
+        ..color = _dk(wood, .35)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3,
     );
-    final lW = w * .10;
-    final lH = h * .14;
-    final lp = Paint()..color = _dk(c, .35);
-    for (final p in [
+    // Inner line (table edge)
+    canvas.drawRect(
+      Rect.fromLTWH(5, 5, w - 10, h - 10),
+      Paint()
+        ..color = _dk(wood, .15)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+    // Legs — filled rectangles at corners
+    final lS = (Math.min(w, h) * .08).clamp(5.0, 12.0);
+    final legP = Paint()..color = _dk(wood, .45);
+    for (final o in [
       Offset(0, 0),
-      Offset(w - lW, 0),
-      Offset(0, h - lH),
-      Offset(w - lW, h - lH),
+      Offset(w - lS, 0),
+      Offset(0, h - lS),
+      Offset(w - lS, h - lS),
     ])
-      canvas.drawRect(Rect.fromLTWH(p.dx, p.dy, lW, lH), lp);
-    final sr = Rect.fromLTWH(lW * .3, lH * .3, w - lW * .6, h - lH * .6);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(sr, const Radius.circular(3)),
-      Paint()..color = c,
-    );
-    _outline(canvas, sr, _dk(c, .4));
-    final gp = Paint()
-      ..color = _dk(c, .1)
-      ..strokeWidth = .8;
-    for (int i = 1; i < 4; i++)
-      canvas.drawLine(
-        Offset(lW * .5, h * .2 + (h * .6 / 4) * i),
-        Offset(w - lW * .5, h * .2 + (h * .6 / 4) * i),
-        gp,
-      );
-    _lbl(canvas, 'TABLE', w, h);
+      canvas.drawRect(Rect.fromLTWH(o.dx, o.dy, lS, lS), legP);
   }
 
   void _coffeeTable(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
-    _shadow(canvas, w, h, r: 8);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, h),
-        const Radius.circular(8),
-      ),
-      Paint()..color = c,
+    final wood = const Color(0xFFB8895A);
+    _dropShadow(canvas, w, h, r: 4);
+    _woodGrain(canvas, w, h, wood);
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
+      Paint()
+        ..color = _dk(wood, .35)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5,
     );
+    // Inset surface line
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(6, 6, w - 12, h - 12),
-        const Radius.circular(5),
+        const Radius.circular(2),
       ),
-      Paint()..color = _lt(c, .25),
+      Paint()
+        ..color = _dk(wood, .12)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
     );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(8, 8, w * .4, h * .25),
-        const Radius.circular(3),
-      ),
-      Paint()..color = Colors.white.withOpacity(.15),
-    );
-    final lp = Paint()..color = _dk(c, .5);
-    for (final p in [
-      Offset(0, 0),
-      Offset(w - 8, 0),
-      Offset(0, h - 8),
-      Offset(w - 8, h - 8),
+    // Small legs at corners
+    final lS = (Math.min(w, h) * .09).clamp(4.0, 10.0);
+    final legP = Paint()..color = _dk(wood, .5);
+    for (final o in [
+      Offset(2, 2),
+      Offset(w - lS - 2, 2),
+      Offset(2, h - lS - 2),
+      Offset(w - lS - 2, h - lS - 2),
     ])
-      canvas.drawRect(Rect.fromLTWH(p.dx, p.dy, 8, 8), lp);
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .45), radius: 8);
-    _lbl(canvas, 'COFFEE', w, h);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(o.dx, o.dy, lS, lS),
+          const Radius.circular(1),
+        ),
+        legP,
+      );
   }
 
   void _desk(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
-    _shadow(canvas, w, h);
+    final wood = const Color(0xFFC8A878);
+    _dropShadow(canvas, w, h, r: 3);
+    _woodGrain(canvas, w, h, wood);
+    // L-shape or straight — draw surface edge
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
+      Paint()
+        ..color = _dk(wood, .38)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5,
+    );
+    // Monitor depression at top-centre
+    final mW = w * .28, mH = h * .32;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, h),
-        const Radius.circular(4),
+        Rect.fromLTWH(w / 2 - mW / 2, h * .06, mW, mH),
+        const Radius.circular(2),
       ),
-      Paint()..color = c,
+      Paint()..color = const Color(0xFF2A2A3A),
     );
-    canvas.drawRect(
-      Rect.fromLTWH(w * .65, 0, w * .35, h),
-      Paint()..color = _dk(c, .12),
+    // Monitor screen
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(w / 2 - mW / 2 + 2, h * .06 + 2, mW - 4, mH - 4),
+        const Radius.circular(1),
+      ),
+      Paint()..color = const Color(0xFF3A6080).withOpacity(.7),
     );
-    final dp = Paint()
-      ..color = _dk(c, .35)
-      ..strokeWidth = 1;
-    canvas.drawLine(Offset(w * .65, h * .33), Offset(w, h * .33), dp);
-    canvas.drawLine(Offset(w * .65, h * .66), Offset(w, h * .66), dp);
-    for (final y in [h * .16, h * .5, h * .83])
-      canvas.drawCircle(Offset(w * .83, y), 3, Paint()..color = _lt(c, .4));
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, w * .06, h),
-      Paint()..color = _dk(c, .3),
+    // Drawer handle line
+    final dY = h * .72;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(w * .05, dY, w * .9, h * .2),
+        const Radius.circular(2),
+      ),
+      Paint()
+        ..color = _dk(wood, .18)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
     );
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .4), radius: 4);
-    _lbl(canvas, 'DESK', w * .6, h);
+    // Drawer pull
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(w * .44, dY + h * .07, w * .12, h * .06),
+        const Radius.circular(2),
+      ),
+      Paint()..color = _dk(wood, .4),
+    );
   }
 
   void _sideTable(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
-    _shadow(canvas, w, h, r: 6);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
+    final wood = const Color(0xFFB8895A);
+    _dropShadow(canvas, w, h, r: 4);
+    // Round or square depending on aspect
+    final isRound = (w - h).abs() < h * .25;
+    if (isRound) {
+      final r = Math.min(w, h) / 2 - 2;
+      canvas.drawCircle(Offset(w / 2, h / 2), r, Paint()..color = wood);
+      canvas.drawCircle(
+        Offset(w / 2, h / 2),
+        r * .75,
+        Paint()
+          ..color = _lt(wood, .12)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
+      );
+      canvas.drawCircle(
+        Offset(w / 2, h / 2),
+        r,
+        Paint()
+          ..color = _dk(wood, .35)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+    } else {
+      _woodGrain(canvas, w, h, wood);
+      canvas.drawRect(
         Rect.fromLTWH(0, 0, w, h),
-        const Radius.circular(6),
-      ),
-      Paint()..color = c,
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(w * .1, h * .2, w * .8, h * .5),
-        const Radius.circular(3),
-      ),
-      Paint()..color = _lt(c, .15),
-    );
-    _outline(
-      canvas,
-      Rect.fromLTWH(w * .1, h * .2, w * .8, h * .5),
-      _dk(c, .3),
-      radius: 3,
-    );
-    canvas.drawCircle(Offset(w * .5, h * .45), 4, Paint()..color = _lt(c, .5));
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .4), radius: 6);
-    _lbl(canvas, 'SIDE', w, h * .2);
+        Paint()
+          ..color = _dk(wood, .35)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
+      );
+    }
   }
 
   // ── Storage ───────────────────────────────────────────────────────────────
   void _wardrobe(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
-    _shadow(canvas, w, h);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, h),
-        const Radius.circular(3),
-      ),
-      Paint()..color = c,
-    );
-    canvas.drawLine(
-      Offset(w * .5, 0),
-      Offset(w * .5, h),
+    final wood = const Color(0xFF8D6E63);
+    _dropShadow(canvas, w, h, r: 4);
+    _woodGrain(canvas, w, h, wood);
+    // Outer case
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
       Paint()
-        ..color = _dk(c, .4)
+        ..color = _dk(wood, .35)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3,
+    );
+    // Two door panels
+    final mid = w / 2;
+    canvas.drawLine(
+      Offset(mid, 3),
+      Offset(mid, h - 3),
+      Paint()
+        ..color = _dk(wood, .3)
         ..strokeWidth = 2,
     );
-    for (final x in [w * .05, w * .55]) {
+    // Door handles
+    final hY = h / 2;
+    final hLen = h * .08;
+    for (final x in [mid - w * .04, mid + w * .04]) {
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-          Rect.fromLTWH(x, h * .08, w * .44, h * .8),
+          Rect.fromLTWH(x - 2, hY - hLen / 2, 4, hLen),
           const Radius.circular(2),
         ),
-        Paint()..color = _lt(c, .08),
-      );
-      _outline(
-        canvas,
-        Rect.fromLTWH(x, h * .08, w * .44, h * .8),
-        _dk(c, .25),
-        radius: 2,
+        Paint()..color = const Color(0xFFD4AF70),
       );
     }
-    for (final x in [w * .5 - w * .07, w * .5 + w * .04])
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(x, h * .42, w * .03, h * .16),
-          const Radius.circular(2),
-        ),
-        Paint()..color = _lt(c, .5),
+    // Hinge lines
+    final hP = Paint()
+      ..color = _dk(wood, .4)
+      ..strokeWidth = 1;
+    for (final yy in [h * .15, h * .85]) {
+      canvas.drawCircle(
+        Offset(mid - 4, yy),
+        2,
+        Paint()..color = const Color(0xFFD4AF70),
       );
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .45), radius: 3);
-    _lbl(canvas, 'WARDROBE', w, h * .08);
+      canvas.drawCircle(
+        Offset(mid + 4, yy),
+        2,
+        Paint()..color = const Color(0xFFD4AF70),
+      );
+    }
   }
 
   void _bookshelf(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
-    _shadow(canvas, w, h);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, h),
-        const Radius.circular(3),
-      ),
-      Paint()..color = _dk(c, .1),
-    );
-    final shelves = 3;
-    final shelfH = h / shelves;
-    for (int i = 0; i <= shelves; i++)
-      canvas.drawRect(
-        Rect.fromLTWH(0, shelfH * i - 2, w, 4),
-        Paint()..color = _dk(c, .3),
-      );
-    final bkColors = [
-      Colors.red.shade300,
-      Colors.blue.shade300,
-      Colors.green.shade300,
-      Colors.orange.shade300,
-      Colors.purple.shade300,
-      Colors.teal.shade300,
-      Colors.pink.shade200,
+    final wood = const Color(0xFF8D7B6A);
+    _dropShadow(canvas, w, h, r: 3);
+    // Back panel
+    canvas.drawRect(Rect.fromLTWH(0, 0, w, h), Paint()..color = _dk(wood, .2));
+    // Shelves
+    final nShelves = (h / 22).round().clamp(2, 6);
+    final shH = h / nShelves;
+    final bookColors = [
+      const Color(0xFF5B8CBA),
+      const Color(0xFFBA5B5B),
+      const Color(0xFF5BBA7A),
+      const Color(0xFFBAA35B),
+      const Color(0xFF8B5BBA),
+      const Color(0xFFBA7A5B),
     ];
-    for (int shelf = 0; shelf < shelves; shelf++) {
-      double bx = w * .03;
-      int bi = (shelf * 3) % bkColors.length;
-      while (bx < w * .92) {
-        final bw = (w * .04 + w * .04 * ((bx * 7) % 1)).clamp(w * .03, w * .1);
-        if (bx + bw > w * .92) break;
+    for (int s = 0; s < nShelves; s++) {
+      final sy = s * shH;
+      // Shelf board
+      canvas.drawRect(
+        Rect.fromLTWH(0, sy + shH - 3, w, 3),
+        Paint()..color = _dk(wood, .35),
+      );
+      // Books on this shelf
+      double bx = 3;
+      int bIdx = s;
+      while (bx < w - 4) {
+        final bW = (8.0 + (bIdx * 3 % 8)).clamp(7.0, 16.0);
+        if (bx + bW > w - 3) break;
         canvas.drawRect(
-          Rect.fromLTWH(bx, shelfH * shelf + 4, bw, shelfH - 8),
-          Paint()..color = bkColors[bi % bkColors.length],
+          Rect.fromLTWH(bx, sy + 2, bW, shH - 5),
+          Paint()..color = bookColors[bIdx % bookColors.length],
         );
-        bx += bw + w * .012;
-        bi++;
+        canvas.drawLine(
+          Offset(bx, sy + 2),
+          Offset(bx, sy + shH - 3),
+          Paint()
+            ..color = _dk(bookColors[bIdx % bookColors.length], .3)
+            ..strokeWidth = 0.5,
+        );
+        bx += bW + 1;
+        bIdx++;
       }
     }
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .5), radius: 3);
-    _lbl(canvas, 'BOOKS', w, h - 12);
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
+      Paint()
+        ..color = _dk(wood, .4)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
   }
 
   void _cabinet(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
-    _shadow(canvas, w, h);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, h),
-        const Radius.circular(3),
-      ),
-      Paint()..color = c,
+    final wood = const Color(0xFF9E8070);
+    _dropShadow(canvas, w, h, r: 3);
+    _woodGrain(canvas, w, h, wood);
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
+      Paint()
+        ..color = _dk(wood, .35)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5,
     );
-    final dw = w * .44;
-    final dh = h * .75;
-    final dy = h * .12;
-    for (final dx in [w * .04, w * .52]) {
+    // Door divisions
+    final nDoors = (w / 60).round().clamp(1, 4);
+    final dW = w / nDoors;
+    for (int i = 0; i < nDoors; i++) {
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-          Rect.fromLTWH(dx, dy, dw, dh),
+          Rect.fromLTWH(dW * i + 3, 3, dW - 6, h - 6),
           const Radius.circular(2),
         ),
-        Paint()..color = _lt(c, .12),
+        Paint()
+          ..color = _lt(wood, .08)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
       );
-      _outline(canvas, Rect.fromLTWH(dx, dy, dw, dh), _dk(c, .3), radius: 2);
-      canvas.drawCircle(
-        Offset(dx + dw * .78, dy + dh * .5),
-        4,
-        Paint()..color = _lt(c, .55),
+      // Handle
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(dW * i + dW / 2 - 4, h / 2 - 6, 8, 12),
+          const Radius.circular(2),
+        ),
+        Paint()..color = const Color(0xFFD4AF70),
       );
     }
-    canvas.drawLine(
-      Offset(0, h * .12),
-      Offset(w, h * .12),
-      Paint()
-        ..color = _dk(c, .3)
-        ..strokeWidth = 1.5,
-    );
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .45), radius: 3);
-    _lbl(canvas, 'CABINET', w, h * .12);
   }
 
   void _dresser(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
-    _shadow(canvas, w, h);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, h),
-        const Radius.circular(3),
-      ),
-      Paint()..color = c,
+    final wood = const Color(0xFF9E8070);
+    _dropShadow(canvas, w, h, r: 3);
+    _woodGrain(canvas, w, h, wood);
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
+      Paint()
+        ..color = _dk(wood, .35)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5,
     );
-    final rows = 3;
-    final dh = (h - (rows + 1) * 4.0) / rows;
-    for (int i = 0; i < rows; i++) {
-      final dy = 4.0 + i * (dh + 4);
+    // Drawer rows
+    final nDrawers = (h / 18).round().clamp(2, 5);
+    final dH = h / nDrawers;
+    for (int i = 0; i < nDrawers; i++) {
+      final dy = dH * i;
+      canvas.drawLine(
+        Offset(3, dy),
+        Offset(w - 3, dy),
+        Paint()
+          ..color = _dk(wood, .28)
+          ..strokeWidth = 1.2,
+      );
+      // Handle
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-          Rect.fromLTWH(w * .04, dy, w * .92, dh),
-          const Radius.circular(2),
+          Rect.fromLTWH(w / 2 - 10, dy + dH / 2 - 3, 20, 6),
+          const Radius.circular(3),
         ),
-        Paint()..color = _lt(c, .1),
+        Paint()..color = const Color(0xFFD4AF70),
       );
-      _outline(
-        canvas,
-        Rect.fromLTWH(w * .04, dy, w * .92, dh),
-        _dk(c, .3),
-        radius: 2,
-      );
-      for (final kx in [w * .35, w * .65])
-        canvas.drawCircle(
-          Offset(kx, dy + dh * .5),
-          3.5,
-          Paint()..color = _lt(c, .55),
-        );
     }
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .45), radius: 3);
-    _lbl(canvas, 'DRESSER', w, 4);
   }
 
   // ── Bedroom ───────────────────────────────────────────────────────────────
   void _bed(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
-    _shadow(canvas, w, h, r: 6);
+    const headboard = Color(0xFF8D6E63);
+    const sheet = Color(0xFFF0EBE2);
+    const pillow = Color(0xFFFAF8F5);
+    _dropShadow(canvas, w, h, r: 6);
+    // Bed frame
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(0, 0, w, h),
-        const Radius.circular(6),
-      ),
-      Paint()..color = _dk(c, .35),
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, h * .18),
-        const Radius.circular(5),
-      ),
-      Paint()..color = _dk(c, .45),
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(w * .04, h * .16, w * .92, h * .8),
         const Radius.circular(4),
       ),
-      Paint()..color = const Color(0xFFF5F0E8),
+      Paint()..color = headboard,
     );
-    final pw = w * .4;
-    final pOff = w * .06;
-    for (final px in [pOff, w - pOff - pw]) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(px, h * .2, pw, h * .18),
-          const Radius.circular(5),
-        ),
-        Paint()..color = Colors.white,
-      );
-      _outline(
-        canvas,
-        Rect.fromLTWH(px, h * .2, pw, h * .18),
-        Colors.grey.shade300,
-        radius: 5,
-        sw: 1,
-      );
-    }
+    // Headboard (top section)
+    final hbH = h * .15;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(w * .04, h * .42, w * .92, h * .52),
+        Rect.fromLTWH(0, 0, w, hbH),
         const Radius.circular(4),
       ),
-      Paint()..color = _lt(c, .3),
+      Paint()..color = _dk(headboard, .2),
     );
-    canvas.drawLine(
-      Offset(w * .04, h * .44),
-      Offset(w * .96, h * .44),
+    // Headboard panel detail
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(w * .08, hbH * .15, w * .84, hbH * .7),
+        const Radius.circular(3),
+      ),
       Paint()
-        ..color = _dk(c, .15)
+        ..color = _lt(headboard, .1)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+    // Mattress / sheet area
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(w * .06, hbH + h * .02, w * .88, h - hbH - h * .08),
+        const Radius.circular(3),
+      ),
+      Paint()..color = sheet,
+    );
+    // Duvet fold line
+    canvas.drawLine(
+      Offset(w * .06, hbH + h * .38),
+      Offset(w * .94, hbH + h * .38),
+      Paint()
+        ..color = _dk(sheet, .12)
         ..strokeWidth = 1.5,
     );
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .4), radius: 6);
-    _lbl(canvas, 'BED', w, h * .42);
+    // Two pillows side by side
+    final pW = w * .34, pH = hbH + h * .13, pTop = hbH + h * .03;
+    for (final px in [w * .08, w - w * .08 - pW]) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(px, pTop, pW, pH - pTop),
+          const Radius.circular(4),
+        ),
+        Paint()..color = pillow,
+      );
+      // Pillow crease
+      canvas.drawLine(
+        Offset(px + pW * .2, pTop + 4),
+        Offset(px + pW * .8, pTop + 4),
+        Paint()
+          ..color = _dk(pillow, .12)
+          ..strokeWidth = 1,
+      );
+      _ol(
+        canvas,
+        Rect.fromLTWH(px, pTop, pW, pH - pTop),
+        _dk(pillow, .25),
+        rad: 4,
+        sw: 0.8,
+      );
+    }
+    // Footboard
+    canvas.drawRect(
+      Rect.fromLTWH(0, h - h * .05, w, h * .05),
+      Paint()..color = _dk(headboard, .15),
+    );
+    _ol(canvas, Rect.fromLTWH(0, 0, w, h), _dk(headboard, .4), rad: 4, sw: 1.5);
   }
 
   void _singleBed(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
-    _shadow(canvas, w, h, r: 6);
+    const headboard = Color(0xFF8D6E63);
+    const sheet = Color(0xFFF0EBE2);
+    const pillow = Color(0xFFFAF8F5);
+    _dropShadow(canvas, w, h, r: 5);
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(0, 0, w, h),
-        const Radius.circular(6),
-      ),
-      Paint()..color = _dk(c, .35),
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, h * .18),
-        const Radius.circular(5),
-      ),
-      Paint()..color = _dk(c, .45),
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(w * .04, h * .16, w * .92, h * .8),
         const Radius.circular(4),
       ),
-      Paint()..color = const Color(0xFFF5F0E8),
+      Paint()..color = headboard,
     );
+    final hbH = h * .15;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(w * .1, h * .2, w * .8, h * .18),
-        const Radius.circular(5),
-      ),
-      Paint()..color = Colors.white,
-    );
-    _outline(
-      canvas,
-      Rect.fromLTWH(w * .1, h * .2, w * .8, h * .18),
-      Colors.grey.shade300,
-      radius: 5,
-      sw: 1,
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(w * .04, h * .42, w * .92, h * .52),
+        Rect.fromLTWH(0, 0, w, hbH),
         const Radius.circular(4),
       ),
-      Paint()..color = _lt(c, .3),
+      Paint()..color = _dk(headboard, .2),
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(w * .06, hbH + h * .02, w * .88, h - hbH - h * .08),
+        const Radius.circular(3),
+      ),
+      Paint()..color = sheet,
     );
     canvas.drawLine(
-      Offset(w * .04, h * .44),
-      Offset(w * .96, h * .44),
+      Offset(w * .06, hbH + h * .38),
+      Offset(w * .94, hbH + h * .38),
       Paint()
-        ..color = _dk(c, .15)
+        ..color = _dk(sheet, .12)
         ..strokeWidth = 1.5,
     );
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .4), radius: 6);
-    _lbl(canvas, 'SINGLE', w, h * .42);
+    // Single centre pillow
+    final pW = w * .72;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(w / 2 - pW / 2, hbH + h * .03, pW, h * .12),
+        const Radius.circular(3),
+      ),
+      Paint()..color = pillow,
+    );
+    _ol(canvas, Rect.fromLTWH(0, 0, w, h), _dk(headboard, .4), rad: 4, sw: 1.5);
   }
 
   void _nightstand(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
-    _shadow(canvas, w, h);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, h),
-        const Radius.circular(4),
-      ),
-      Paint()..color = c,
-    );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(w * .08, h * .12, w * .84, h * .55),
-        const Radius.circular(2),
-      ),
-      Paint()..color = _lt(c, .15),
-    );
-    _outline(
-      canvas,
-      Rect.fromLTWH(w * .08, h * .12, w * .84, h * .55),
-      _dk(c, .3),
-      radius: 2,
-    );
-    canvas.drawCircle(Offset(w * .5, h * .4), 4, Paint()..color = _lt(c, .6));
-    canvas.drawLine(
-      Offset(w * .08, h * .75),
-      Offset(w * .92, h * .75),
+    final wood = const Color(0xFF9E8070);
+    _dropShadow(canvas, w, h, r: 3);
+    _woodGrain(canvas, w, h, wood);
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
       Paint()
-        ..color = _dk(c, .25)
+        ..color = _dk(wood, .35)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+    // Drawer line
+    canvas.drawLine(
+      Offset(3, h / 2),
+      Offset(w - 3, h / 2),
+      Paint()
+        ..color = _dk(wood, .3)
         ..strokeWidth = 1.2,
     );
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .4), radius: 4);
-    _lbl(canvas, 'NSTAND', w, h * .12);
+    // Handle
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(w / 2 - 8, h * .65, 16, 5),
+        const Radius.circular(2),
+      ),
+      Paint()..color = const Color(0xFFD4AF70),
+    );
+    // Lamp circle (small)
+    canvas.drawCircle(
+      Offset(w / 2, h * .28),
+      Math.min(w, h) * .18,
+      Paint()..color = const Color(0xFFFFE8A0).withOpacity(.6),
+    );
+    canvas.drawCircle(
+      Offset(w / 2, h * .28),
+      Math.min(w, h) * .18,
+      Paint()
+        ..color = const Color(0xFFD4A040)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
   }
 
   // ── Decor ─────────────────────────────────────────────────────────────────
   void _plant(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
-    _shadow(canvas, w, h);
-    final potH = h * .38;
-    final potPath = Path()
-      ..moveTo(w * .25, h - potH)
-      ..lineTo(w * .15, h)
-      ..lineTo(w * .85, h)
-      ..lineTo(w * .75, h - potH)
-      ..close();
-    canvas.drawPath(potPath, Paint()..color = const Color(0xFFB07040));
-    canvas.drawRect(
-      Rect.fromLTWH(w * .2, h - potH, w * .6, h * .04),
-      Paint()..color = const Color(0xFF8B5A2B),
+    final r = Math.min(w, h) / 2;
+    _dropShadow(canvas, w, h, r: r);
+    // Pot base
+    canvas.drawCircle(
+      Offset(w / 2, h / 2),
+      r - 2,
+      Paint()..color = const Color(0xFF8B6914),
     );
-    for (final angle in [0.0, 0.6, -0.6, 1.2, -1.2, 1.8]) {
-      final cx = w * .5 + Math.cos(angle) * w * .18;
-      final cy = h * .35 + Math.sin(angle) * h * .15;
+    // Leaves — overlapping ovals
+    final leafP = Paint()..color = const Color(0xFF4A8A3A);
+    final leafDkP = Paint()..color = const Color(0xFF2E5E24);
+    final angles = [0.0, 1.05, 2.1, 3.14, 4.19, 5.24];
+    for (final a in angles) {
+      canvas.save();
+      canvas.translate(w / 2, h / 2);
+      canvas.rotate(a);
       canvas.drawOval(
-        Rect.fromCenter(
-          center: Offset(cx, cy),
-          width: w * .45,
-          height: h * .28,
-        ),
-        Paint()..color = angle.abs() < .1 ? c : _dk(c, .2),
+        Rect.fromLTWH(-r * .25, -r * .82, r * .5, r * .65),
+        leafP,
       );
+      canvas.restore();
     }
-    canvas.drawLine(
-      Offset(w * .5, h - potH),
-      Offset(w * .5, h * .5),
+    // Centre stem
+    canvas.drawCircle(Offset(w / 2, h / 2), r * .22, leafDkP);
+    // Pot rim
+    canvas.drawCircle(
+      Offset(w / 2, h / 2),
+      r - 2,
       Paint()
-        ..color = _dk(c, .35)
-        ..strokeWidth = 2,
+        ..color = const Color(0xFF6B4F10)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
     );
-    _lbl(canvas, 'PLANT', w, h * .62, color: Colors.white);
   }
 
   void _lamp(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
+    _dropShadow(canvas, w, h, r: Math.min(w, h) / 2);
+    // Glow circle
     canvas.drawCircle(
-      Offset(w * .5, h * .3),
-      w * .42,
-      Paint()..color = c.withOpacity(.18),
+      Offset(w / 2, h / 2),
+      Math.min(w, h) / 2 - 2,
+      Paint()..color = const Color(0xFFFFE8A0).withOpacity(.55),
     );
-    final shadePath = Path()
-      ..moveTo(w * .15, h * .38)
-      ..lineTo(w * .3, h * .08)
-      ..lineTo(w * .7, h * .08)
-      ..lineTo(w * .85, h * .38)
-      ..close();
-    canvas.drawPath(shadePath, Paint()..color = c);
-    canvas.drawPath(
-      shadePath,
+    // Shade outline
+    canvas.drawCircle(
+      Offset(w / 2, h / 2),
+      Math.min(w, h) / 2 - 2,
       Paint()
-        ..color = _dk(c, .4)
+        ..color = const Color(0xFFD4A040)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5,
+        ..strokeWidth = 2,
     );
+    // Inner bright spot
     canvas.drawCircle(
-      Offset(w * .5, h * .38),
-      w * .08,
-      Paint()..color = Colors.white.withOpacity(.9),
+      Offset(w / 2, h / 2),
+      Math.min(w, h) * .18,
+      Paint()..color = const Color(0xFFFFFFCC).withOpacity(.8),
     );
-    canvas.drawLine(
-      Offset(w * .5, h * .4),
-      Offset(w * .5, h * .82),
-      Paint()
-        ..color = _dk(c, .5)
-        ..strokeWidth = w * .06,
-    );
-    final basePath = Path()
-      ..moveTo(w * .25, h * .82)
-      ..lineTo(w * .2, h)
-      ..lineTo(w * .8, h)
-      ..lineTo(w * .75, h * .82)
-      ..close();
-    canvas.drawPath(basePath, Paint()..color = _dk(c, .4));
-    _lbl(canvas, 'LAMP', w, h * .6, color: Colors.white70);
   }
 
   void _tvStand(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
-    final c = item.color;
-    _shadow(canvas, w, h);
+    final wood = const Color(0xFF5A5A6A);
+    _dropShadow(canvas, w, h, r: 3);
+    // Body
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(0, 0, w, h),
-        const Radius.circular(3),
+        const Radius.circular(4),
       ),
-      Paint()..color = c,
+      Paint()..color = wood,
     );
+    // TV screen area (dark, glossy)
+    final tvW = w * .82, tvH = h * .62;
+    final tvR = Rect.fromLTWH(w / 2 - tvW / 2, h * .08, tvW, tvH);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(tvR, const Radius.circular(3)),
+      Paint()..color = const Color(0xFF1A1A2A),
+    );
+    // Screen reflection
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, w, h * .25),
-        const Radius.circular(3),
+        Rect.fromLTWH(w / 2 - tvW / 2 + 4, h * .10, tvW * .3, tvH * .3),
+        const Radius.circular(2),
       ),
-      Paint()..color = _lt(c, .08),
+      Paint()..color = Colors.white.withOpacity(.08),
     );
-    final compW = (w - 8) / 3;
-    for (int i = 0; i < 3; i++) {
-      final dx = 4.0 + i * (compW + 2);
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(dx, h * .3, compW, h * .62),
-          const Radius.circular(2),
-        ),
-        Paint()..color = _lt(c, .06),
-      );
-      _outline(
-        canvas,
-        Rect.fromLTWH(dx, h * .3, compW, h * .62),
-        _dk(c, .3),
-        radius: 2,
+    // Compartments below
+    final cY = h * .76;
+    canvas.drawLine(
+      Offset(3, cY),
+      Offset(w - 3, cY),
+      Paint()
+        ..color = _dk(wood, .3)
+        ..strokeWidth = 1.2,
+    );
+    final nComps = (w / 55).round().clamp(2, 5);
+    final cW = w / nComps;
+    for (int i = 1; i < nComps; i++) {
+      canvas.drawLine(
+        Offset(cW * i, cY),
+        Offset(cW * i, h - 3),
+        Paint()
+          ..color = _dk(wood, .25)
+          ..strokeWidth = 1,
       );
     }
-    for (final fx in [w * .05, w * .5 - 6.0, w * .95 - 12.0])
-      canvas.drawRect(
-        Rect.fromLTWH(fx, h * .95, 12, h * .05),
-        Paint()..color = _dk(c, .5),
-      );
-    _outline(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .45), radius: 3);
-    _lbl(canvas, 'TV STAND', w, h * .3);
+    _ol(canvas, Rect.fromLTWH(0, 0, w, h), _dk(wood, .5), rad: 4, sw: 1.5);
   }
 
   void _rug(Canvas canvas, FurnitureModel item) {
     final w = item.size.width;
     final h = item.size.height;
     final c = item.color;
+    // Shadow
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(4, 4, w, h),
+        Rect.fromLTWH(4, 5, w, h),
         const Radius.circular(12),
       ),
-      Paint()..color = Colors.black.withOpacity(.10),
+      Paint()..color = Colors.black.withOpacity(.12),
     );
+    // Main surface
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(0, 0, w, h),
@@ -2226,49 +2371,52 @@ class RoomPainter extends CustomPainter {
       ),
       Paint()..color = c,
     );
+    // Fringe lines (short edges)
+    final fp = Paint()
+      ..color = _dk(c, .25)
+      ..strokeWidth = 1.5;
+    final nFringe = (w / 8).round();
+    for (int i = 0; i < nFringe; i++) {
+      final x = w * i / nFringe + 4;
+      canvas.drawLine(Offset(x, 0), Offset(x, 5), fp);
+      canvas.drawLine(Offset(x, h - 5), Offset(x, h), fp);
+    }
+    // Border stripe
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(w * .06, h * .08, w * .88, h * .84),
+        Rect.fromLTWH(w * .05, h * .07, w * .9, h * .86),
         const Radius.circular(6),
       ),
-      Paint()..color = _lt(c, .18),
+      Paint()
+        ..color = _dk(c, .2)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
     );
+    // Inner border
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(w * .1, h * .12, w * .8, h * .76),
+        Rect.fromLTWH(w * .1, h * .13, w * .8, h * .74),
         const Radius.circular(4),
       ),
       Paint()
-        ..color = _lt(c, .3)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5,
-    );
-    final cx = w * .5;
-    final cy = h * .5;
-    final dw = w * .2;
-    final dh = h * .25;
-    final diamond = Path()
-      ..moveTo(cx, cy - dh)
-      ..lineTo(cx + dw, cy)
-      ..lineTo(cx, cy + dh)
-      ..lineTo(cx - dw, cy)
-      ..close();
-    canvas.drawPath(diamond, Paint()..color = _lt(c, .25));
-    canvas.drawPath(
-      diamond,
-      Paint()
-        ..color = _dk(c, .1)
+        ..color = _lt(c, .15)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1,
     );
-    _outline(
-      canvas,
-      Rect.fromLTWH(0, 0, w, h),
-      _dk(c, .35),
-      radius: 10,
-      sw: 1.5,
+    // Centre medallion
+    final cx = w / 2, cy = h / 2;
+    canvas.drawOval(
+      Rect.fromLTWH(cx - w * .18, cy - h * .22, w * .36, h * .44),
+      Paint()..color = _lt(c, .18),
     );
-    _lbl(canvas, 'RUG', w, h);
+    canvas.drawOval(
+      Rect.fromLTWH(cx - w * .18, cy - h * .22, w * .36, h * .44),
+      Paint()
+        ..color = _dk(c, .12)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+    _ol(canvas, Rect.fromLTWH(0, 0, w, h), _dk(c, .35), rad: 10, sw: 1.5);
   }
 
   @override
