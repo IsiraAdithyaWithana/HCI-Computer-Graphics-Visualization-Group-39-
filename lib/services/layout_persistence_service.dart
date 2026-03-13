@@ -27,6 +27,11 @@ class LayoutPersistenceService {
   static String _canvasBgKey(String userId, String projectId) =>
       'user:$userId:project:$projectId:canvasBg';
 
+  /// Stores the last-used {width, height, scaleFactor} per furniture type name.
+  /// Key example: user:u1:project:p1:typeSizes
+  static String _typeSizeKey(String userId, String projectId) =>
+      'user:$userId:project:$projectId:typeSizes';
+
   // ── Project list ──────────────────────────────────────────────────────────
 
   Future<List<PersistedProject>> loadProjects(String userId) async {
@@ -75,6 +80,7 @@ class LayoutPersistenceService {
     await prefs.remove(_depthKey(userId, projectId));
     await prefs.remove(_schemeKey(userId, projectId));
     await prefs.remove(_canvasBgKey(userId, projectId));
+    await prefs.remove(_typeSizeKey(userId, projectId));
   }
 
   // ── Layout (furniture + room dims) ────────────────────────────────────────
@@ -136,6 +142,45 @@ class LayoutPersistenceService {
       colourScheme: scheme,
       canvasBgColour: canvasBg,
     );
+  }
+
+  // ── Type size preferences ────────────────────────────────────────────────
+
+  /// Saves the last-used size + scaleFactor per furniture type.
+  /// [prefs] maps type name → {'w': double, 'h': double, 'sf': double}
+  Future<void> saveTypeSizes(
+    String userId,
+    String projectId,
+    Map<String, Map<String, double>> prefs,
+  ) async {
+    final sharedPrefs = await SharedPreferences.getInstance();
+    await sharedPrefs.setString(
+      _typeSizeKey(userId, projectId),
+      jsonEncode(prefs),
+    );
+  }
+
+  /// Loads the type size prefs. Returns an empty map if nothing saved yet.
+  Future<Map<String, Map<String, double>>> loadTypeSizes(
+    String userId,
+    String projectId,
+  ) async {
+    final sharedPrefs = await SharedPreferences.getInstance();
+    final raw = sharedPrefs.getString(_typeSizeKey(userId, projectId));
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      return decoded.map((k, v) {
+        final m = v as Map<String, dynamic>;
+        return MapEntry(k, {
+          'w': (m['w'] as num).toDouble(),
+          'h': (m['h'] as num).toDouble(),
+          'sf': (m['sf'] as num).toDouble(),
+        });
+      });
+    } catch (_) {
+      return {};
+    }
   }
 
   /// Legacy single-slot load — for migrating old saves.

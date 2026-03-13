@@ -54,6 +54,12 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   Map<String, ui.Image> _thumbnails = {};
   // Ceiling layer toggle — when true, ceiling spots are shown/editable
   bool _showCeilingLayer = false;
+
+  // ── Persistent size preferences per furniture type ─────────────────────
+  // Survives item deletion and hot reload.
+  // Key: FurnitureType.name (built-ins) or glbFileName (custom)
+  // Value: {'w': width, 'h': height, 'sf': scaleFactor}
+  Map<String, Map<String, double>> _typeSizePrefs = {};
   void _onThumbsUpdated() {
     if (mounted)
       setState(() => _thumbnails = Map.of(ThumbnailCache.instance.images));
@@ -194,6 +200,8 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             final oldFactor = saved.scaleFactor > 0 ? saved.scaleFactor : 1.0;
             final naturalW = saved.size.width / oldFactor;
             final naturalH = saved.size.height / oldFactor;
+            final newW = (naturalW * scaleFactor).clamp(20.0, 1200.0);
+            final newH = (naturalH * scaleFactor).clamp(20.0, 1200.0);
 
             setState(() {
               for (final item in canvasItems) {
@@ -201,14 +209,28 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                     ? item.glbOverride == saved.glbOverride
                     : item.type == saved.type;
                 if (!isSibling) continue;
-                item.size = Size(
-                  (naturalW * scaleFactor).clamp(20.0, 1200.0),
-                  (naturalH * scaleFactor).clamp(20.0, 1200.0),
-                );
+                item.size = Size(newW, newH);
                 item.scaleFactor = scaleFactor;
               }
+
+              // Persist size preference for this type — survives item deletion
+              final prefKey = saved.glbOverride != null
+                  ? (saved.glbOverride!.split('/').last) // glb filename
+                  : saved.type.name; // e.g. "sofa"
+              _typeSizePrefs[prefKey] = {
+                'w': newW,
+                'h': newH,
+                'sf': scaleFactor,
+              };
             });
+
+            // Save both layout AND type size prefs to disk
             _saveLayout();
+            LayoutPersistenceService.instance.saveTypeSizes(
+              widget.userId,
+              widget.projectId,
+              _typeSizePrefs,
+            );
           },
           onNaturalSizeDetected: (String id, double widthPx, double depthPx) {
             _canvasKey.currentState?.updateItemNaturalSize(
@@ -309,6 +331,14 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       userId: widget.userId,
       projectId: widget.projectId,
     );
+    // Load type size preferences (persisted separately from furniture items)
+    final sizePrefs = await LayoutPersistenceService.instance.loadTypeSizes(
+      widget.userId,
+      widget.projectId,
+    );
+    if (sizePrefs.isNotEmpty) {
+      setState(() => _typeSizePrefs = sizePrefs);
+    }
     if (snapshot == null) return;
     setState(() {
       _roomWidthM = snapshot.roomWidthM;
@@ -533,6 +563,8 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                   roomWallColour: _currentScheme.wall,
                   thumbnails: _thumbnails,
                   showCeilingLayer: _showCeilingLayer,
+                  ceilingColour: _currentScheme.ceiling,
+                  typeSizePrefs: _typeSizePrefs,
                 ),
                 Positioned(
                   right: 16,

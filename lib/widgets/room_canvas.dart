@@ -45,9 +45,18 @@ class RoomCanvas extends StatefulWidget {
   /// Key: FurnitureType.name for built-ins, glbFileName for custom GLBs.
   final Map<String, ui.Image> thumbnails;
 
-  /// When true the ceiling layer is visible — ceiling spots can be placed/seen.
-  /// When false ceiling spots are hidden (working on floor layout).
+  /// When true the ceiling layer is visible — shows the split ceiling canvas.
   final bool showCeilingLayer;
+
+  /// Ceiling surface colour used as the ceiling canvas background tint.
+  final Color ceilingColour;
+
+  /// Persistent size preferences per furniture type.
+  /// Key: FurnitureType.name for built-ins, glbFileName for custom GLBs.
+  /// Value: {'w': width, 'h': height, 'sf': scaleFactor}
+  /// Supplied by the editor so new items always match the last user-chosen size,
+  /// even when ALL items of that type have been deleted.
+  final Map<String, Map<String, double>> typeSizePrefs;
 
   const RoomCanvas({
     super.key,
@@ -67,6 +76,8 @@ class RoomCanvas extends StatefulWidget {
     this.onUndoStateChanged,
     this.thumbnails = const {},
     this.showCeilingLayer = false,
+    this.ceilingColour = const Color(0xFFF0EDE8),
+    this.typeSizePrefs = const {},
   });
 
   @override
@@ -277,9 +288,11 @@ class RoomCanvasState extends State<RoomCanvas> {
     screenPos,
   );
 
-  Offset _globalToScene(Offset globalPos) {
+  Offset _globalToScene(Offset globalPos, {double xOffset = 0}) {
     final box = context.findRenderObject() as RenderBox;
-    return _toScene(box.globalToLocal(globalPos));
+    // xOffset adjusts for the ceiling panel being in the right half of a split Row
+    final local = box.globalToLocal(globalPos) - Offset(xOffset, 0);
+    return _toScene(local);
   }
 
   // ── Snap ──────────────────────────────────────────────────────────────────
@@ -642,23 +655,40 @@ class RoomCanvasState extends State<RoomCanvas> {
             ? existing.scaleFactor
             : 1.0;
       } else {
-        itemSize = widget.customDefaultSize ?? const Size(80, 80);
+        // No sibling on canvas — check persisted prefs keyed by glb filename
+        final glbFile = widget.customGlbOverride!.split('/').last;
+        final pref = widget.typeSizePrefs[glbFile];
+        if (pref != null) {
+          itemSize = Size(pref['w']!, pref['h']!);
+          inheritedScaleFactor = pref['sf'] ?? 1.0;
+        } else {
+          itemSize = widget.customDefaultSize ?? const Size(80, 80);
+        }
       }
     } else {
-      // Built-in type: inherit the sibling's actual size AND scaleFactor so the
-      // new item looks identical to existing ones. Previously this divided by sf
-      // to recover natural size then started at sf=1 — which caused new items
-      // to appear at the original un-scaled size instead of the user-chosen size.
+      // Priority order for size:
+      //   1. Existing sibling on canvas (has the live size)
+      //   2. typeSizePrefs — persisted from last session, survives item deletion
+      //   3. _defaultSize fallback
       final sibling = furnitureItems
           .where((f) => f.type == widget.selectedType && !f.type.isLight)
           .firstOrNull;
       if (sibling != null) {
+        // Inherit exact size + scaleFactor from existing sibling
         itemSize = sibling.size;
         inheritedScaleFactor = sibling.scaleFactor > 0
             ? sibling.scaleFactor
             : 1.0;
       } else {
-        itemSize = _defaultSize(widget.selectedType);
+        // No sibling on canvas — check persisted prefs
+        final prefKey = widget.selectedType.name;
+        final pref = widget.typeSizePrefs[prefKey];
+        if (pref != null) {
+          itemSize = Size(pref['w']!, pref['h']!);
+          inheritedScaleFactor = pref['sf'] ?? 1.0;
+        } else {
+          itemSize = _defaultSize(widget.selectedType);
+        }
       }
     }
 
@@ -801,353 +831,366 @@ class RoomCanvasState extends State<RoomCanvas> {
           _save();
         }
       },
-      child: MouseRegion(
-        cursor: SystemMouseCursors.none,
-        onHover: (event) =>
-            _updateCursor(_toScene(event.localPosition), event.localPosition),
-        onExit: (_) {
-          _cursorPos.value = null;
-          _cursorAsset.value = null;
-        },
-        child: Listener(
-          onPointerSignal: _onPointerSignal,
-          onPointerPanZoomStart: _onTrackpadStart,
-          onPointerPanZoomUpdate: _onTrackpadUpdate,
-          onPointerPanZoomEnd: _onTrackpadEnd,
-          child: Stack(
-            children: [
-              ColoredBox(
-                color: widget.canvasBgColour,
-                child: ClipRect(
-                  child: AnimatedBuilder(
-                    animation: _transformationController,
-                    builder: (context, _) => Transform(
-                      transform: _transformationController.value,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTapDown: (d) {
-                          final s = _globalToScene(d.globalPosition);
-                          if (widget.currentMode == MouseMode.draw) {
-                            // Only allow placement inside the room
-                            if (_insideRoom(s)) _drawTapPos = s;
+      child: widget.showCeilingLayer
+          ? _buildSplitView(context)
+          : _buildFurnitureCanvas(context),
+    );
+  }
+
+  // ── Furniture-only canvas (normal mode) ──────────────────────────────────
+  Widget _buildFurnitureCanvas(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.none,
+      onHover: (event) =>
+          _updateCursor(_toScene(event.localPosition), event.localPosition),
+      onExit: (_) {
+        _cursorPos.value = null;
+        _cursorAsset.value = null;
+      },
+      child: Listener(
+        onPointerSignal: _onPointerSignal,
+        onPointerPanZoomStart: _onTrackpadStart,
+        onPointerPanZoomUpdate: _onTrackpadUpdate,
+        onPointerPanZoomEnd: _onTrackpadEnd,
+        child: Stack(
+          children: [
+            ColoredBox(
+              color: widget.canvasBgColour,
+              child: ClipRect(
+                child: AnimatedBuilder(
+                  animation: _transformationController,
+                  builder: (context, _) => Transform(
+                    transform: _transformationController.value,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (d) {
+                        final s = _globalToScene(d.globalPosition);
+                        if (widget.currentMode == MouseMode.draw) {
+                          // Ceiling spots can only be placed on the ceiling canvas (right panel)
+                          if (widget.selectedType == FurnitureType.ceilingSpot)
+                            return;
+                          // Only allow placement inside the room
+                          if (_insideRoom(s)) _drawTapPos = s;
+                          return;
+                        }
+                        if (widget.currentMode != MouseMode.select) return;
+                        if (_onAnyHandle(s)) return;
+                        for (final item in furnitureItems.reversed) {
+                          // Ceiling spots are locked in the furniture canvas
+                          if (item.type == FurnitureType.ceilingSpot) continue;
+                          if (_inside(item, s)) {
+                            setState(() {
+                              if (HardwareKeyboard.instance.isControlPressed) {
+                                selectedItems.contains(item)
+                                    ? selectedItems.remove(item)
+                                    : selectedItems.add(item);
+                                selectedItem = item;
+                              } else if (selectedItems.contains(item)) {
+                                selectedItem = item;
+                              } else {
+                                selectedItems
+                                  ..clear()
+                                  ..add(item);
+                                selectedItem = item;
+                              }
+                            });
                             return;
                           }
-                          if (widget.currentMode != MouseMode.select) return;
-                          if (_onAnyHandle(s)) return;
-                          for (final item in furnitureItems.reversed) {
-                            if (_inside(item, s)) {
-                              setState(() {
-                                if (HardwareKeyboard
-                                    .instance
-                                    .isControlPressed) {
-                                  selectedItems.contains(item)
-                                      ? selectedItems.remove(item)
-                                      : selectedItems.add(item);
-                                  selectedItem = item;
-                                } else if (selectedItems.contains(item)) {
-                                  selectedItem = item;
-                                } else {
-                                  selectedItems
-                                    ..clear()
-                                    ..add(item);
-                                  selectedItem = item;
-                                }
-                              });
-                              return;
-                            }
-                          }
-                          setState(() {
-                            selectedItems.clear();
-                            selectedItem = null;
-                          });
-                        },
-                        onTapUp: (d) {
-                          if (widget.currentMode == MouseMode.draw &&
-                              _drawTapPos != null) {
-                            _pushUndo();
-                            setState(
-                              () => furnitureItems.add(
-                                _newItem(position: _drawTapPos!),
-                              ),
-                            );
-                            _drawTapPos = null;
-                          }
-                        },
-                        onSecondaryTapDown: (d) {
-                          final s = _globalToScene(d.globalPosition);
-                          for (final item in furnitureItems.reversed) {
-                            if (_inside(item, s)) {
-                              setState(() {
-                                selectedItem = item;
-                                if (!selectedItems.contains(item))
-                                  selectedItems
-                                    ..clear()
-                                    ..add(item);
-                              });
-                              _showContextMenu(d.globalPosition);
-                              return;
-                            }
-                          }
-                        },
-                        onPanStart: (d) {
-                          if (_isTrackpadActive) return;
+                        }
+                        setState(() {
+                          selectedItems.clear();
+                          selectedItem = null;
+                        });
+                      },
+                      onTapUp: (d) {
+                        if (widget.currentMode == MouseMode.draw &&
+                            _drawTapPos != null) {
+                          _pushUndo();
+                          setState(
+                            () => furnitureItems.add(
+                              _newItem(position: _drawTapPos!),
+                            ),
+                          );
                           _drawTapPos = null;
-                          if (widget.currentMode == MouseMode.hand) {
-                            setState(() => _isPanningCanvas = true);
-                            _cursorAsset.value =
-                                'assets/cursors/grab_cursor.png';
-                            _dragStart = d.globalPosition;
+                        }
+                      },
+                      onSecondaryTapDown: (d) {
+                        final s = _globalToScene(d.globalPosition);
+                        for (final item in furnitureItems.reversed) {
+                          if (_inside(item, s)) {
+                            setState(() {
+                              selectedItem = item;
+                              if (!selectedItems.contains(item))
+                                selectedItems
+                                  ..clear()
+                                  ..add(item);
+                            });
+                            _showContextMenu(d.globalPosition);
                             return;
                           }
-                          final s = _globalToScene(d.globalPosition);
-                          if (selectedItem != null &&
-                              _onRotate(selectedItem!, s)) {
+                        }
+                      },
+                      onPanStart: (d) {
+                        if (_isTrackpadActive) return;
+                        _drawTapPos = null;
+                        if (widget.currentMode == MouseMode.hand) {
+                          setState(() => _isPanningCanvas = true);
+                          _cursorAsset.value = 'assets/cursors/grab_cursor.png';
+                          _dragStart = d.globalPosition;
+                          return;
+                        }
+                        final s = _globalToScene(d.globalPosition);
+                        if (selectedItem != null &&
+                            _onRotate(selectedItem!, s)) {
+                          _pushUndo();
+                          setState(() => _isRotating = true);
+                          _isRotatingLive = true;
+                          _cursorAsset.value =
+                              'assets/cursors/rotate_cursor.png';
+                          return;
+                        }
+                        // Draw mode — no marquee, no drag on empty canvas
+                        if (widget.currentMode == MouseMode.draw) return;
+                        // Resize gesture disabled — use 3D view scale panel instead
+                        for (final item in furnitureItems.reversed) {
+                          if (_inside(item, s)) {
+                            setState(() {
+                              if (!selectedItems.contains(item)) {
+                                if (!HardwareKeyboard.instance.isControlPressed)
+                                  selectedItems.clear();
+                                selectedItems.add(item);
+                              }
+                              selectedItem = item;
+                              _isDragging = true;
+                            });
+                            _isDraggingLive = true;
+                            _cursorAsset.value =
+                                'assets/cursors/move_cursor.png';
+                            _dragStart = s;
                             _pushUndo();
-                            setState(() => _isRotating = true);
-                            _isRotatingLive = true;
-                            _cursorAsset.value =
-                                'assets/cursors/rotate_cursor.png';
+                            // Snapshot positions so we can revert if drop overlaps
+                            _preDragPositions = {
+                              for (final it in selectedItems)
+                                it.id: it.position,
+                            };
                             return;
                           }
-                          // Draw mode — no marquee, no drag on empty canvas
-                          if (widget.currentMode == MouseMode.draw) return;
-                          // Resize gesture disabled — use 3D view scale panel instead
-                          for (final item in furnitureItems.reversed) {
-                            if (_inside(item, s)) {
-                              setState(() {
-                                if (!selectedItems.contains(item)) {
-                                  if (!HardwareKeyboard
-                                      .instance
-                                      .isControlPressed)
-                                    selectedItems.clear();
-                                  selectedItems.add(item);
-                                }
-                                selectedItem = item;
-                                _isDragging = true;
-                              });
-                              _isDraggingLive = true;
-                              _cursorAsset.value =
-                                  'assets/cursors/move_cursor.png';
-                              _dragStart = s;
-                              _pushUndo();
-                              // Snapshot positions so we can revert if drop overlaps
-                              _preDragPositions = {
-                                for (final it in selectedItems)
-                                  it.id: it.position,
-                              };
-                              return;
-                            }
-                          }
-                          // Select mode only — start marquee box
-                          if (widget.currentMode != MouseMode.select) return;
-                          setState(() {
-                            _isSelectingBox = true;
-                            _selectionStart = s;
-                            _selectionCurrent = s;
-                            selectedItems.clear();
-                            selectedItem = null;
-                          });
-                          _cursorAsset.value = 'assets/cursors/main_cursor.png';
-                        },
-                        onPanUpdate: (d) {
-                          if (_isTrackpadActive) return;
-                          final s = _globalToScene(d.globalPosition);
-                          _cursorPos.value =
+                        }
+                        // Select mode only — start marquee box
+                        if (widget.currentMode != MouseMode.select) return;
+                        setState(() {
+                          _isSelectingBox = true;
+                          _selectionStart = s;
+                          _selectionCurrent = s;
+                          selectedItems.clear();
+                          selectedItem = null;
+                        });
+                        _cursorAsset.value = 'assets/cursors/main_cursor.png';
+                      },
+                      onPanUpdate: (d) {
+                        if (_isTrackpadActive) return;
+                        final s = _globalToScene(d.globalPosition);
+                        _cursorPos.value =
+                            (context.findRenderObject() as RenderBox?)
+                                ?.globalToLocal(d.globalPosition);
+                        if (_isSelectingBox && _selectionStart != null) {
+                          setState(() => _selectionCurrent = s);
+                          final localPos =
                               (context.findRenderObject() as RenderBox?)
                                   ?.globalToLocal(d.globalPosition);
-                          if (_isSelectingBox && _selectionStart != null) {
-                            setState(() => _selectionCurrent = s);
-                            final localPos =
-                                (context.findRenderObject() as RenderBox?)
-                                    ?.globalToLocal(d.globalPosition);
-                            if (localPos != null) _updateCursor(s, localPos);
-                            return;
-                          }
-                          if (_isRotating && selectedItem != null) {
-                            final c = Offset(
-                              selectedItem!.position.dx +
-                                  selectedItem!.size.width / 2,
-                              selectedItem!.position.dy +
-                                  selectedItem!.size.height / 2,
-                            );
-                            setState(
-                              () => selectedItem!.rotation =
-                                  Math.atan2(s.dy - c.dy, s.dx - c.dx) + 1.5708,
-                            );
-                            return;
-                          }
-                          if (_isResizing && selectedItem != null) {
-                            // Resize disabled — no-op
-                            return;
-                          }
-                          if (_isDragging &&
-                              selectedItems.isNotEmpty &&
-                              _dragStart != null) {
-                            final delta = s - _dragStart!;
-                            setState(() {
-                              for (final item in selectedItems) {
-                                final raw = item.position + delta;
-                                item.position = _constrainForZone(item, raw);
-                              }
-                            });
-                            _dragStart = s;
-                            return;
-                          }
-                          if (_isPanningCanvas) {
-                            _transformationController.value =
-                                _transformationController.value.clone()
-                                  ..translate(d.delta.dx, d.delta.dy);
-                          }
-                        },
-                        onPanEnd: (_) {
-                          if (_isTrackpadActive) return;
-                          // Restore hand-mode cursor after releasing grab
-                          if (_isPanningCanvas) {
-                            _cursorAsset.value =
-                                'assets/cursors/canvas_cursor.png';
-                          }
-                          if (widget.currentMode == MouseMode.select &&
-                              _isSelectingBox &&
-                              _selectionStart != null &&
-                              _selectionCurrent != null) {
-                            final rect = Rect.fromPoints(
-                              _selectionStart!,
-                              _selectionCurrent!,
-                            );
-                            setState(() {
-                              selectedItems = furnitureItems
-                                  .where(
-                                    (item) => rect.overlaps(
-                                      Rect.fromLTWH(
-                                        item.position.dx,
-                                        item.position.dy,
-                                        item.size.width,
-                                        item.size.height,
-                                      ),
-                                    ),
-                                  )
-                                  .toList();
-                              selectedItem = selectedItems.isNotEmpty
-                                  ? selectedItems.last
-                                  : null;
-                            });
-                          }
-                          if (selectedItems.isNotEmpty) {
-                            setState(() {
-                              for (final item in selectedItems) {
-                                item.position = _constrainForZone(
-                                  item,
-                                  _snapOffset(item.position),
-                                );
-                                // Only snap the size when the user was actively
-                                // resizing — dragging must NEVER alter the size.
-                                if (_isResizing) {
-                                  item.size = Size(
-                                    _snap(item.size.width).clamp(40.0, 800.0),
-                                    _snap(item.size.height).clamp(40.0, 800.0),
-                                  );
-                                }
-                              }
-                              // Overlap check: if any dragged item overlaps a
-                              // non-dragged item, revert ALL dragged items to
-                              // their pre-drag positions.
-                              if (_isDragging && _preDragPositions.isNotEmpty) {
-                                final draggedIds = selectedItems
-                                    .map((i) => i.id)
-                                    .toSet();
-                                bool hasOverlap = false;
-                                for (final item in selectedItems) {
-                                  final r = Rect.fromLTWH(
-                                    item.position.dx,
-                                    item.position.dy,
-                                    item.size.width,
-                                    item.size.height,
-                                  );
-                                  for (final other in furnitureItems) {
-                                    if (draggedIds.contains(other.id)) continue;
-                                    final or2 = Rect.fromLTWH(
-                                      other.position.dx,
-                                      other.position.dy,
-                                      other.size.width,
-                                      other.size.height,
-                                    );
-                                    if (r.overlaps(or2)) {
-                                      hasOverlap = true;
-                                      break;
-                                    }
-                                  }
-                                  if (hasOverlap) break;
-                                }
-                                if (hasOverlap) {
-                                  for (final item in selectedItems) {
-                                    final orig = _preDragPositions[item.id];
-                                    if (orig != null) item.position = orig;
-                                  }
-                                  // Drag was cancelled — discard the undo snapshot
-                                  if (_undoStack.isNotEmpty) {
-                                    _undoStack.removeLast();
-                                    widget.onUndoStateChanged?.call();
-                                  }
-                                }
-                              }
-                              _preDragPositions = {};
-                            });
-                            _save();
-                          }
-
+                          if (localPos != null) _updateCursor(s, localPos);
+                          return;
+                        }
+                        if (_isRotating && selectedItem != null) {
+                          final c = Offset(
+                            selectedItem!.position.dx +
+                                selectedItem!.size.width / 2,
+                            selectedItem!.position.dy +
+                                selectedItem!.size.height / 2,
+                          );
+                          setState(
+                            () => selectedItem!.rotation =
+                                Math.atan2(s.dy - c.dy, s.dx - c.dx) + 1.5708,
+                          );
+                          return;
+                        }
+                        if (_isResizing && selectedItem != null) {
+                          // Resize disabled — no-op
+                          return;
+                        }
+                        if (_isDragging &&
+                            selectedItems.isNotEmpty &&
+                            _dragStart != null) {
+                          final delta = s - _dragStart!;
                           setState(() {
-                            _isRotating = _isDragging = _isResizing =
-                                _isPanningCanvas = _isSelectingBox = false;
-                            _selectionStart = _selectionCurrent = null;
+                            for (final item in selectedItems) {
+                              final raw = item.position + delta;
+                              item.position = _constrainForZone(item, raw);
+                            }
                           });
-                          _isRotatingLive = _isResizingLive = _isDraggingLive =
-                              false;
-                          _dragStart = null;
-                          // Restore the correct idle cursor for the active mode
-                          if (widget.currentMode == MouseMode.hand) {
-                            _cursorAsset.value =
-                                'assets/cursors/canvas_cursor.png';
-                          } else if (widget.currentMode == MouseMode.draw) {
-                            _cursorAsset.value =
-                                'assets/cursors/add_cursor.png';
-                          } else {
-                            _cursorAsset.value =
-                                'assets/cursors/main_cursor.png';
-                          }
-                        },
-                        child: SizedBox(
-                          width: _canvasW,
-                          height: _canvasH,
-                          child: RepaintBoundary(
-                            child: Stack(
-                              children: [
+                          _dragStart = s;
+                          return;
+                        }
+                        if (_isPanningCanvas) {
+                          _transformationController.value =
+                              _transformationController.value.clone()
+                                ..translate(d.delta.dx, d.delta.dy);
+                        }
+                      },
+                      onPanEnd: (_) {
+                        if (_isTrackpadActive) return;
+                        // Restore hand-mode cursor after releasing grab
+                        if (_isPanningCanvas) {
+                          _cursorAsset.value =
+                              'assets/cursors/canvas_cursor.png';
+                        }
+                        if (widget.currentMode == MouseMode.select &&
+                            _isSelectingBox &&
+                            _selectionStart != null &&
+                            _selectionCurrent != null) {
+                          final rect = Rect.fromPoints(
+                            _selectionStart!,
+                            _selectionCurrent!,
+                          );
+                          setState(() {
+                            selectedItems = furnitureItems
+                                .where(
+                                  (item) => rect.overlaps(
+                                    Rect.fromLTWH(
+                                      item.position.dx,
+                                      item.position.dy,
+                                      item.size.width,
+                                      item.size.height,
+                                    ),
+                                  ),
+                                )
+                                .toList();
+                            selectedItem = selectedItems.isNotEmpty
+                                ? selectedItems.last
+                                : null;
+                          });
+                        }
+                        if (selectedItems.isNotEmpty) {
+                          setState(() {
+                            for (final item in selectedItems) {
+                              item.position = _constrainForZone(
+                                item,
+                                _snapOffset(item.position),
+                              );
+                              // Only snap the size when the user was actively
+                              // resizing — dragging must NEVER alter the size.
+                              if (_isResizing) {
+                                item.size = Size(
+                                  _snap(item.size.width).clamp(40.0, 800.0),
+                                  _snap(item.size.height).clamp(40.0, 800.0),
+                                );
+                              }
+                            }
+                            // Overlap check: if any dragged item overlaps a
+                            // non-dragged item, revert ALL dragged items to
+                            // their pre-drag positions.
+                            if (_isDragging && _preDragPositions.isNotEmpty) {
+                              final draggedIds = selectedItems
+                                  .map((i) => i.id)
+                                  .toSet();
+                              bool hasOverlap = false;
+                              for (final item in selectedItems) {
+                                final r = Rect.fromLTWH(
+                                  item.position.dx,
+                                  item.position.dy,
+                                  item.size.width,
+                                  item.size.height,
+                                );
+                                for (final other in furnitureItems) {
+                                  if (draggedIds.contains(other.id)) continue;
+                                  final or2 = Rect.fromLTWH(
+                                    other.position.dx,
+                                    other.position.dy,
+                                    other.size.width,
+                                    other.size.height,
+                                  );
+                                  if (r.overlaps(or2)) {
+                                    hasOverlap = true;
+                                    break;
+                                  }
+                                }
+                                if (hasOverlap) break;
+                              }
+                              if (hasOverlap) {
+                                for (final item in selectedItems) {
+                                  final orig = _preDragPositions[item.id];
+                                  if (orig != null) item.position = orig;
+                                }
+                                // Drag was cancelled — discard the undo snapshot
+                                if (_undoStack.isNotEmpty) {
+                                  _undoStack.removeLast();
+                                  widget.onUndoStateChanged?.call();
+                                }
+                              }
+                            }
+                            _preDragPositions = {};
+                          });
+                          _save();
+                        }
+
+                        setState(() {
+                          _isRotating = _isDragging = _isResizing =
+                              _isPanningCanvas = _isSelectingBox = false;
+                          _selectionStart = _selectionCurrent = null;
+                        });
+                        _isRotatingLive = _isResizingLive = _isDraggingLive =
+                            false;
+                        _dragStart = null;
+                        // Restore the correct idle cursor for the active mode
+                        if (widget.currentMode == MouseMode.hand) {
+                          _cursorAsset.value =
+                              'assets/cursors/canvas_cursor.png';
+                        } else if (widget.currentMode == MouseMode.draw) {
+                          _cursorAsset.value = 'assets/cursors/add_cursor.png';
+                        } else {
+                          _cursorAsset.value = 'assets/cursors/main_cursor.png';
+                        }
+                      },
+                      child: SizedBox(
+                        width: _canvasW,
+                        height: _canvasH,
+                        child: RepaintBoundary(
+                          child: Stack(
+                            children: [
+                              CustomPaint(
+                                painter: RoomPainter(
+                                  // Ceiling spots are NEVER shown on the
+                                  // furniture canvas — only in CeilingPainter.
+                                  furnitureItems: furnitureItems
+                                      .where(
+                                        (i) =>
+                                            i.type != FurnitureType.ceilingSpot,
+                                      )
+                                      .toList(),
+                                  selectedItems: selectedItems,
+                                  roomWidth: widget.roomWidthPx,
+                                  roomDepth: widget.roomDepthPx,
+                                  canvasW: _canvasW,
+                                  canvasH: _canvasH,
+                                  canvasBgColour: widget.canvasBgColour,
+                                  roomFloorColour: widget.roomFloorColour,
+                                  roomWallColour: widget.roomWallColour,
+                                  thumbnails: widget.thumbnails,
+                                  showCeilingLayer: widget.showCeilingLayer,
+                                ),
+                                size: const Size(_canvasW, _canvasH),
+                              ),
+                              if (_isSelectingBox &&
+                                  _selectionStart != null &&
+                                  _selectionCurrent != null)
                                 CustomPaint(
-                                  painter: RoomPainter(
-                                    furnitureItems: furnitureItems,
-                                    selectedItems: selectedItems,
-                                    roomWidth: widget.roomWidthPx,
-                                    roomDepth: widget.roomDepthPx,
-                                    canvasW: _canvasW,
-                                    canvasH: _canvasH,
-                                    canvasBgColour: widget.canvasBgColour,
-                                    roomFloorColour: widget.roomFloorColour,
-                                    roomWallColour: widget.roomWallColour,
-                                    thumbnails: widget.thumbnails,
+                                  painter: MarqueePainter(
+                                    _selectionStart!,
+                                    _selectionCurrent!,
                                   ),
                                   size: const Size(_canvasW, _canvasH),
                                 ),
-                                if (_isSelectingBox &&
-                                    _selectionStart != null &&
-                                    _selectionCurrent != null)
-                                  CustomPaint(
-                                    painter: MarqueePainter(
-                                      _selectionStart!,
-                                      _selectionCurrent!,
-                                    ),
-                                    size: const Size(_canvasW, _canvasH),
-                                  ),
-                              ],
-                            ),
+                            ],
                           ),
                         ),
                       ),
@@ -1155,37 +1198,247 @@ class RoomCanvasState extends State<RoomCanvas> {
                   ),
                 ),
               ),
-              // Cursor overlay
-              ValueListenableBuilder<Offset?>(
-                valueListenable: _cursorPos,
-                builder: (_, pos, __) {
-                  if (pos == null) return const SizedBox.shrink();
-                  return ValueListenableBuilder<String?>(
-                    valueListenable: _cursorAsset,
-                    builder: (_, asset, __) {
-                      if (asset == null) return const SizedBox.shrink();
-                      return Positioned(
-                        left: pos.dx - _cursorSize / 2,
-                        top: pos.dy - _cursorSize / 2,
-                        width: _cursorSize,
-                        height: _cursorSize,
-                        child: IgnorePointer(
-                          child: Image.asset(
-                            asset,
-                            width: _cursorSize,
-                            height: _cursorSize,
-                            fit: BoxFit.contain,
-                          ),
+            ),
+            // Cursor overlay
+            ValueListenableBuilder<Offset?>(
+              valueListenable: _cursorPos,
+              builder: (_, pos, __) {
+                if (pos == null) return const SizedBox.shrink();
+                return ValueListenableBuilder<String?>(
+                  valueListenable: _cursorAsset,
+                  builder: (_, asset, __) {
+                    if (asset == null) return const SizedBox.shrink();
+                    return Positioned(
+                      left: pos.dx - _cursorSize / 2,
+                      top: pos.dy - _cursorSize / 2,
+                      width: _cursorSize,
+                      height: _cursorSize,
+                      child: IgnorePointer(
+                        child: Image.asset(
+                          asset,
+                          width: _cursorSize,
+                          height: _cursorSize,
+                          fit: BoxFit.contain,
                         ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ],
-          ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ],
         ),
       ),
+    );
+  }
+
+  // ── Split view: furniture canvas + ceiling canvas side-by-side ─────────
+  Widget _buildSplitView(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final halfW = constraints.maxWidth / 2;
+        final fullH = constraints.maxHeight;
+        return Row(
+          children: [
+            // ── Left: furniture canvas (no ceiling spots) ──────────────────
+            SizedBox(
+              width: halfW,
+              height: fullH,
+              child: Stack(
+                children: [
+                  _buildFurnitureCanvas(context),
+                  // Divider label
+                  Positioned(
+                    top: 8,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1A1A2E).withOpacity(0.85),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Text(
+                          '🪑 Furniture Canvas',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFFBBB8C8),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // ── Vertical divider ───────────────────────────────────────────
+            Container(width: 2, color: const Color(0xFF3A3A5A)),
+            // ── Right: ceiling canvas ──────────────────────────────────────
+            SizedBox(
+              width: halfW - 2,
+              height: fullH,
+              child: _buildCeilingCanvas(context),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildCeilingCanvas(BuildContext context) {
+    return Stack(
+      children: [
+        ColoredBox(
+          color: widget.canvasBgColour,
+          child: ClipRect(
+            child: AnimatedBuilder(
+              animation: _transformationController,
+              builder: (context, _) => Transform(
+                transform: _transformationController.value,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTapDown: (d) {
+                    // GestureDetector is INSIDE the Transform widget — Flutter's
+                    // hit-testing already accounts for the transform, so d.localPosition
+                    // IS already in scene coordinates. Do NOT call _toScene() here.
+                    final s = d.localPosition;
+                    if (widget.currentMode == MouseMode.draw &&
+                        widget.selectedType == FurnitureType.ceilingSpot &&
+                        _insideRoom(s)) {
+                      _drawTapPos = s;
+                    } else if (widget.currentMode == MouseMode.select) {
+                      for (final item in furnitureItems.reversed) {
+                        if (item.type != FurnitureType.ceilingSpot) continue;
+                        if (_inside(item, s)) {
+                          setState(() {
+                            selectedItems = [item];
+                            selectedItem = item;
+                          });
+                          return;
+                        }
+                      }
+                      setState(() {
+                        selectedItems.clear();
+                        selectedItem = null;
+                      });
+                    }
+                  },
+                  onTapUp: (d) {
+                    if (_drawTapPos != null) {
+                      _pushUndo();
+                      setState(() {
+                        furnitureItems.add(_newItem(position: _drawTapPos!));
+                        _drawTapPos = null;
+                      });
+                      _save();
+                    }
+                  },
+                  onPanStart: (d) {
+                    // d.localPosition is already scene coords (inside Transform)
+                    final s = d.localPosition;
+                    for (final item in furnitureItems.reversed) {
+                      if (item.type != FurnitureType.ceilingSpot) continue;
+                      if (_inside(item, s)) {
+                        setState(() {
+                          selectedItems = [item];
+                          selectedItem = item;
+                          _isDragging = true;
+                          _dragStart = s;
+                        });
+                        return;
+                      }
+                    }
+                  },
+                  onPanUpdate: (d) {
+                    if (_isDragging &&
+                        selectedItems.isNotEmpty &&
+                        _dragStart != null) {
+                      // d.localPosition is already scene coords (inside Transform)
+                      final s = d.localPosition;
+                      final delta = s - _dragStart!;
+                      setState(() {
+                        for (final item in selectedItems) {
+                          if (item.type != FurnitureType.ceilingSpot) continue;
+                          item.position = _clampToRoom(
+                            item.position + delta,
+                            item.size,
+                          );
+                        }
+                      });
+                      _dragStart = s;
+                    }
+                  },
+                  onPanEnd: (_) {
+                    if (selectedItems.isNotEmpty) {
+                      setState(() {
+                        for (final item in selectedItems) {
+                          if (item.type == FurnitureType.ceilingSpot) {
+                            item.position = _clampToRoom(
+                              _snapOffset(item.position),
+                              item.size,
+                            );
+                          }
+                        }
+                      });
+                      _save();
+                    }
+                    setState(() {
+                      _isDragging = false;
+                      _dragStart = null;
+                    });
+                  },
+                  child: SizedBox(
+                    width: _canvasW,
+                    height: _canvasH,
+                    child: CustomPaint(
+                      painter: CeilingPainter(
+                        furnitureItems: furnitureItems,
+                        selectedItems: selectedItems,
+                        roomWidth: widget.roomWidthPx,
+                        roomDepth: widget.roomDepthPx,
+                        canvasW: _canvasW,
+                        canvasH: _canvasH,
+                        ceilingColour: widget.ceilingColour,
+                        wallColour: widget.roomWallColour,
+                        thumbnails: widget.thumbnails,
+                      ),
+                      size: const Size(_canvasW, _canvasH),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        // Label
+        Positioned(
+          top: 8,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1A1A2E).withOpacity(0.85),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text(
+                '⬆ Ceiling Canvas',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Color(0xFFFFB300),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -2855,4 +3108,155 @@ class MarqueePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant MarqueePainter old) =>
       old.start != start || old.end != end;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CeilingPainter — draws the ceiling view (right panel in split mode)
+// ─────────────────────────────────────────────────────────────────────────────
+class CeilingPainter extends CustomPainter {
+  final List<FurnitureModel> furnitureItems;
+  final List<FurnitureModel> selectedItems;
+  final double roomWidth, roomDepth, canvasW, canvasH;
+  final Color ceilingColour;
+  final Color wallColour;
+  final Map<String, ui.Image> thumbnails;
+
+  const CeilingPainter({
+    required this.furnitureItems,
+    required this.selectedItems,
+    required this.roomWidth,
+    required this.roomDepth,
+    required this.canvasW,
+    required this.canvasH,
+    required this.ceilingColour,
+    required this.wallColour,
+    this.thumbnails = const {},
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // ── Canvas background (outside room) ─────────────────────────────────
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, canvasW, canvasH),
+      Paint()..color = const Color(0xFF0D0D11),
+    );
+
+    final rr = Rect.fromLTWH(0, 0, roomWidth, roomDepth);
+
+    // ── Ceiling surface — ceiling colour at 22% opacity ───────────────────
+    canvas.drawRect(rr, Paint()..color = ceilingColour.withOpacity(0.22));
+
+    // ── Subtle grid ───────────────────────────────────────────────────────
+    final gp = Paint()
+      ..color = Colors.white.withOpacity(0.05)
+      ..strokeWidth = 1;
+    canvas.save();
+    canvas.clipRect(rr);
+    for (double x = 0; x <= roomWidth; x += 20)
+      canvas.drawLine(Offset(x, 0), Offset(x, roomDepth), gp);
+    for (double y = 0; y <= roomDepth; y += 20)
+      canvas.drawLine(Offset(0, y), Offset(roomWidth, y), gp);
+    canvas.restore();
+
+    // ── Wall border ───────────────────────────────────────────────────────
+    canvas.drawRect(
+      rr,
+      Paint()
+        ..color = wallColour.withOpacity(0.6)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4,
+    );
+
+    // ── Ghost furniture (non-ceiling items at 40% opacity) ────────────────
+    canvas.saveLayer(
+      Rect.fromLTWH(0, 0, canvasW, canvasH),
+      Paint()..color = Colors.white.withOpacity(0.40),
+    );
+    for (final item in furnitureItems) {
+      if (item.type == FurnitureType.ceilingSpot) continue;
+      canvas.save();
+      final cx = item.position.dx + item.size.width / 2;
+      final cy = item.position.dy + item.size.height / 2;
+      canvas.translate(cx, cy);
+      canvas.rotate(item.rotation);
+      canvas.translate(-item.size.width / 2, -item.size.height / 2);
+      // Draw simple coloured rect as ghost
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(0, 0, item.size.width, item.size.height),
+          const Radius.circular(3),
+        ),
+        Paint()..color = item.color,
+      );
+      canvas.restore();
+    }
+    canvas.restore();
+
+    // ── Ceiling spots — full opacity, interactive ─────────────────────────
+    for (final item in furnitureItems) {
+      if (item.type != FurnitureType.ceilingSpot) continue;
+      canvas.save();
+      final cx = item.position.dx + item.size.width / 2;
+      final cy = item.position.dy + item.size.height / 2;
+      canvas.translate(cx, cy);
+      canvas.rotate(item.rotation);
+      canvas.translate(-item.size.width / 2, -item.size.height / 2);
+
+      final w = item.size.width;
+      final h = item.size.height;
+      final r = Math.min(w, h) * 0.45;
+      final c = Offset(w / 2, h / 2);
+
+      // Glow
+      canvas.drawCircle(
+        c,
+        r * 1.6,
+        Paint()..color = const Color(0xFFFFFFFF).withOpacity(0.18),
+      );
+      // Housing
+      canvas.drawCircle(c, r, Paint()..color = const Color(0xFFBDBDBD));
+      // Bright inner
+      canvas.drawCircle(c, r * 0.5, Paint()..color = const Color(0xFFFFFFFF));
+      // Ring stroke
+      canvas.drawCircle(
+        c,
+        r,
+        Paint()
+          ..color = const Color(0xFF757575)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2,
+      );
+
+      // Selection ring
+      if (selectedItems.contains(item)) {
+        canvas.drawCircle(
+          c,
+          r + 5,
+          Paint()
+            ..color = const Color(0xFF42A5F5)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0,
+        );
+      }
+      canvas.restore();
+    }
+
+    // ── "CEILING LAYER" label ─────────────────────────────────────────────
+    final tp = TextPainter(
+      text: const TextSpan(
+        text: '⬆ CEILING',
+        style: TextStyle(
+          fontSize: 10,
+          color: Color(0xFFFFB300),
+          fontWeight: FontWeight.bold,
+          letterSpacing: 1.0,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, const Offset(8, 6));
+  }
+
+  @override
+  bool shouldRepaint(CeilingPainter old) => true;
 }
