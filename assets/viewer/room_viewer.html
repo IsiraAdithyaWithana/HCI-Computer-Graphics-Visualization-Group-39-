@@ -1072,25 +1072,46 @@
       function renderThumb(key, scene3d, onDone) {
         var clone = scene3d.clone(true);
         ts.add(clone);
-        // Ensure materials are visible from above
+
+        // Double-sided materials so every surface is visible from above
         clone.traverse(function (n) {
           if (n.isMesh && n.material) {
             var mats = Array.isArray(n.material) ? n.material : [n.material];
             mats.forEach(function (m) { m.side = THREE.DoubleSide; });
           }
         });
+
+        // Measure bounding box as-is — no rotation applied
         var bbox = new THREE.Box3().setFromObject(clone);
         var size3 = bbox.getSize(new THREE.Vector3());
         var center = bbox.getCenter(new THREE.Vector3());
-        var extent = Math.max(size3.x, size3.z) * 0.65;
-        if (extent < 0.01) extent = 0.5;
-        tc.left = -extent; tc.right = extent;
-        tc.top = extent; tc.bottom = -extent;
-        tc.near = -size3.y - 50; tc.far = size3.y + 200;
+
+        var footW = Math.max(size3.x, 0.01);
+        var footH = Math.max(size3.z, 0.01);
+        var BASE = 256;
+        var imgW, imgH;
+        if (footW >= footH) {
+          imgW = BASE;
+          imgH = Math.max(Math.round(BASE * footH / footW), 32);
+        } else {
+          imgH = BASE;
+          imgW = Math.max(Math.round(BASE * footW / footH), 32);
+        }
+
+        tr.setSize(imgW, imgH);
+
+        var pad = 1.05;
+        var halfX = footW * 0.5 * pad;
+        var halfZ = footH * 0.5 * pad;
+        tc.left = -halfX; tc.right = halfX;
+        tc.top = halfZ; tc.bottom = -halfZ;
+        tc.near = -size3.y - 50;
+        tc.far = size3.y + 200;
         tc.position.set(center.x, bbox.max.y + 20, center.z);
         tc.lookAt(center.x, center.y, center.z);
         tc.up.set(0, 0, -1);
         tc.updateProjectionMatrix();
+
         tr.render(ts, tc);
         var base64 = tr.domElement.toDataURL('image/png');
         try {
@@ -1762,6 +1783,10 @@
         entry.obj.scale.setScalar(entry.baseScale * f);
         if (typeof THREE !== 'undefined') {
           var sx = entry.obj.position.x, sz = entry.obj.position.z;
+          // MUST reset Y to 0 first — otherwise bb.min.y includes the old
+          // Y offset, making -bb.min.y wrong and causing the sink/rise loop.
+          entry.obj.position.y = 0;
+          entry.obj.updateMatrixWorld(true);
           var bb = new THREE.Box3().setFromObject(entry.obj);
           entry.obj.position.set(sx, -bb.min.y, sz);
         }
@@ -2172,12 +2197,24 @@
           if (!modelScene) { renderOneKey(idx + 1); return; }
           var clone = modelScene.clone(true);
           ts.add(clone);
+          clone.traverse(function (n) {
+            if (n.isMesh && n.material) {
+              var mats = Array.isArray(n.material) ? n.material : [n.material];
+              mats.forEach(function (m) { m.side = THREE.DoubleSide; });
+            }
+          });
           var bbox = new THREE.Box3().setFromObject(clone);
           var size3 = bbox.getSize(new THREE.Vector3());
           var center = bbox.getCenter(new THREE.Vector3());
-          var extent = Math.max(size3.x, size3.z) * 1.25 * 0.5;
-          if (extent < 0.001) extent = 0.5;
-          tc.left = -extent; tc.right = extent; tc.top = extent; tc.bottom = -extent;
+          var footW = Math.max(size3.x, 0.01);
+          var footH = Math.max(size3.z, 0.01);
+          var BASE = 256; var imgW, imgH;
+          if (footW >= footH) { imgW = BASE; imgH = Math.max(Math.round(BASE * footH / footW), 32); }
+          else { imgH = BASE; imgW = Math.max(Math.round(BASE * footW / footH), 32); }
+          tr.setSize(imgW, imgH);
+          var pad = 1.05;
+          var halfX = footW * 0.5 * pad; var halfZ = footH * 0.5 * pad;
+          tc.left = -halfX; tc.right = halfX; tc.top = halfZ; tc.bottom = -halfZ;
           tc.near = -size3.y - 10; tc.far = size3.y + 100;
           tc.position.set(center.x, bbox.max.y + 10, center.z);
           tc.lookAt(center.x, center.y, center.z);

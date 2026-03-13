@@ -74,6 +74,22 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
     super.dispose();
   }
 
+  /// Called on every hot-reload. ui.Image GPU objects are invalidated by the
+  /// engine restart, so we re-decode from the in-memory raw bytes and then
+  /// force a setState so the canvas repaints with the fresh images.
+  @override
+  void reassemble() {
+    super.reassemble();
+    // Step 1: immediately drop all ui.Image references so the painter
+    // falls back to vector art — avoids trying to draw disposed GPU textures.
+    setState(() => _thumbnails = {});
+    // Step 2: re-decode raw bytes back into fresh ui.Image objects, then repaint.
+    ThumbnailCache.instance.reloadImages().then((_) {
+      if (mounted)
+        setState(() => _thumbnails = Map.of(ThumbnailCache.instance.images));
+    });
+  }
+
   double _roomWidthM = 6.0;
   double _roomDepthM = 5.0;
   static const double _minRoomM = 3.0;
@@ -272,6 +288,12 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   void initState() {
     super.initState();
     ThumbnailCache.instance.addListener(_onThumbsUpdated);
+
+    // Populate immediately from whatever is already in the cache.
+    // loadAll() runs in main() before this widget exists, so notifyListeners()
+    // fires with no listeners — we must read the current state ourselves here.
+    _thumbnails = Map.of(ThumbnailCache.instance.images);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadSavedLayout();
       // Start silent background thumbnail generation for all built-in GLBs.

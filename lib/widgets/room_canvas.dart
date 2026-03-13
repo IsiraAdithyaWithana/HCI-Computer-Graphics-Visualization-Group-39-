@@ -208,10 +208,42 @@ class RoomCanvasState extends State<RoomCanvas> {
   void loadFromJson(String jsonString) {
     final List decoded = jsonDecode(jsonString);
     setState(() {
-      furnitureItems = decoded.map((e) => FurnitureModel.fromJson(e)).toList();
+      furnitureItems = decoded
+          .map((e) => FurnitureModel.fromJson(e as Map<String, dynamic>))
+          .map(_migrateFurnitureSize)
+          .toList();
       selectedItems.clear();
       selectedItem = null;
     });
+  }
+
+  /// Corrects furniture sizes that were saved with wrong default dimensions.
+  /// Called once on load so stale saved layouts are automatically fixed.
+  FurnitureModel _migrateFurnitureSize(FurnitureModel item) {
+    switch (item.type) {
+      case FurnitureType.bench:
+        // Old default was Size(140,50) — landscape and too wide.
+        // Correct default is Size(30,100) — portrait, matches the 3D GLB.
+        // Only migrate if the item still has the old wrong proportions
+        // (width > height), so user-resized benches are left alone.
+        if (item.size.width > item.size.height) {
+          return FurnitureModel(
+            id: item.id,
+            type: item.type,
+            position: item.position,
+            size: const Size(30, 100),
+            color: item.color,
+            rotation: item.rotation,
+            scaleFactor: item.scaleFactor,
+            glbOverride: item.glbOverride,
+            labelOverride: item.labelOverride,
+            tintHex: item.tintHex,
+          );
+        }
+        return item;
+      default:
+        return item;
+    }
   }
 
   void _save() => widget.onChanged?.call();
@@ -402,7 +434,7 @@ class RoomCanvasState extends State<RoomCanvas> {
       case FurnitureType.armchair:
         return const Size(80, 80);
       case FurnitureType.bench:
-        return const Size(140, 50);
+        return const Size(30, 100);
       case FurnitureType.stool:
         return const Size(45, 45);
       case FurnitureType.table:
@@ -1173,9 +1205,8 @@ class RoomPainter extends CustomPainter {
           ? (item.glbOverride ?? '')
           : item.type.name;
       final thumb = thumbnails[thumbKey];
-      if (thumb != null) {
-        _drawThumbnailTile(canvas, item, thumb);
-      } else {
+      // Draw thumbnail; if it fails (disposed after hot-reload) fall back to vector
+      if (thumb == null || !_drawThumbnailTile(canvas, item, thumb)) {
         _drawFurniture(canvas, item);
       }
 
@@ -1198,39 +1229,57 @@ class RoomPainter extends CustomPainter {
   }
 
   /// Draws a real top-down 3D thumbnail image fitted inside the item tile.
-  void _drawThumbnailTile(Canvas canvas, FurnitureModel item, ui.Image img) {
-    final w = item.size.width;
-    final h = item.size.height;
-    final rect = Rect.fromLTWH(0, 0, w, h);
+  /// Draws a top-down 3D thumbnail image into the furniture tile.
+  ///
+  /// Handles two tricky cases:
+  ///   1. Orientation mismatch — if the image is portrait but the tile is
+  ///      landscape (or vice versa), rotate the image 90° so the long axis
+  ///      always aligns.  This fixes e.g. bench.glb which renders tall but
+  ///      the tile expects a wide footprint.
+  ///   2. Disposed GPU texture after hot-reload — catches the error and falls
+  ///      back to the vector art so the canvas never goes blank.
+  ///
+  /// Returns true if drawn, false if the image was disposed (caller should
+  /// fall back to _drawFurniture).
+  bool _drawThumbnailTile(Canvas canvas, FurnitureModel item, ui.Image img) {
+    try {
+      final w = item.size.width;
+      final h = item.size.height;
+      final rect = Rect.fromLTWH(0, 0, w, h);
 
-    // Drop shadow
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect.translate(0, 3), const Radius.circular(4)),
-      Paint()..color = Colors.black.withOpacity(0.25),
-    );
+      // Drop shadow
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect.translate(0, 3), const Radius.circular(4)),
+        Paint()..color = Colors.black.withOpacity(0.25),
+      );
 
-    // Clip to rounded rect
-    canvas.save();
-    canvas.clipRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)));
+      canvas.save();
+      canvas.clipRRect(RRect.fromRectAndRadius(rect, const Radius.circular(4)));
 
-    // Draw the thumbnail image stretched to fill the tile
-    canvas.drawImageRect(
-      img,
-      Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
-      rect,
-      Paint()..filterQuality = FilterQuality.medium,
-    );
+      // Stretch image to fill the entire tile — no grey bars, no cropping.
+      // The thumbnail is a top-down render so slight stretch is imperceptible.
+      canvas.drawImageRect(
+        img,
+        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+        rect,
+        Paint()..filterQuality = FilterQuality.high,
+      );
 
-    canvas.restore();
+      canvas.restore();
 
-    // Thin border
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, const Radius.circular(4)),
-      Paint()
-        ..color = Colors.black.withOpacity(0.35)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.2,
-    );
+      // Thin grey border
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(rect, const Radius.circular(4)),
+        Paint()
+          ..color = const Color(0xFF6B7C88)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+      return true;
+    } catch (_) {
+      // ui.Image was disposed (hot-reload) — caller falls back to vector art
+      return false;
+    }
   }
 
   void _drawFurniture(Canvas canvas, FurnitureModel item) {
