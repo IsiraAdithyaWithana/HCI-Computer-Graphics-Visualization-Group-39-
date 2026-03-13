@@ -45,6 +45,10 @@ class RoomCanvas extends StatefulWidget {
   /// Key: FurnitureType.name for built-ins, glbFileName for custom GLBs.
   final Map<String, ui.Image> thumbnails;
 
+  /// When true the ceiling layer is visible — ceiling spots can be placed/seen.
+  /// When false ceiling spots are hidden (working on floor layout).
+  final bool showCeilingLayer;
+
   const RoomCanvas({
     super.key,
     required this.selectedType,
@@ -55,7 +59,6 @@ class RoomCanvas extends StatefulWidget {
     this.canvasBgColour = const Color(0xFF0D0D11),
     this.roomFloorColour = const Color(0xFFFAF8F5),
     this.roomWallColour = const Color(0xFF4A4A5A),
-    // custom fields — null for all built-in types
     this.customGlbOverride,
     this.customLabelOverride,
     this.customColor,
@@ -63,6 +66,7 @@ class RoomCanvas extends StatefulWidget {
     this.onChanged,
     this.onUndoStateChanged,
     this.thumbnails = const {},
+    this.showCeilingLayer = false,
   });
 
   @override
@@ -232,6 +236,25 @@ class RoomCanvasState extends State<RoomCanvas> {
             type: item.type,
             position: item.position,
             size: const Size(30, 100),
+            color: item.color,
+            rotation: item.rotation,
+            scaleFactor: item.scaleFactor,
+            glbOverride: item.glbOverride,
+            labelOverride: item.labelOverride,
+            tintHex: item.tintHex,
+          );
+        }
+        return item;
+      case FurnitureType.table:
+        // table.glb is portrait (narrow X, long Z) — same as bench.
+        // Old saves may have the wrong landscape size (width > height).
+        // Migrate to portrait so the 2D tile matches the 3D GLB.
+        if (item.size.width > item.size.height) {
+          return FurnitureModel(
+            id: item.id,
+            type: item.type,
+            position: item.position,
+            size: const Size(80, 120),
             color: item.color,
             rotation: item.rotation,
             scaleFactor: item.scaleFactor,
@@ -438,7 +461,7 @@ class RoomCanvasState extends State<RoomCanvas> {
       case FurnitureType.stool:
         return const Size(45, 45);
       case FurnitureType.table:
-        return const Size(120, 80);
+        return const Size(80, 120); // table.glb is portrait (narrow X, long Z)
       case FurnitureType.coffeeTable:
         return const Size(100, 60);
       case FurnitureType.desk:
@@ -467,6 +490,17 @@ class RoomCanvasState extends State<RoomCanvas> {
         return const Size(160, 50);
       case FurnitureType.rug:
         return const Size(160, 120);
+      // ── Lights ────────────────────────────────────────────────────────
+      case FurnitureType.floorLampLight:
+        return const Size(30, 30);
+      case FurnitureType.tableLampLight:
+        return const Size(20, 20);
+      case FurnitureType.wallLight:
+        return const Size(40, 12); // wide, shallow — hugs wall
+      case FurnitureType.ceilingSpot:
+        return const Size(25, 25);
+      case FurnitureType.windowLight:
+        return const Size(80, 12); // wide window on wall
       // ── Custom furniture default footprint ────────────────────────────
       case FurnitureType.custom:
         // Use the size stored in the registry entry (set at import time)
@@ -516,6 +550,17 @@ class RoomCanvasState extends State<RoomCanvas> {
         return const Color(0xFF37474F);
       case FurnitureType.rug:
         return const Color(0xFFB71C1C);
+      // ── Lights ────────────────────────────────────────────────────────
+      case FurnitureType.floorLampLight:
+        return const Color(0xFFFFD54F);
+      case FurnitureType.tableLampLight:
+        return const Color(0xFFFFCC02);
+      case FurnitureType.wallLight:
+        return const Color(0xFFFFB300);
+      case FurnitureType.ceilingSpot:
+        return const Color(0xFFFFFFFF);
+      case FurnitureType.windowLight:
+        return const Color(0xFFB3E5FC);
       // ── Custom furniture uses the colour stored in the registry entry ──
       case FurnitureType.custom:
         return widget.customColor ?? const Color(0xFF607D8B);
@@ -577,50 +622,150 @@ class RoomCanvasState extends State<RoomCanvas> {
 
   FurnitureModel _newItem({required Offset position, Size? size}) {
     Size itemSize;
+    // Track the scaleFactor to inherit from an existing sibling.
+    // New items must inherit the sibling's ACTUAL size AND scaleFactor so they
+    // appear identical to existing items of the same type — not at natural/default size.
+    double inheritedScaleFactor = 1.0;
+
     if (size != null) {
       // Explicit size supplied (e.g. from draw-drag) — use it directly.
       itemSize = size;
     } else if (widget.selectedType == FurnitureType.custom &&
         widget.customGlbOverride != null) {
-      // Custom GLB: inherit NATURAL size from an already-placed sibling
-      // (same GLB file). Back-calculate naturalSize = size / sf, then use at sf=1.
+      // Custom GLB: find an existing sibling and inherit its exact size + scale.
       final existing = furnitureItems
           .where((f) => f.glbOverride == widget.customGlbOverride)
           .firstOrNull;
       if (existing != null) {
-        final sf = existing.scaleFactor > 0 ? existing.scaleFactor : 1.0;
-        itemSize = Size(existing.size.width / sf, existing.size.height / sf);
+        itemSize = existing.size;
+        inheritedScaleFactor = existing.scaleFactor > 0
+            ? existing.scaleFactor
+            : 1.0;
       } else {
         itemSize = widget.customDefaultSize ?? const Size(80, 80);
       }
     } else {
-      // Built-in type: if a sibling has been resized, inherit its natural size
-      // so new placements match the user's saved size preference.
+      // Built-in type: inherit the sibling's actual size AND scaleFactor so the
+      // new item looks identical to existing ones. Previously this divided by sf
+      // to recover natural size then started at sf=1 — which caused new items
+      // to appear at the original un-scaled size instead of the user-chosen size.
       final sibling = furnitureItems
-          .where((f) => f.type == widget.selectedType)
+          .where((f) => f.type == widget.selectedType && !f.type.isLight)
           .firstOrNull;
       if (sibling != null) {
-        final sf = sibling.scaleFactor > 0 ? sibling.scaleFactor : 1.0;
-        // Natural size = size at scaleFactor=1; new items always start at sf=1
-        itemSize = Size(sibling.size.width / sf, sibling.size.height / sf);
+        itemSize = sibling.size;
+        inheritedScaleFactor = sibling.scaleFactor > 0
+            ? sibling.scaleFactor
+            : 1.0;
       } else {
         itemSize = _defaultSize(widget.selectedType);
       }
     }
 
-    final freePos = _findFreePosition(_snapOffset(position), itemSize);
+    // ── Zone constraints ──────────────────────────────────────────────────
+    Offset placedPos;
+    final zone = widget.selectedType.isLight
+        ? widget.selectedType.lightZone
+        : LightZone.floor;
+
+    if (zone == LightZone.wall) {
+      placedPos = _snapToWall(position, itemSize);
+    } else if (zone == LightZone.ceiling) {
+      placedPos = _clampToRoom(position, itemSize);
+    } else if (zone == LightZone.onFurniture) {
+      placedPos = _snapToFurniture(position, itemSize);
+    } else {
+      placedPos = _findFreePosition(_snapOffset(position), itemSize);
+    }
+
     return FurnitureModel(
       id: DateTime.now().toString(),
       type: widget.selectedType,
-      position: freePos,
+      position: placedPos,
       size: itemSize,
       color: _defaultColor(widget.selectedType),
+      scaleFactor: inheritedScaleFactor,
       glbOverride: widget.selectedType == FurnitureType.custom
           ? widget.customGlbOverride
           : null,
       labelOverride: widget.selectedType == FurnitureType.custom
           ? widget.customLabelOverride
           : null,
+    );
+  }
+
+  // ── Constrain drag position by light zone ───────────────────────────────
+  Offset _constrainForZone(FurnitureModel item, Offset pos) {
+    if (!item.type.isLight) return pos;
+    final zone = item.type.lightZone;
+    if (zone == LightZone.wall) {
+      return _snapToWall(pos, item.size);
+    } else if (zone == LightZone.ceiling) {
+      return _clampToRoom(pos, item.size);
+    } else if (zone == LightZone.onFurniture) {
+      return _snapToFurniture(pos, item.size);
+    }
+    return pos;
+  }
+
+  // ── Snap to nearest wall ─────────────────────────────────────────────────
+  Offset _snapToWall(Offset pos, Size size) {
+    final roomW = widget.roomWidthPx;
+    final roomH = widget.roomDepthPx;
+    // Distances from pos.dx/dy to each wall edge
+    final dLeft = pos.dx;
+    final dRight = roomW - pos.dx;
+    final dTop = pos.dy;
+    final dBottom = roomH - pos.dy;
+    final minD = Math.min(Math.min(dLeft, dRight), Math.min(dTop, dBottom));
+
+    if (minD == dLeft) {
+      // Left wall — item hugs left edge
+      return Offset(0, pos.dy.clamp(0, roomH - size.height));
+    } else if (minD == dRight) {
+      // Right wall
+      return Offset(roomW - size.width, pos.dy.clamp(0, roomH - size.height));
+    } else if (minD == dTop) {
+      // Top wall
+      return Offset(pos.dx.clamp(0, roomW - size.width), 0);
+    } else {
+      // Bottom wall
+      return Offset(pos.dx.clamp(0, roomW - size.width), roomH - size.height);
+    }
+  }
+
+  // ── Clamp to room interior ───────────────────────────────────────────────
+  Offset _clampToRoom(Offset pos, Size size) {
+    final roomW = widget.roomWidthPx;
+    final roomH = widget.roomDepthPx;
+    return Offset(
+      pos.dx.clamp(0, roomW - size.width),
+      pos.dy.clamp(0, roomH - size.height),
+    );
+  }
+
+  // ── Snap table lamp to nearest ANY furniture surface ────────────────────
+  Offset _snapToFurniture(Offset pos, Size size) {
+    // Exclude other lights — snap to any real furniture item
+    final candidates = furnitureItems.where((f) => !f.type.isLight);
+    if (candidates.isEmpty) {
+      return _findFreePosition(_snapOffset(pos), size);
+    }
+    // Find the closest furniture item by centre distance
+    FurnitureModel? nearest;
+    double bestDist = double.infinity;
+    for (final f in candidates) {
+      final fc = f.position + Offset(f.size.width / 2, f.size.height / 2);
+      final d = (fc - pos).distance;
+      if (d < bestDist) {
+        bestDist = d;
+        nearest = f;
+      }
+    }
+    // Place lamp centred on the nearest furniture
+    return Offset(
+      nearest!.position.dx + (nearest.size.width - size.width) / 2,
+      nearest.position.dy + (nearest.size.height - size.height) / 2,
     );
   }
 
@@ -840,8 +985,10 @@ class RoomCanvasState extends State<RoomCanvas> {
                               _dragStart != null) {
                             final delta = s - _dragStart!;
                             setState(() {
-                              for (final item in selectedItems)
-                                item.position += delta;
+                              for (final item in selectedItems) {
+                                final raw = item.position + delta;
+                                item.position = _constrainForZone(item, raw);
+                              }
                             });
                             _dragStart = s;
                             return;
@@ -888,7 +1035,10 @@ class RoomCanvasState extends State<RoomCanvas> {
                           if (selectedItems.isNotEmpty) {
                             setState(() {
                               for (final item in selectedItems) {
-                                item.position = _snapOffset(item.position);
+                                item.position = _constrainForZone(
+                                  item,
+                                  _snapOffset(item.position),
+                                );
                                 // Only snap the size when the user was actively
                                 // resizing — dragging must NEVER alter the size.
                                 if (_isResizing) {
@@ -1115,6 +1265,7 @@ class RoomPainter extends CustomPainter {
   final Color roomFloorColour;
   final Color roomWallColour;
   final Map<String, ui.Image> thumbnails;
+  final bool showCeilingLayer;
 
   const RoomPainter({
     required this.furnitureItems,
@@ -1127,6 +1278,7 @@ class RoomPainter extends CustomPainter {
     this.roomFloorColour = const Color(0xFFFAF8F5),
     this.roomWallColour = const Color(0xFF4A4A5A),
     this.thumbnails = const {},
+    this.showCeilingLayer = false,
   });
 
   @override
@@ -1139,6 +1291,27 @@ class RoomPainter extends CustomPainter {
     final rr = Rect.fromLTWH(0, 0, roomWidth, roomDepth);
     // Room floor — use the scheme colour
     canvas.drawRect(rr, Paint()..color = roomFloorColour);
+
+    // Ceiling layer overlay — subtle blue tint + label
+    if (showCeilingLayer) {
+      canvas.drawRect(
+        rr,
+        Paint()..color = const Color(0xFF1565C0).withOpacity(0.09),
+      );
+      final tp = TextPainter(
+        text: const TextSpan(
+          text: '⬆ CEILING LAYER',
+          style: TextStyle(
+            fontSize: 11,
+            color: Color(0xFF42A5F5),
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.2,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, const Offset(8, 6));
+    }
 
     // Grid — adapts to floor colour
     canvas.save();
@@ -1344,11 +1517,201 @@ class RoomPainter extends CustomPainter {
       case FurnitureType.rug:
         _rug(canvas, item);
         break;
+      // ── Lights ────────────────────────────────────────────────────────
+      case FurnitureType.floorLampLight:
+        _drawFloorLamp2D(canvas, item);
+        break;
+      case FurnitureType.tableLampLight:
+        _drawTableLamp2D(canvas, item);
+        break;
+      case FurnitureType.wallLight:
+        _drawWallLight2D(canvas, item);
+        break;
+      case FurnitureType.ceilingSpot:
+        _drawCeilingSpot2D(canvas, item);
+        break;
+      case FurnitureType.windowLight:
+        _drawWindow2D(canvas, item);
+        break;
       // ── Custom furniture: styled labelled tile ─────────────────────────
       case FurnitureType.custom:
         _custom(canvas, item);
         break;
     }
+  }
+
+  // ── 2D light drawing methods ─────────────────────────────────────────────
+
+  void _drawFloorLamp2D(Canvas canvas, FurnitureModel item) {
+    final w = item.size.width;
+    final h = item.size.height;
+    final cx = w / 2;
+    final cy = h / 2;
+    final r = Math.min(w, h) * 0.45;
+    // Outer glow ring
+    canvas.drawCircle(
+      Offset(cx, cy),
+      r * 1.4,
+      Paint()
+        ..color = const Color(0xFFFFD54F).withOpacity(0.25)
+        ..style = PaintingStyle.fill,
+    );
+    // Base circle
+    canvas.drawCircle(
+      Offset(cx, cy),
+      r,
+      Paint()..color = const Color(0xFFFFD54F),
+    );
+    // Warm dot centre
+    canvas.drawCircle(
+      Offset(cx, cy),
+      r * 0.45,
+      Paint()..color = const Color(0xFFFFF9C4),
+    );
+    // Label
+    _drawLightLabel(canvas, item, '💡');
+  }
+
+  void _drawTableLamp2D(Canvas canvas, FurnitureModel item) {
+    final w = item.size.width;
+    final h = item.size.height;
+    final cx = w / 2;
+    final cy = h / 2;
+    final r = Math.min(w, h) * 0.45;
+    // Glow
+    canvas.drawCircle(
+      Offset(cx, cy),
+      r * 1.3,
+      Paint()
+        ..color = const Color(0xFFFFCC02).withOpacity(0.3)
+        ..style = PaintingStyle.fill,
+    );
+    canvas.drawCircle(
+      Offset(cx, cy),
+      r,
+      Paint()..color = const Color(0xFFFFCC02),
+    );
+    canvas.drawCircle(
+      Offset(cx, cy),
+      r * 0.4,
+      Paint()..color = const Color(0xFFFFF8E1),
+    );
+    _drawLightLabel(canvas, item, '🔆');
+  }
+
+  void _drawWallLight2D(Canvas canvas, FurnitureModel item) {
+    final w = item.size.width;
+    final h = item.size.height;
+    final rect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(0, 0, w, h),
+      const Radius.circular(3),
+    );
+    // Wall light body — warm amber bar
+    canvas.drawRRect(rect, Paint()..color = const Color(0xFFFFB300));
+    // Glow emitting downward/inward
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(w * 0.1, 0, w * 0.8, h * 0.6),
+        const Radius.circular(2),
+      ),
+      Paint()..color = const Color(0xFFFFF3E0).withOpacity(0.7),
+    );
+    // Border
+    canvas.drawRRect(
+      rect,
+      Paint()
+        ..color = const Color(0xFFE65100)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0,
+    );
+    // Small label
+    final tp = TextPainter(
+      text: const TextSpan(
+        text: 'WALL',
+        style: TextStyle(
+          fontSize: 6,
+          color: Color(0xFF3E2723),
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, Offset((w - tp.width) / 2, (h - tp.height) / 2));
+  }
+
+  void _drawCeilingSpot2D(Canvas canvas, FurnitureModel item) {
+    final w = item.size.width;
+    final h = item.size.height;
+    final cx = w / 2;
+    final cy = h / 2;
+    final r = Math.min(w, h) * 0.45;
+    // Wide diffuse glow
+    canvas.drawCircle(
+      Offset(cx, cy),
+      r * 1.6,
+      Paint()
+        ..color = const Color(0xFFFFFFFF).withOpacity(0.15)
+        ..style = PaintingStyle.fill,
+    );
+    // Outer ring
+    canvas.drawCircle(
+      Offset(cx, cy),
+      r,
+      Paint()
+        ..color = const Color(0xFFBDBDBD)
+        ..style = PaintingStyle.fill,
+    );
+    // Inner bright spot
+    canvas.drawCircle(
+      Offset(cx, cy),
+      r * 0.5,
+      Paint()..color = const Color(0xFFFFFFFF),
+    );
+    // Ring border
+    canvas.drawCircle(
+      Offset(cx, cy),
+      r,
+      Paint()
+        ..color = const Color(0xFF757575)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2,
+    );
+    _drawLightLabel(canvas, item, '◎');
+  }
+
+  void _drawWindow2D(Canvas canvas, FurnitureModel item) {
+    final w = item.size.width;
+    final h = item.size.height;
+    final rect = Rect.fromLTWH(0, 0, w, h);
+    // Glass fill — light blue
+    canvas.drawRect(rect, Paint()..color = const Color(0xFFB3E5FC));
+    // Window pane divider
+    canvas.drawLine(
+      Offset(w / 2, 0),
+      Offset(w / 2, h),
+      Paint()
+        ..color = const Color(0xFF0288D1)
+        ..strokeWidth = 1.5,
+    );
+    canvas.drawLine(
+      Offset(0, h / 2),
+      Offset(w, h / 2),
+      Paint()
+        ..color = const Color(0xFF0288D1)
+        ..strokeWidth = 1.0,
+    );
+    // Frame border
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..color = const Color(0xFF0277BD)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.0,
+    );
+  }
+
+  void _drawLightLabel(Canvas canvas, FurnitureModel item, String emoji) {
+    // Nothing needed — the emoji circles speak for themselves at small size
   }
 
   void _drawHandles(Canvas canvas, FurnitureModel item) {

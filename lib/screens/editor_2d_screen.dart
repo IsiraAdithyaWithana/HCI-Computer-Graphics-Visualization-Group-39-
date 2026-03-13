@@ -52,6 +52,8 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
 
   // Thumbnails for 2D canvas — updated whenever ThumbnailCache notifies
   Map<String, ui.Image> _thumbnails = {};
+  // Ceiling layer toggle — when true, ceiling spots are shown/editable
+  bool _showCeilingLayer = false;
   void _onThumbsUpdated() {
     if (mounted)
       setState(() => _thumbnails = Map.of(ThumbnailCache.instance.images));
@@ -505,6 +507,9 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                 _saveLayout();
               },
               onRealistic3D: _openRealistic3D,
+              showCeilingLayer: _showCeilingLayer,
+              onCeilingLayerToggle: () =>
+                  setState(() => _showCeilingLayer = !_showCeilingLayer),
             ),
           ),
           Expanded(
@@ -527,6 +532,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                   roomFloorColour: _currentScheme.floor,
                   roomWallColour: _currentScheme.wall,
                   thumbnails: _thumbnails,
+                  showCeilingLayer: _showCeilingLayer,
                 ),
                 Positioned(
                   right: 16,
@@ -561,6 +567,8 @@ class _LeftPanel extends StatefulWidget {
   final double roomWidthM, roomDepthM, minRoomM, maxRoomM;
   final ValueChanged<double> onWidthChanged, onDepthChanged;
   final VoidCallback onRealistic3D;
+  final bool showCeilingLayer;
+  final VoidCallback onCeilingLayerToggle;
 
   const _LeftPanel({
     required this.selectedType,
@@ -574,6 +582,8 @@ class _LeftPanel extends StatefulWidget {
     required this.onWidthChanged,
     required this.onDepthChanged,
     required this.onRealistic3D,
+    required this.showCeilingLayer,
+    required this.onCeilingLayerToggle,
   });
 
   @override
@@ -837,7 +847,38 @@ class _LeftPanelState extends State<_LeftPanel> {
 
                     const Divider(height: 1, thickness: 1),
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          icon: Icon(
+                            widget.showCeilingLayer
+                                ? Icons.layers_clear
+                                : Icons.layers,
+                            size: 16,
+                          ),
+                          label: Text(
+                            widget.showCeilingLayer
+                                ? 'Hide Ceiling Layer'
+                                : 'Show Ceiling Layer',
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: widget.showCeilingLayer
+                                ? const Color(0xFFFFB300)
+                                : const Color(0xFF9E9E9E),
+                            side: BorderSide(
+                              color: widget.showCeilingLayer
+                                  ? const Color(0xFFFFB300)
+                                  : const Color(0xFF555555),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                          ),
+                          onPressed: widget.onCeilingLayerToggle,
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
                       child: SizedBox(
                         width: double.infinity,
                         child: ElevatedButton.icon(
@@ -987,6 +1028,24 @@ class _CategorySection extends StatelessWidget {
     );
   }
 
+  // Zone hint for lighting items
+  String? _lightZoneHint(FurnitureType t) {
+    switch (t) {
+      case FurnitureType.floorLampLight:
+        return '📍 Floor only';
+      case FurnitureType.tableLampLight:
+        return '🪑 On furniture';
+      case FurnitureType.wallLight:
+        return '🧱 Wall only';
+      case FurnitureType.ceilingSpot:
+        return '⬆ Ceiling layer';
+      case FurnitureType.windowLight:
+        return '🧱 Wall only';
+      default:
+        return null;
+    }
+  }
+
   Widget _buildGrid(Color accent) {
     final total = category.items.length + extraEntries.length;
     return Container(
@@ -995,17 +1054,19 @@ class _CategorySection extends StatelessWidget {
       child: GridView.builder(
         shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
           crossAxisSpacing: 6,
           mainAxisSpacing: 6,
-          childAspectRatio: 2.2,
+          // Lighting category items are slightly taller to show zone hint
+          childAspectRatio: category.name == 'Lighting' ? 1.7 : 2.2,
         ),
         itemCount: total,
         itemBuilder: (_, i) {
           if (i < category.items.length) {
             final item = category.items[i];
             final isSel = item.type == selectedType;
+            final zoneHint = _lightZoneHint(item.type);
             return GestureDetector(
               onTap: () => onItemTap(item.type),
               child: AnimatedContainer(
@@ -1034,27 +1095,48 @@ class _CategorySection extends StatelessWidget {
                           ),
                         ],
                 ),
-                child: Row(
+                child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      item.icon,
-                      size: 16,
-                      color: isSel ? accent : const Color(0xFF8E8A9A),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          item.icon,
+                          size: 14,
+                          color: isSel ? accent : const Color(0xFF8E8A9A),
+                        ),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            item.label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: isSel
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                              color: isSel ? accent : const Color(0xFFF0EDE8),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 5),
-                    Flexible(
-                      child: Text(
-                        item.label,
+                    if (zoneHint != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        zoneHint,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: isSel ? FontWeight.w700 : FontWeight.w500,
-                          color: isSel ? accent : const Color(0xFFF0EDE8),
+                          fontSize: 8.5,
+                          color: isSel
+                              ? accent.withOpacity(0.85)
+                              : const Color(0xFF6E6A7A),
                         ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),

@@ -27,8 +27,44 @@ enum FurnitureType {
   lamp,
   tvStand,
   rug,
+  // Lights — placed in 2D canvas with zone constraints
+  floorLampLight, // floor zone only
+  tableLampLight, // must be placed on furniture
+  wallLight, // wall zone only (snaps to wall)
+  ceilingSpot, // ceiling layer only
+  windowLight, // wall zone only (snaps to wall)
   // Custom (user-added via Add Furniture dialog)
   custom,
+}
+
+// ── Light placement zone ────────────────────────────────────────────────────
+enum LightZone { floor, wall, ceiling, onFurniture }
+
+extension FurnitureTypeLight on FurnitureType {
+  bool get isLight => const {
+    FurnitureType.floorLampLight,
+    FurnitureType.tableLampLight,
+    FurnitureType.wallLight,
+    FurnitureType.ceilingSpot,
+    FurnitureType.windowLight,
+  }.contains(this);
+
+  LightZone get lightZone {
+    switch (this) {
+      case FurnitureType.floorLampLight:
+        return LightZone.floor;
+      case FurnitureType.tableLampLight:
+        return LightZone.onFurniture;
+      case FurnitureType.wallLight:
+        return LightZone.wall;
+      case FurnitureType.ceilingSpot:
+        return LightZone.ceiling;
+      case FurnitureType.windowLight:
+        return LightZone.wall;
+      default:
+        return LightZone.floor;
+    }
+  }
 }
 
 // ── Category + item descriptors ────────────────────────────────────────────
@@ -190,6 +226,38 @@ const List<FurnitureCategory> kFurnitureCategories = [
         type: FurnitureType.rug,
         label: 'Rug',
         icon: Icons.texture,
+      ),
+    ],
+  ),
+  FurnitureCategory(
+    name: 'Lighting',
+    icon: Icons.wb_incandescent,
+    color: Color(0xFFFF8F00),
+    items: [
+      FurnitureCategoryItem(
+        type: FurnitureType.floorLampLight,
+        label: 'Floor Lamp',
+        icon: Icons.wb_incandescent,
+      ),
+      FurnitureCategoryItem(
+        type: FurnitureType.tableLampLight,
+        label: 'Table Lamp',
+        icon: Icons.light_mode,
+      ),
+      FurnitureCategoryItem(
+        type: FurnitureType.wallLight,
+        label: 'Wall Light',
+        icon: Icons.light,
+      ),
+      FurnitureCategoryItem(
+        type: FurnitureType.ceilingSpot,
+        label: 'Ceiling Spot',
+        icon: Icons.highlight,
+      ),
+      FurnitureCategoryItem(
+        type: FurnitureType.windowLight,
+        label: 'Window',
+        icon: Icons.window,
       ),
     ],
   ),

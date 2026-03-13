@@ -906,65 +906,7 @@
   </div>
 
 
-  <!-- Lighting toggle button -->
-  <div id="lighting-toggle" title="Lighting controls">
-    <span class="lt-icon">☀</span>
-    <span>Lighting</span>
-  </div>
-
-  <!-- Lighting panel -->
-  <div id="lighting-panel">
-    <div id="lp-header">
-      <div id="lp-title">Lighting</div>
-      <div id="lp-close">×</div>
-    </div>
-    <div id="lp-body">
-
-      <div class="lp-section-label">Presets</div>
-      <div class="lp-presets">
-        <div class="lp-preset" data-lp-preset="bright">☀ Bright</div>
-        <div class="lp-preset active" data-lp-preset="natural">🌤 Natural</div>
-        <div class="lp-preset" data-lp-preset="warm">🕯 Warm</div>
-        <div class="lp-preset" data-lp-preset="dim">🌑 Dim</div>
-        <div class="lp-preset" data-lp-preset="night">🌙 Night</div>
-      </div>
-
-      <div class="lp-divider"></div>
-
-      <div class="lp-row">
-        <span class="lp-label">Ambient</span>
-        <input type="range" class="lp-slider" id="lp-ambient" min="0" max="2" step="0.01" value="0.55">
-        <span class="lp-badge" id="lp-ambient-val">0.55</span>
-      </div>
-
-      <div class="lp-row">
-        <span class="lp-label">Sunlight</span>
-        <input type="range" class="lp-slider" id="lp-sun" min="0" max="3" step="0.01" value="1.2">
-        <span class="lp-badge" id="lp-sun-val">1.20</span>
-      </div>
-
-      <div class="lp-row">
-        <span class="lp-label">Fill</span>
-        <input type="range" class="lp-slider" id="lp-fill" min="0" max="1.5" step="0.01" value="0.3">
-        <span class="lp-badge" id="lp-fill-val">0.30</span>
-      </div>
-
-      <div class="lp-row">
-        <span class="lp-label">Room</span>
-        <input type="range" class="lp-slider" id="lp-room" min="0" max="2" step="0.01" value="0.7">
-        <span class="lp-badge" id="lp-room-val">0.70</span>
-      </div>
-
-      <div class="lp-row">
-        <span class="lp-label">Sky</span>
-        <input type="range" class="lp-slider" id="lp-hemi" min="0" max="1.5" step="0.01" value="0.4">
-        <span class="lp-badge" id="lp-hemi-val">0.40</span>
-      </div>
-
-      <div class="lp-divider"></div>
-      <button id="lp-reset">↺ Reset to Natural</button>
-    </div>
-  </div>
+  <!-- Lighting controls removed — lights placed in 2D canvas -->
 
   <script>
     var bank = {};
@@ -972,6 +914,13 @@
     // ── Module-level refs exposed from boot() ──────────────────────────────
     var _scene = null;
     var _controls = null;   // ← OrbitControls reference (NEW)
+
+    // ── Module-level light refs — set inside boot(), read by lighting panel ─
+    var _ambientLight = null;
+    var _sun = null;
+    var _fill = null;
+    var _roomLight = null;
+    var _hemiLight = null;
 
     var placedItems = [];
     var selectedEntry = null;
@@ -1245,16 +1194,21 @@
       }
 
       // ── Lights ───────────────────────────────────────────────────────────
-      var ambientLight = new THREE.AmbientLight(0xfff5e8, 0.55);
+      // Base ambient — kept at a comfortable level since user places lights manually
+      var ambientLight = new THREE.AmbientLight(0xfff5e8, 0.7);
       scene.add(ambientLight);
-      var hemiLight = new THREE.HemisphereLight(0xfff0d0, 0x6a5a40, 0.4);
+      _ambientLight = ambientLight;
+      var hemiLight = new THREE.HemisphereLight(0xfff0d0, 0x6a5a40, 0.5);
       scene.add(hemiLight);
-      var sun = new THREE.DirectionalLight(0xfff8f0, 1.2);
+      _hemiLight = hemiLight;
+      var sun = new THREE.DirectionalLight(0xfff8f0, 1.0);
       sun.position.set(8, 14, 6); sun.castShadow = true;
       sun.shadow.mapSize.set(2048, 2048); sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 60;
       sun.shadow.camera.left = sun.shadow.camera.bottom = -20; sun.shadow.camera.right = sun.shadow.camera.top = 20; sun.shadow.bias = -0.001;
       scene.add(sun);
+      _sun = sun;
       var fill = new THREE.DirectionalLight(0xc8d8ff, 0.3); fill.position.set(-6, 8, -6); scene.add(fill);
+      _fill = fill;
       // roomLight (point light) is created inside buildRoom and stored here so the panel can adjust it
       var roomLight = null;
 
@@ -1319,7 +1273,7 @@
         addCornice(new THREE.BoxGeometry(cd, ch, rd), new THREE.Vector3(rw - cd / 2, WH - ch / 2, rd / 2));
         var lf = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.05, 20), new THREE.MeshLambertMaterial({ color: 0xffffff }));
         lf.position.set(rw / 2, WH - 0.025, rd / 2); roomGroup.add(lf);
-        var pl = new THREE.PointLight(0xffe8c0, 0.7, rw * 2.5, 1.8); pl.position.set(rw / 2, WH - 0.15, rd / 2); roomGroup.add(pl); roomLight = pl;
+        var pl = new THREE.PointLight(0xffe8c0, 0.7, rw * 2.5, 1.8); pl.position.set(rw / 2, WH - 0.15, rd / 2); roomGroup.add(pl); roomLight = pl; _roomLight = pl;
         sun.shadow.camera.left = -(rw + 3); sun.shadow.camera.right = rw + 3; sun.shadow.camera.top = rd + 3; sun.shadow.camera.bottom = -(rd + 3); sun.shadow.camera.updateProjectionMatrix();
         var roomMax = Math.max(rw, rd);
         controls.target.set(rw / 2, WH * 0.35, rd / 2);
@@ -1340,6 +1294,21 @@
         ['nightstand', 'night_stand.glb', 0.60], ['plant', 'plant.glb', 1.20], ['lamp', 'floor_lamp.glb', 1.65],
         ['tvStand', 'tv_stand.glb', 0.50], ['rug', 'rug.glb', 0.02],
       ];
+
+      // Light types — handled specially in placeItem (no GLB, pure Three.js lights)
+      var LIGHT_TYPES = {
+        'floorLampLight': true, 'tableLampLight': true,
+        'wallLight': true, 'ceilingSpot': true, 'windowLight': true,
+      };
+
+      // Light configs: { color, intensity, height, type, distance, angle }
+      var LIGHT_CFG = {
+        'floorLampLight': { color: 0xFFD54F, intensity: 2.5, height: 1.6, kind: 'point', distance: 6, decay: 1.5 },
+        'tableLampLight': { color: 0xFFCC02, intensity: 1.8, height: 0.8, kind: 'point', distance: 3, decay: 2.0 },
+        'wallLight': { color: 0xFFB300, intensity: 2.0, height: 1.8, kind: 'spot', distance: 5, angle: Math.PI / 4 },
+        'ceilingSpot': { color: 0xFFFFFF, intensity: 3.0, height: 2.4, kind: 'spot', distance: 8, angle: Math.PI / 6 },
+        'windowLight': { color: 0xB3E5FC, intensity: 1.5, height: 1.2, kind: 'directional' },
+      };
       var MODEL_FILE = {}, MODEL_HEIGHT = {};
       MODEL_DEFS.forEach(function (d) { MODEL_FILE[d[0]] = d[1]; MODEL_HEIGHT[d[0]] = d[2]; });
 
@@ -1439,6 +1408,125 @@
         var tw = item.width * rs, td = item.height * rs;
         var cx = (item.x + item.width / 2) * rs, cz = (item.y + item.height / 2) * rs;
         var obj, baseScale = 1.0;
+
+        // ── Light items: spawn real Three.js lights instead of GLBs ─────────
+        if (LIGHT_TYPES[item.type]) {
+          var cfg = LIGHT_CFG[item.type] || { color: 0xffffff, intensity: 1.5, height: 1.5, kind: 'point', distance: 5, decay: 2 };
+          var roomH = 2.8; // default ceiling height in metres
+          var lightY = cfg.height;
+
+          // Ceiling spots mount at ceiling
+          if (item.type === 'ceilingSpot') lightY = roomH - 0.1;
+          // Wall lights mount at wall height
+          if (item.type === 'wallLight') lightY = cfg.height;
+          // Window light comes from the wall direction
+          if (item.type === 'windowLight') lightY = cfg.height;
+          // Table lamp: sit on top of whichever furniture is beneath it.
+          // We look for the placed item whose 2D footprint contains (cx, cz)
+          // and use MODEL_HEIGHT for that type as the surface height.
+          if (item.type === 'tableLampLight') {
+            var bestH = 0;
+            for (var pi = 0; pi < placedItems.length; pi++) {
+              var pe = placedItems[pi];
+              if (!pe.data || !pe.data.type) continue;
+              if (LIGHT_TYPES[pe.data.type]) continue; // skip other lights
+              var px = pe.data.x * rs;
+              var pz = pe.data.y * rs;
+              var ptw = pe.data.width * rs;
+              var ptd = pe.data.height * rs;
+              // Check if lamp centre is inside this item's footprint
+              if (cx >= px && cx <= px + ptw && cz >= pz && cz <= pz + ptd) {
+                var fh = (MODEL_HEIGHT[pe.data.type] || 0.75) * (pe.data.scaleFactor || 1.0);
+                if (fh > bestH) bestH = fh;
+              }
+            }
+            // Sit 0.05m above the furniture surface (lamp base)
+            lightY = bestH > 0 ? bestH + 0.05 : cfg.height;
+          }
+
+          var group = new THREE.Group();
+          group.position.set(cx, 0, cz);
+
+          if (cfg.kind === 'point') {
+            var pl = new THREE.PointLight(cfg.color, cfg.intensity * (item.scaleFactor || 1), cfg.distance, cfg.decay || 2);
+            pl.position.set(0, lightY, 0);
+            pl.castShadow = true;
+            pl.shadow.mapSize.set(512, 512);
+            pl.shadow.camera.near = 0.1;
+            pl.shadow.camera.far = cfg.distance;
+            group.add(pl);
+            // Visual mesh: glowing sphere
+            var sphereGeo = new THREE.SphereGeometry(0.08, 12, 8);
+            var sphereMat = new THREE.MeshStandardMaterial({
+              color: cfg.color, emissive: cfg.color, emissiveIntensity: 2.0
+            });
+            var sphere = new THREE.Mesh(sphereGeo, sphereMat);
+            sphere.position.set(0, lightY, 0);
+            group.add(sphere);
+            // Thin pole for floor/table lamps
+            if (item.type === 'floorLampLight' || item.type === 'tableLampLight') {
+              var poleH = lightY - 0.05;
+              var poleGeo = new THREE.CylinderGeometry(0.012, 0.012, poleH, 8);
+              var poleMat = new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.8, roughness: 0.3 });
+              var pole = new THREE.Mesh(poleGeo, poleMat);
+              pole.position.set(0, poleH / 2, 0);
+              group.add(pole);
+            }
+          } else if (cfg.kind === 'spot') {
+            var sl = new THREE.SpotLight(cfg.color, cfg.intensity * (item.scaleFactor || 1), cfg.distance, cfg.angle || Math.PI / 5, 0.3, 1.5);
+            sl.position.set(0, lightY, 0);
+            sl.target.position.set(0, 0, 0);
+            sl.castShadow = true;
+            sl.shadow.mapSize.set(1024, 1024);
+            sl.shadow.camera.near = 0.1;
+            sl.shadow.camera.far = cfg.distance;
+            sl.shadow.bias = -0.001;
+            group.add(sl);
+            group.add(sl.target);
+            // Visual: housing disc
+            var discGeo = new THREE.CylinderGeometry(0.12, 0.08, 0.08, 16);
+            var discMat = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.9, roughness: 0.2 });
+            var disc = new THREE.Mesh(discGeo, discMat);
+            disc.position.set(0, lightY, 0);
+            group.add(disc);
+            // Inner emissive
+            var innerGeo = new THREE.CircleGeometry(0.07, 16);
+            var innerMat = new THREE.MeshStandardMaterial({ color: cfg.color, emissive: cfg.color, emissiveIntensity: 3.0 });
+            var inner = new THREE.Mesh(innerGeo, innerMat);
+            inner.rotation.x = -Math.PI / 2;
+            inner.position.set(0, lightY - 0.04, 0);
+            group.add(inner);
+            // Ceiling spots: add a thin wire
+            if (item.type === 'ceilingSpot') {
+              var wireGeo = new THREE.CylinderGeometry(0.005, 0.005, roomH - lightY, 6);
+              var wireMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
+              var wire = new THREE.Mesh(wireGeo, wireMat);
+              wire.position.set(0, lightY + (roomH - lightY) / 2, 0);
+              group.add(wire);
+            }
+          } else if (cfg.kind === 'directional') {
+            // Window light — wide cool directional
+            var dl = new THREE.DirectionalLight(cfg.color, cfg.intensity * (item.scaleFactor || 1));
+            dl.position.set(0, lightY, 0);
+            // Point inward from the wall
+            dl.target.position.set(cx > 5 ? cx - 3 : cx + 3, 0, cz);
+            dl.castShadow = true;
+            dl.shadow.mapSize.set(1024, 1024);
+            dl.shadow.camera.left = -4; dl.shadow.camera.right = 4;
+            dl.shadow.camera.top = 4; dl.shadow.camera.bottom = -4;
+            dl.shadow.bias = -0.001;
+            group.add(dl);
+            group.add(dl.target);
+            // Visual: window frame rectangle
+            var frameGeo = new THREE.BoxGeometry(tw * 0.9, td * 4, 0.05);
+            var frameMat = new THREE.MeshStandardMaterial({ color: 0xB3E5FC, transparent: true, opacity: 0.5, emissive: 0xB3E5FC, emissiveIntensity: 0.8 });
+            var frame = new THREE.Mesh(frameGeo, frameMat);
+            frame.position.set(0, lightY, 0);
+            group.add(frame);
+          }
+          return { obj: group, baseScale: 1.0 };
+        }
+
         var tmpl = item.glbFile ? bank[item.glbFile] : bank[item.type];
         if (tmpl) {
           obj = tmpl.clone();
@@ -2050,131 +2138,8 @@
       // Click anywhere outside popup to close it
       document.addEventListener('click', function () { closeTCP(); });
 
-      // ── Lighting Panel ────────────────────────────────────────────────────
-      (function () {
-        var lpToggle = document.getElementById('lighting-toggle');
-        var lpPanel = document.getElementById('lighting-panel');
-        var lpClose = document.getElementById('lp-close');
-        var lpReset = document.getElementById('lp-reset');
+      // Lighting panel JS removed
 
-        // Sliders + badges
-        var sliders = {
-          ambient: { el: document.getElementById('lp-ambient'), badge: document.getElementById('lp-ambient-val'), min: 0, max: 2 },
-          sun: { el: document.getElementById('lp-sun'), badge: document.getElementById('lp-sun-val'), min: 0, max: 3 },
-          fill: { el: document.getElementById('lp-fill'), badge: document.getElementById('lp-fill-val'), min: 0, max: 1.5 },
-          room: { el: document.getElementById('lp-room'), badge: document.getElementById('lp-room-val'), min: 0, max: 2 },
-          hemi: { el: document.getElementById('lp-hemi'), badge: document.getElementById('lp-hemi-val'), min: 0, max: 1.5 },
-        };
-
-        // Lighting presets: { ambient, sun, fill, room, hemi }
-        var LP_PRESETS = {
-          bright: { ambient: 1.0, sun: 2.2, fill: 0.6, room: 1.2, hemi: 0.8 },
-          natural: { ambient: 0.55, sun: 1.2, fill: 0.3, room: 0.7, hemi: 0.4 },
-          warm: { ambient: 0.5, sun: 0.9, fill: 0.15, room: 1.2, hemi: 0.25 },
-          dim: { ambient: 0.25, sun: 0.5, fill: 0.1, room: 0.4, hemi: 0.15 },
-          night: { ambient: 0.05, sun: 0.0, fill: 0.0, room: 0.8, hemi: 0.05 },
-        };
-
-        function updateSliderTrack(slider) {
-          var s = slider.el;
-          var min = parseFloat(s.min), max = parseFloat(s.max), val = parseFloat(s.value);
-          var pct = ((val - min) / (max - min) * 100).toFixed(1);
-          s.style.setProperty('--pct', pct + '%');
-        }
-
-        function setValues(vals) {
-          Object.keys(vals).forEach(function (key) {
-            var sd = sliders[key]; if (!sd) return;
-            sd.el.value = vals[key];
-            sd.badge.textContent = parseFloat(vals[key]).toFixed(2);
-            updateSliderTrack(sd);
-          });
-          applyLights(vals);
-        }
-
-        function applyLights(vals) {
-          if (ambientLight) ambientLight.intensity = parseFloat(vals.ambient !== undefined ? vals.ambient : sliders.ambient.el.value);
-          if (sun) sun.intensity = parseFloat(vals.sun !== undefined ? vals.sun : sliders.sun.el.value);
-          if (fill) fill.intensity = parseFloat(vals.fill !== undefined ? vals.fill : sliders.fill.el.value);
-          if (roomLight) roomLight.intensity = parseFloat(vals.room !== undefined ? vals.room : sliders.room.el.value);
-          if (hemiLight) hemiLight.intensity = parseFloat(vals.hemi !== undefined ? vals.hemi : sliders.hemi.el.value);
-        }
-
-        function currentVals() {
-          var v = {};
-          Object.keys(sliders).forEach(function (k) { v[k] = parseFloat(sliders[k].el.value); });
-          return v;
-        }
-
-        function clearPresetActive() {
-          document.querySelectorAll('.lp-preset').forEach(function (el) { el.classList.remove('active'); });
-        }
-
-        // Attach slider listeners
-        Object.keys(sliders).forEach(function (key) {
-          var sd = sliders[key];
-          sd.el.addEventListener('mousedown', function (e) { e.stopPropagation(); });
-          sd.el.addEventListener('input', function (e) {
-            e.stopPropagation();
-            var val = parseFloat(this.value);
-            sd.badge.textContent = val.toFixed(2);
-            updateSliderTrack(sd);
-            clearPresetActive();
-            applyLights(currentVals());
-          });
-          updateSliderTrack(sd);
-        });
-
-        // Preset buttons
-        document.querySelectorAll('.lp-preset').forEach(function (btn) {
-          btn.addEventListener('click', function (e) {
-            e.stopPropagation();
-            var key = this.dataset.lpPreset;
-            if (!LP_PRESETS[key]) return;
-            clearPresetActive();
-            this.classList.add('active');
-            setValues(LP_PRESETS[key]);
-          });
-          btn.addEventListener('mousedown', function (e) { e.stopPropagation(); });
-        });
-
-        // Toggle panel open/close
-        lpToggle.addEventListener('click', function (e) {
-          e.stopPropagation();
-          var open = lpPanel.classList.toggle('open');
-          lpToggle.classList.toggle('active', open);
-        });
-        lpToggle.addEventListener('mousedown', function (e) { e.stopPropagation(); });
-
-        // Close button
-        lpClose.addEventListener('click', function (e) {
-          e.stopPropagation();
-          lpPanel.classList.remove('open');
-          lpToggle.classList.remove('active');
-        });
-        lpClose.addEventListener('mousedown', function (e) { e.stopPropagation(); });
-
-        // Stop panel clicks from leaking
-        lpPanel.addEventListener('mousedown', function (e) { e.stopPropagation(); });
-        lpPanel.addEventListener('click', function (e) { e.stopPropagation(); });
-
-        // Reset button
-        lpReset.addEventListener('click', function (e) {
-          e.stopPropagation();
-          clearPresetActive();
-          document.querySelector('[data-lp-preset="natural"]').classList.add('active');
-          setValues(LP_PRESETS.natural);
-        });
-        lpReset.addEventListener('mousedown', function (e) { e.stopPropagation(); });
-
-        // Close panel when clicking elsewhere
-        document.addEventListener('click', function () {
-          if (lpPanel.classList.contains('open')) {
-            lpPanel.classList.remove('open');
-            lpToggle.classList.remove('active');
-          }
-        });
-      })();
 
       // ── Top-down thumbnail generator ─────────────────────────────────────
       function generateThumbnails() {
