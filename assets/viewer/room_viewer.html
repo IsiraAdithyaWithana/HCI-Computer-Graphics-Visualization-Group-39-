@@ -1419,40 +1419,49 @@
         });
 
         // ── Post-placement pass: reposition table lamps using ACTUAL 3D bbox ──
-        // Now that all furniture is placed and in the scene, we can measure
-        // real rendered heights instead of relying on MODEL_HEIGHT estimates.
         placedItems.forEach(function (entry) {
           if (entry.data.type !== 'tableLampLight') return;
           var lampCx = (entry.data.x + entry.data.width / 2) * rs;
           var lampCz = (entry.data.y + entry.data.height / 2) * rs;
-          // Find the furniture item directly beneath this lamp
+
           var bestH = 0;
+          var hostFLeft = 0, hostFRight = 0, hostFFront = 0, hostFBack = 0, foundHost = false;
+
           placedItems.forEach(function (other) {
             if (other === entry) return;
             if (LIGHT_TYPES[other.data.type]) return;
-            // Get the ACTUAL world-space top of this furniture piece
             var bb = new THREE.Box3().setFromObject(other.obj);
             var fLeft = other.data.x * rs;
             var fRight = (other.data.x + other.data.width) * rs;
             var fFront = other.data.y * rs;
             var fBack = (other.data.y + other.data.height) * rs;
             if (lampCx >= fLeft && lampCx <= fRight && lampCz >= fFront && lampCz <= fBack) {
-              if (bb.max.y > bestH) bestH = bb.max.y;
+              if (bb.max.y > bestH) {
+                bestH = bb.max.y;
+                hostFLeft = fLeft; hostFRight = fRight;
+                hostFFront = fFront; hostFBack = fBack;
+                foundHost = true;
+              }
             }
           });
+
           if (bestH > 0) {
-            // SET (not add) the Y offset so there's no accumulation.
-            // Children were placed at floor (y~=0) in placeItem.
-            // We move them up by exactly bestH = actual surface top.
+            // Clamp lamp group XZ so entire mesh footprint stays on table surface.
+            // Get the mesh's XZ half-extents from its bbox to know how much margin needed.
+            var meshHalfW = (entry.data.width * rs) / 2;
+            var meshHalfD = (entry.data.height * rs) / 2;
+            if (foundHost) {
+              var clampedX = Math.max(hostFLeft + meshHalfW, Math.min(hostFRight - meshHalfW, lampCx));
+              var clampedZ = Math.max(hostFFront + meshHalfD, Math.min(hostFBack - meshHalfD, lampCz));
+              entry.obj.position.x = clampedX;
+              entry.obj.position.z = clampedZ;
+            }
+
             entry.obj.children.forEach(function (child) {
               if (child.isPointLight || child.isSpotLight) {
-                // Light: place bulb above the surface
                 child.position.y = bestH + cfg_tableLamp_height;
                 if (child.target) child.target.position.set(0, bestH, 0);
               } else {
-                // Mesh: bottom of mesh at bestH
-                // mesh.position.y was set to -bb4.min.y*sc4 (base at 0)
-                // We just add bestH to lift that base to the surface
                 child.position.y += bestH;
               }
             });
@@ -1546,14 +1555,11 @@
               var scD = natD > 0.001 ? (0.5 * sf) / natD : 1.0;
               var sc = Math.min(scH, scD);
               mesh.scale.setScalar(sc);
-              // Flip so face points downward
-              mesh.rotation.x = Math.PI;
-              // MATH: after rotation.x=PI, a vertex originally at local y
-              // ends up at world y = -y*sc + position.y.
-              // The HIGHEST world point comes from the LOWEST pre-rot local y:
-              //   highest_world_y = -bb0.min.y*sc + position.y = roomH
-              // => position.y = roomH + bb0.min.y * sc
-              mesh.position.y = roomH + bb0.min.y * sc;
+              // The ceiling_spot.glb faces upward naturally (emissive ring on top).
+              // No X flip needed — place it so its TOP (bb0.max.y) is flush at ceiling.
+              // position.y = roomH - bb0.max.y * sc  =>  max.y * sc + position.y = roomH
+              mesh.rotation.set(0, 0, 0);
+              mesh.position.y = roomH - bb0.max.y * sc;
               group.add(mesh);
             }
             // SpotLight pointing straight down from ceiling
@@ -1582,6 +1588,7 @@
             pl2.position.set(0, cfg.height * sf, 0);
             pl2.castShadow = true; pl2.shadow.mapSize.set(512, 512);
             group.add(pl2);
+            group.rotation.y = -(item.rotation || 0);
 
           } else if (item.type === 'tableLampLight') {
             // Place at floor (y=0) initially. The post-placement pass runs AFTER
@@ -1602,6 +1609,8 @@
             pl3.position.set(0, cfg.height * sf, 0); // above floor; post-pass will lift
             pl3.castShadow = true; pl3.shadow.mapSize.set(512, 512);
             group.add(pl3);
+            // Apply 2D canvas rotation so lamp faces the same direction as placed
+            group.rotation.y = -(item.rotation || 0);
 
           } else if (item.type === 'wallLight') {
             // Detect nearest wall, snap flush to it
