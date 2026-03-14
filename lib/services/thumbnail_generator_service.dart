@@ -25,26 +25,17 @@ class ThumbnailGeneratorService {
   static const _builtinJobKey = '__builtins__';
 
   static const List<String> builtinKeys = [
-    'chair',
-    'sofa',
-    'armchair',
-    'bench',
-    'stool',
-    'table',
-    'coffeeTable',
-    'desk',
-    'sideTable',
-    'wardrobe',
-    'bookshelf',
-    'cabinet',
-    'dresser',
-    'bed',
-    'singleBed',
-    'nightstand',
-    'plant',
-    'lamp',
-    'tvStand',
-    'rug',
+    'chair', 'sofa', 'armchair', 'bench', 'stool',
+    'table', 'coffeeTable', 'desk', 'sideTable',
+    'wardrobe', 'bookshelf', 'cabinet', 'dresser',
+    'bed', 'singleBed', 'nightstand',
+    'plant', 'lamp', 'tvStand', 'rug',
+    // Light fixture GLBs
+    'floorLampLight',
+    'tableLampLight',
+    'wallLight',
+    'ceilingSpot',
+    'windowLight',
   ];
 
   bool get isGeneratingBuiltins => _inProgress.contains(_builtinJobKey);

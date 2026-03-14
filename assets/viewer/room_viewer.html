@@ -910,6 +910,10 @@
 
   <script>
     var bank = {};
+    var lightBank = {};  // GLB models for light fixtures
+    var _WH = 3.2;       // room ceiling height — must match buildRoom's WH
+    var _scenePayload = null; // set by onReady so placeItem can access all items
+    var _sceneRs = 1.0;  // same rs used for all items in current scene
 
     // ── Module-level refs exposed from boot() ──────────────────────────────
     var _scene = null;
@@ -1000,7 +1004,7 @@
 
       var tc = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 500);
 
-      // All 20 built-in GLBs
+      // All 20 built-in GLBs + 5 light fixture GLBs
       var BUILTIN_DEFS = [
         ['chair', 'chair.glb'], ['sofa', 'sofa.glb'], ['armchair', 'arm_chair.glb'],
         ['bench', 'bench.glb'], ['stool', 'stool.glb'], ['table', 'table.glb'],
@@ -1009,6 +1013,12 @@
         ['dresser', 'dresser.glb'], ['bed', 'double_bed.glb'], ['singleBed', 'single_bed.glb'],
         ['nightstand', 'night_stand.glb'], ['plant', 'plant.glb'], ['lamp', 'floor_lamp.glb'],
         ['tvStand', 'tv_stand.glb'], ['rug', 'rug.glb'],
+        // Light fixture GLBs
+        ['floorLampLight', 'floor_lamp_light.glb'],
+        ['tableLampLight', 'table_lamp_light.glb'],
+        ['wallLight', 'wall_light.glb'],
+        ['ceilingSpot', 'ceiling_spot.glb'],
+        ['windowLight', 'window_light.glb'],
       ];
 
       // If a specific GLB was requested, just do that one
@@ -1229,7 +1239,7 @@
       var roomGroup = new THREE.Group(); scene.add(roomGroup);
       function buildRoom(rw, rd) {
         while (roomGroup.children.length) roomGroup.remove(roomGroup.children[0]);
-        var WH = 3.2;
+        var WH = 3.2; _WH = WH; // keep module-level in sync
         var _p = getPayload() || {};
         // Use exact user-chosen colors: sRGB hex → linear → renderer applies sRGB encoding → exact color on screen
         var floorColor = _p.floorColor ? srgbHexToLinear(_p.floorColor) : new THREE.Color(0xd4c4a8).convertSRGBToLinear();
@@ -1271,9 +1281,9 @@
         addCornice(new THREE.BoxGeometry(rw, ch, cd), new THREE.Vector3(rw / 2, WH - ch / 2, rd - cd / 2));
         addCornice(new THREE.BoxGeometry(cd, ch, rd), new THREE.Vector3(cd / 2, WH - ch / 2, rd / 2));
         addCornice(new THREE.BoxGeometry(cd, ch, rd), new THREE.Vector3(rw - cd / 2, WH - ch / 2, rd / 2));
-        var lf = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.05, 20), new THREE.MeshLambertMaterial({ color: 0xffffff }));
-        lf.position.set(rw / 2, WH - 0.025, rd / 2); roomGroup.add(lf);
-        var pl = new THREE.PointLight(0xffe8c0, 0.7, rw * 2.5, 1.8); pl.position.set(rw / 2, WH - 0.15, rd / 2); roomGroup.add(pl); roomLight = pl; _roomLight = pl;
+        // Decorative ceiling disc removed — users place their own ceiling lights.
+        // Keep a dim fill PointLight so the room isn't pitch black with no lights placed.
+        var pl = new THREE.PointLight(0xffe8c0, 0.3, rw * 2.5, 1.8); pl.position.set(rw / 2, WH - 0.15, rd / 2); roomGroup.add(pl); roomLight = pl; _roomLight = pl;
         sun.shadow.camera.left = -(rw + 3); sun.shadow.camera.right = rw + 3; sun.shadow.camera.top = rd + 3; sun.shadow.camera.bottom = -(rd + 3); sun.shadow.camera.updateProjectionMatrix();
         var roomMax = Math.max(rw, rd);
         controls.target.set(rw / 2, WH * 0.35, rd / 2);
@@ -1287,7 +1297,7 @@
       // ── Model definitions ────────────────────────────────────────────────
       var MODEL_DEFS = [
         ['chair', 'chair.glb', 0.90], ['sofa', 'sofa.glb', 0.85], ['armchair', 'arm_chair.glb', 0.88],
-        ['bench', 'bench.glb', 0.50], ['stool', 'stool.glb', 0.65], ['table', 'table.glb', 0.75],
+        ['bench', 'bench.glb', 0.50], ['stool', 'stool.glb', 0.65], ['table', 'table.glb', 0.80],
         ['coffeeTable', 'coffee_table.glb', 0.45], ['desk', 'desk.glb', 0.75], ['sideTable', 'side_table.glb', 0.60],
         ['wardrobe', 'wardrobe.glb', 1.90], ['bookshelf', 'book_shelf.glb', 1.80], ['cabinet', 'cabinet.glb', 0.85],
         ['dresser', 'dresser.glb', 1.10], ['bed', 'double_bed.glb', 0.55], ['singleBed', 'single_bed.glb', 0.55],
@@ -1295,19 +1305,31 @@
         ['tvStand', 'tv_stand.glb', 0.50], ['rug', 'rug.glb', 0.02],
       ];
 
-      // Light types — handled specially in placeItem (no GLB, pure Three.js lights)
+      // Light fixture GLB files + their target heights (metres)
+      var LIGHT_MODEL_DEFS = [
+        ['floorLampLight', 'floor_lamp_light.glb', 1.65],
+        ['tableLampLight', 'table_lamp_light.glb', 0.45],
+        ['wallLight', 'wall_light.glb', 0.50],
+        ['ceilingSpot', 'ceiling_spot.glb', 0.12],
+        ['windowLight', 'window_light.glb', 1.50],
+      ];
+      var LIGHT_MODEL_FILE = {}, LIGHT_MODEL_HEIGHT = {};
+      LIGHT_MODEL_DEFS.forEach(function (d) { LIGHT_MODEL_FILE[d[0]] = d[1]; LIGHT_MODEL_HEIGHT[d[0]] = d[2]; });
+
+      // Light types — use GLB mesh + Three.js light combo in placeItem
       var LIGHT_TYPES = {
         'floorLampLight': true, 'tableLampLight': true,
         'wallLight': true, 'ceilingSpot': true, 'windowLight': true,
       };
 
-      // Light configs: { color, intensity, height, type, distance, angle }
+      // Three.js light configs (illumination parameters only — mesh comes from GLB)
+      var cfg_tableLamp_height = 0.40; // PointLight height above lamp base
       var LIGHT_CFG = {
-        'floorLampLight': { color: 0xFFD54F, intensity: 2.5, height: 1.6, kind: 'point', distance: 6, decay: 1.5 },
-        'tableLampLight': { color: 0xFFCC02, intensity: 1.8, height: 0.8, kind: 'point', distance: 3, decay: 2.0 },
-        'wallLight': { color: 0xFFB300, intensity: 2.0, height: 1.8, kind: 'spot', distance: 5, angle: Math.PI / 4 },
-        'ceilingSpot': { color: 0xFFFFFF, intensity: 3.0, height: 2.4, kind: 'spot', distance: 8, angle: Math.PI / 6 },
-        'windowLight': { color: 0xB3E5FC, intensity: 1.5, height: 1.2, kind: 'directional' },
+        'floorLampLight': { color: 0xFFD54F, intensity: 2.5, height: 1.55, kind: 'point', distance: 7, decay: 1.5 },
+        'tableLampLight': { color: 0xFFCC02, intensity: 2.0, height: 0.40, kind: 'point', distance: 3, decay: 2.0 },
+        'wallLight': { color: 0xFFB300, intensity: 2.5, height: 1.80, kind: 'point', distance: 5, decay: 1.8 },
+        'ceilingSpot': { color: 0xFFFFFF, intensity: 3.5, height: 2.70, kind: 'spot', distance: 8, angle: Math.PI / 6 },
+        'windowLight': { color: 0xCDE8FF, intensity: 1.8, height: 1.20, kind: 'directional' },
       };
       var MODEL_FILE = {}, MODEL_HEIGHT = {};
       MODEL_DEFS.forEach(function (d) { MODEL_FILE[d[0]] = d[1]; MODEL_HEIGHT[d[0]] = d[2]; });
@@ -1344,6 +1366,8 @@
         var payload = getPayload();
         if (!payload || !payload.items) { buildRoom(10, 10); hideLoading(); return; }
         var TARGET_M = 12, rs = TARGET_M / Math.max(payload.roomWidth, payload.roomDepth);
+        _scenePayload = payload; // make payload accessible inside placeItem
+        _sceneRs = rs;
         buildRoom(payload.roomWidth * rs, payload.roomDepth * rs);
         var fg = new THREE.Group(); scene.add(fg);
         placedItems = [];
@@ -1394,6 +1418,47 @@
           deselectFurniture();
         });
 
+        // ── Post-placement pass: reposition table lamps using ACTUAL 3D bbox ──
+        // Now that all furniture is placed and in the scene, we can measure
+        // real rendered heights instead of relying on MODEL_HEIGHT estimates.
+        placedItems.forEach(function (entry) {
+          if (entry.data.type !== 'tableLampLight') return;
+          var lampCx = (entry.data.x + entry.data.width / 2) * rs;
+          var lampCz = (entry.data.y + entry.data.height / 2) * rs;
+          // Find the furniture item directly beneath this lamp
+          var bestH = 0;
+          placedItems.forEach(function (other) {
+            if (other === entry) return;
+            if (LIGHT_TYPES[other.data.type]) return;
+            // Get the ACTUAL world-space top of this furniture piece
+            var bb = new THREE.Box3().setFromObject(other.obj);
+            var fLeft = other.data.x * rs;
+            var fRight = (other.data.x + other.data.width) * rs;
+            var fFront = other.data.y * rs;
+            var fBack = (other.data.y + other.data.height) * rs;
+            if (lampCx >= fLeft && lampCx <= fRight && lampCz >= fFront && lampCz <= fBack) {
+              if (bb.max.y > bestH) bestH = bb.max.y;
+            }
+          });
+          if (bestH > 0) {
+            // SET (not add) the Y offset so there's no accumulation.
+            // Children were placed at floor (y~=0) in placeItem.
+            // We move them up by exactly bestH = actual surface top.
+            entry.obj.children.forEach(function (child) {
+              if (child.isPointLight || child.isSpotLight) {
+                // Light: place bulb above the surface
+                child.position.y = bestH + cfg_tableLamp_height;
+                if (child.target) child.target.position.set(0, bestH, 0);
+              } else {
+                // Mesh: bottom of mesh at bestH
+                // mesh.position.y was set to -bb4.min.y*sc4 (base at 0)
+                // We just add bestH to lift that base to the surface
+                child.position.y += bestH;
+              }
+            });
+          }
+        });
+
         console.log('Scene ready — ' + payload.items.length + ' items placed');
         setStatus('Done!', 100);
 
@@ -1409,121 +1474,196 @@
         var cx = (item.x + item.width / 2) * rs, cz = (item.y + item.height / 2) * rs;
         var obj, baseScale = 1.0;
 
-        // ── Light items: spawn real Three.js lights instead of GLBs ─────────
+        // ── Light items: GLB fixture mesh + Three.js light source ─────────
         if (LIGHT_TYPES[item.type]) {
           var cfg = LIGHT_CFG[item.type] || { color: 0xffffff, intensity: 1.5, height: 1.5, kind: 'point', distance: 5, decay: 2 };
-          var roomH = 2.8; // default ceiling height in metres
-          var lightY = cfg.height;
-
-          // Ceiling spots mount at ceiling
-          if (item.type === 'ceilingSpot') lightY = roomH - 0.1;
-          // Wall lights mount at wall height
-          if (item.type === 'wallLight') lightY = cfg.height;
-          // Window light comes from the wall direction
-          if (item.type === 'windowLight') lightY = cfg.height;
-          // Table lamp: sit on top of whichever furniture is beneath it.
-          // We look for the placed item whose 2D footprint contains (cx, cz)
-          // and use MODEL_HEIGHT for that type as the surface height.
-          if (item.type === 'tableLampLight') {
-            var bestH = 0;
-            for (var pi = 0; pi < placedItems.length; pi++) {
-              var pe = placedItems[pi];
-              if (!pe.data || !pe.data.type) continue;
-              if (LIGHT_TYPES[pe.data.type]) continue; // skip other lights
-              var px = pe.data.x * rs;
-              var pz = pe.data.y * rs;
-              var ptw = pe.data.width * rs;
-              var ptd = pe.data.height * rs;
-              // Check if lamp centre is inside this item's footprint
-              if (cx >= px && cx <= px + ptw && cz >= pz && cz <= pz + ptd) {
-                var fh = (MODEL_HEIGHT[pe.data.type] || 0.75) * (pe.data.scaleFactor || 1.0);
-                if (fh > bestH) bestH = fh;
-              }
-            }
-            // Sit 0.05m above the furniture surface (lamp base)
-            lightY = bestH > 0 ? bestH + 0.05 : cfg.height;
-          }
-
+          var sf = item.scaleFactor || 1.0;
+          var roomH = _WH; // use actual room height from buildRoom
           var group = new THREE.Group();
-          group.position.set(cx, 0, cz);
 
-          if (cfg.kind === 'point') {
-            var pl = new THREE.PointLight(cfg.color, cfg.intensity * (item.scaleFactor || 1), cfg.distance, cfg.decay || 2);
-            pl.position.set(0, lightY, 0);
-            pl.castShadow = true;
-            pl.shadow.mapSize.set(512, 512);
-            pl.shadow.camera.near = 0.1;
-            pl.shadow.camera.far = cfg.distance;
-            group.add(pl);
-            // Visual mesh: glowing sphere
-            var sphereGeo = new THREE.SphereGeometry(0.08, 12, 8);
-            var sphereMat = new THREE.MeshStandardMaterial({
-              color: cfg.color, emissive: cfg.color, emissiveIntensity: 2.0
+          // ── Helper: deep-clone a lightBank GLB scene ───────────────────
+          function cloneLightMesh(type) {
+            if (!lightBank[type]) return null;
+            var m = lightBank[type].clone();
+            m.traverse(function (c) {
+              if (c.isMesh && c.material) {
+                c.material = Array.isArray(c.material)
+                  ? c.material.map(function (mt) { return mt.clone(); })
+                  : c.material.clone();
+                c.castShadow = true; c.receiveShadow = true;
+              }
             });
-            var sphere = new THREE.Mesh(sphereGeo, sphereMat);
-            sphere.position.set(0, lightY, 0);
-            group.add(sphere);
-            // Thin pole for floor/table lamps
-            if (item.type === 'floorLampLight' || item.type === 'tableLampLight') {
-              var poleH = lightY - 0.05;
-              var poleGeo = new THREE.CylinderGeometry(0.012, 0.012, poleH, 8);
-              var poleMat = new THREE.MeshStandardMaterial({ color: 0x555555, metalness: 0.8, roughness: 0.3 });
-              var pole = new THREE.Mesh(poleGeo, poleMat);
-              pole.position.set(0, poleH / 2, 0);
-              group.add(pole);
-            }
-          } else if (cfg.kind === 'spot') {
-            var sl = new THREE.SpotLight(cfg.color, cfg.intensity * (item.scaleFactor || 1), cfg.distance, cfg.angle || Math.PI / 5, 0.3, 1.5);
-            sl.position.set(0, lightY, 0);
-            sl.target.position.set(0, 0, 0);
-            sl.castShadow = true;
-            sl.shadow.mapSize.set(1024, 1024);
-            sl.shadow.camera.near = 0.1;
-            sl.shadow.camera.far = cfg.distance;
-            sl.shadow.bias = -0.001;
-            group.add(sl);
-            group.add(sl.target);
-            // Visual: housing disc
-            var discGeo = new THREE.CylinderGeometry(0.12, 0.08, 0.08, 16);
-            var discMat = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.9, roughness: 0.2 });
-            var disc = new THREE.Mesh(discGeo, discMat);
-            disc.position.set(0, lightY, 0);
-            group.add(disc);
-            // Inner emissive
-            var innerGeo = new THREE.CircleGeometry(0.07, 16);
-            var innerMat = new THREE.MeshStandardMaterial({ color: cfg.color, emissive: cfg.color, emissiveIntensity: 3.0 });
-            var inner = new THREE.Mesh(innerGeo, innerMat);
-            inner.rotation.x = -Math.PI / 2;
-            inner.position.set(0, lightY - 0.04, 0);
-            group.add(inner);
-            // Ceiling spots: add a thin wire
-            if (item.type === 'ceilingSpot') {
-              var wireGeo = new THREE.CylinderGeometry(0.005, 0.005, roomH - lightY, 6);
-              var wireMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
-              var wire = new THREE.Mesh(wireGeo, wireMat);
-              wire.position.set(0, lightY + (roomH - lightY) / 2, 0);
-              group.add(wire);
-            }
-          } else if (cfg.kind === 'directional') {
-            // Window light — wide cool directional
-            var dl = new THREE.DirectionalLight(cfg.color, cfg.intensity * (item.scaleFactor || 1));
-            dl.position.set(0, lightY, 0);
-            // Point inward from the wall
-            dl.target.position.set(cx > 5 ? cx - 3 : cx + 3, 0, cz);
-            dl.castShadow = true;
-            dl.shadow.mapSize.set(1024, 1024);
-            dl.shadow.camera.left = -4; dl.shadow.camera.right = 4;
-            dl.shadow.camera.top = 4; dl.shadow.camera.bottom = -4;
-            dl.shadow.bias = -0.001;
-            group.add(dl);
-            group.add(dl.target);
-            // Visual: window frame rectangle
-            var frameGeo = new THREE.BoxGeometry(tw * 0.9, td * 4, 0.05);
-            var frameMat = new THREE.MeshStandardMaterial({ color: 0xB3E5FC, transparent: true, opacity: 0.5, emissive: 0xB3E5FC, emissiveIntensity: 0.8 });
-            var frame = new THREE.Mesh(frameGeo, frameMat);
-            frame.position.set(0, lightY, 0);
-            group.add(frame);
+            return m;
           }
+
+          // ── Helper: auto-scale GLB to a target dimension ───────────────
+          function scaleMeshTo(mesh, targetH) {
+            mesh.scale.set(1, 1, 1); mesh.updateMatrixWorld(true);
+            var b = new THREE.Box3().setFromObject(mesh);
+            var s = b.getSize(new THREE.Vector3());
+            var dim = Math.max(s.x, s.y, s.z);
+            var sc = dim > 0.001 ? targetH / dim : 1.0;
+            mesh.scale.setScalar(sc * sf);
+            return sc;
+          }
+
+          // ── Helper: nearest wall detection ─────────────────────────────
+          function nearestWall(rw, rd) {
+            var dL = cx, dR = rw - cx, dF = cz, dB = rd - cz;
+            var m = Math.min(dL, dR, dF, dB);
+            if (m === dL) return { rotY: Math.PI / 2, gx: 0.06, gz: cz };
+            if (m === dR) return { rotY: -Math.PI / 2, gx: rw - 0.06, gz: cz };
+            if (m === dF) return { rotY: 0, gx: cx, gz: 0.06 };
+            return { rotY: Math.PI, gx: cx, gz: rd - 0.06 };
+          }
+
+          // ── Helper: get bbox from a detached GLB using Three.js Box3 ──
+          // We add the mesh temporarily to a dummy scene so matrixWorld is
+          // valid, compute the bbox, then remove it. Simple and reliable.
+          function meshBBoxDirect(root) {
+            var dummy = new THREE.Object3D();
+            dummy.add(root);
+            root.updateMatrixWorld(true);
+            var box = new THREE.Box3().setFromObject(root);
+            dummy.remove(root);
+            return { min: box.min, max: box.max };
+          }
+
+          // ── Place each light type ──────────────────────────────────────
+          if (item.type === 'ceilingSpot') {
+            group.position.set(cx, 0, cz);
+            var mesh = cloneLightMesh('ceilingSpot');
+            if (mesh) {
+              // Reset to identity first
+              mesh.scale.set(1, 1, 1); mesh.rotation.set(0, 0, 0); mesh.position.set(0, 0, 0);
+              // Compute bbox directly from geometry (no world matrix dependency)
+              var tgtH = LIGHT_MODEL_HEIGHT['ceilingSpot'] * sf;
+              var bb0 = meshBBoxDirect(mesh);
+              var natH = bb0.max.y - bb0.min.y;
+              var natD = Math.max(bb0.max.x - bb0.min.x, bb0.max.z - bb0.min.z);
+              // Choose scale: fit height, cap diameter at 0.5m
+              var scH = natH > 0.001 ? tgtH / natH : 1.0;
+              var scD = natD > 0.001 ? (0.5 * sf) / natD : 1.0;
+              var sc = Math.min(scH, scD);
+              mesh.scale.setScalar(sc);
+              // Flip so face points downward
+              mesh.rotation.x = Math.PI;
+              // MATH: after rotation.x=PI, a vertex originally at local y
+              // ends up at world y = -y*sc + position.y.
+              // The HIGHEST world point comes from the LOWEST pre-rot local y:
+              //   highest_world_y = -bb0.min.y*sc + position.y = roomH
+              // => position.y = roomH + bb0.min.y * sc
+              mesh.position.y = roomH + bb0.min.y * sc;
+              group.add(mesh);
+            }
+            // SpotLight pointing straight down from ceiling
+            var sl2 = new THREE.SpotLight(cfg.color, cfg.intensity * sf, cfg.distance, cfg.angle || Math.PI / 7, 0.25, 1.5);
+            sl2.position.set(0, roomH - 0.04, 0);
+            sl2.target.position.set(0, 0, 0);
+            sl2.castShadow = true; sl2.shadow.mapSize.set(1024, 1024);
+            sl2.shadow.bias = -0.002;
+            group.add(sl2); group.add(sl2.target);
+
+          } else if (item.type === 'floorLampLight') {
+            group.position.set(cx, 0, cz);
+            var mesh = cloneLightMesh('floorLampLight');
+            if (mesh) {
+              mesh.scale.set(1, 1, 1); mesh.rotation.set(0, 0, 0); mesh.position.set(0, 0, 0);
+              var tgtH2 = LIGHT_MODEL_HEIGHT['floorLampLight'] * sf;
+              var bb3 = meshBBoxDirect(mesh);
+              var sc3 = (bb3.max.y - bb3.min.y) > 0.001 ? tgtH2 / (bb3.max.y - bb3.min.y) : 1.0;
+              mesh.scale.setScalar(sc3);
+              // Sit base on floor: bottom of mesh at y=0
+              // bottom world y = bb3.min.y * sc3 + position.y = 0
+              mesh.position.y = -bb3.min.y * sc3;
+              group.add(mesh);
+            }
+            var pl2 = new THREE.PointLight(cfg.color, cfg.intensity * sf, cfg.distance, cfg.decay || 1.5);
+            pl2.position.set(0, cfg.height * sf, 0);
+            pl2.castShadow = true; pl2.shadow.mapSize.set(512, 512);
+            group.add(pl2);
+
+          } else if (item.type === 'tableLampLight') {
+            // Place at floor (y=0) initially. The post-placement pass runs AFTER
+            // all items are in the scene and moves lamps to the correct surface
+            // height using actual 3D bounding boxes — no double-count.
+            group.position.set(cx, 0, cz);
+            var mesh = cloneLightMesh('tableLampLight');
+            if (mesh) {
+              mesh.scale.set(1, 1, 1); mesh.rotation.set(0, 0, 0); mesh.position.set(0, 0, 0);
+              var tgtH4 = LIGHT_MODEL_HEIGHT['tableLampLight'] * sf;
+              var bb4 = meshBBoxDirect(mesh);
+              var sc4 = (bb4.max.y - bb4.min.y) > 0.001 ? tgtH4 / (bb4.max.y - bb4.min.y) : 1.0;
+              mesh.scale.setScalar(sc4);
+              mesh.position.y = -bb4.min.y * sc4; // base at y=0 (floor)
+              group.add(mesh);
+            }
+            var pl3 = new THREE.PointLight(cfg.color, cfg.intensity * sf, cfg.distance, cfg.decay || 2.0);
+            pl3.position.set(0, cfg.height * sf, 0); // above floor; post-pass will lift
+            pl3.castShadow = true; pl3.shadow.mapSize.set(512, 512);
+            group.add(pl3);
+
+          } else if (item.type === 'wallLight') {
+            // Detect nearest wall, snap flush to it
+            var rw3 = 0, rd3 = 0;
+            if (_scenePayload) {
+              rw3 = _scenePayload.roomWidth * _sceneRs; rd3 = _scenePayload.roomDepth * _sceneRs;
+            }
+            var wall = nearestWall(rw3 || 10, rd3 || 8);
+            group.position.set(wall.gx, 0, wall.gz);
+            var mesh = cloneLightMesh('wallLight');
+            if (mesh) {
+              scaleMeshTo(mesh, LIGHT_MODEL_HEIGHT['wallLight'] * sf);
+              mesh.rotation.y = wall.rotY;
+              mesh.updateMatrixWorld(true);
+              var bb5 = new THREE.Box3().setFromObject(mesh);
+              mesh.position.y = cfg.height - bb5.min.y;
+              group.add(mesh);
+            }
+            var pl4 = new THREE.PointLight(cfg.color, cfg.intensity * sf, cfg.distance, cfg.decay || 1.8);
+            pl4.position.set(0, cfg.height * sf, 0);
+            pl4.castShadow = true; pl4.shadow.mapSize.set(512, 512);
+            group.add(pl4);
+
+          } else if (item.type === 'windowLight') {
+            // Detect nearest wall, embed window in it
+            var rw4 = 0, rd4 = 0;
+            if (_scenePayload) {
+              rw4 = _scenePayload.roomWidth * _sceneRs; rd4 = _scenePayload.roomDepth * _sceneRs;
+            }
+            var wall2 = nearestWall(rw4 || 10, rd4 || 8);
+            group.position.set(wall2.gx, 0, wall2.gz);
+            var mesh = cloneLightMesh('windowLight');
+            if (mesh) {
+              // Scale window to fit 2D footprint width
+              mesh.scale.set(1, 1, 1); mesh.updateMatrixWorld(true);
+              var bw = new THREE.Box3().setFromObject(mesh);
+              var bsz = bw.getSize(new THREE.Vector3());
+              var winW = Math.max(tw, td); // use larger dimension as width
+              var scW = bsz.x > 0.001 ? winW / bsz.x : 1.0;
+              var scH = bsz.y > 0.001 ? LIGHT_MODEL_HEIGHT['windowLight'] / bsz.y : 1.0;
+              var scFit = Math.min(scW, scH) * sf;
+              mesh.scale.setScalar(scFit);
+              mesh.rotation.y = wall2.rotY;
+              mesh.updateMatrixWorld(true);
+              var bw2 = new THREE.Box3().setFromObject(mesh);
+              mesh.position.y = cfg.height - bw2.min.y - (bw2.getSize(new THREE.Vector3()).y / 2);
+              group.add(mesh);
+            }
+            // Directional light pointing inward from wall
+            var dl2 = new THREE.DirectionalLight(cfg.color, cfg.intensity * sf);
+            dl2.position.set(0, cfg.height, 0);
+            var inX = (wall2.gx < (rw4 / 2 || 5)) ? 3 : -3;
+            var inZ = (wall2.gz < (rd4 / 2 || 4)) ? 3 : -3;
+            dl2.target.position.set(inX, 0, inZ);
+            dl2.castShadow = true;
+            dl2.shadow.mapSize.set(1024, 1024);
+            dl2.shadow.camera.left = -5; dl2.shadow.camera.right = 5;
+            dl2.shadow.camera.top = 4; dl2.shadow.camera.bottom = -4;
+            dl2.shadow.bias = -0.001;
+            group.add(dl2); group.add(dl2.target);
+          }
+
           return { obj: group, baseScale: 1.0 };
         }
 
@@ -1629,6 +1769,39 @@
 
       // ── Start loading ────────────────────────────────────────────────────
       var neededTypes = getNeededTypes(), customFiles = Object.keys(customGlbFiles);
+
+      // Which light GLBs are actually needed by items in this scene?
+      function getNeededLightTypes() {
+        var payload = getPayload(); if (!payload || !payload.items) return [];
+        var seen = {};
+        payload.items.forEach(function (item) {
+          if (LIGHT_TYPES[item.type] && LIGHT_MODEL_FILE[item.type]) seen[item.type] = true;
+        });
+        return Object.keys(seen);
+      }
+
+      // Load light GLBs ALL IN PARALLEL for speed — no sequential waiting
+      function loadLightSeq(types, i, onDone) {
+        if (types.length === 0) { onDone(); return; }
+        var remaining = types.length;
+        function finish() { remaining--; if (remaining === 0) onDone(); }
+        types.forEach(function (dartName) {
+          var filename = LIGHT_MODEL_FILE[dartName];
+          var done = false;
+          var timer = setTimeout(function () {
+            if (done) return; done = true;
+            console.warn(dartName + ' light GLB timed out');
+            finish();
+          }, 6000);
+          var loader2 = new THREE.GLTFLoader();
+          loader2.load(filename,
+            function (gltf) { if (done) return; done = true; clearTimeout(timer); lightBank[dartName] = gltf.scene; finish(); },
+            null,
+            function (err) { if (done) return; done = true; clearTimeout(timer); console.warn('Failed light GLB:' + filename, err); finish(); }
+          );
+        });
+      }
+
       function loadCustomGlbs(i, onDone) {
         if (i >= customFiles.length) { onDone(); return; }
         var filename = customFiles[i];
@@ -1641,8 +1814,17 @@
           function (err) { if (done) return; done = true; clearTimeout(timer); console.warn('Failed custom GLB:' + filename, err); loadCustomGlbs(i + 1, onDone); }
         );
       }
-      if (neededTypes.length === 0 && customFiles.length === 0) { buildRoom(10, 10); hideLoading(); }
-      else { setStatus('Preparing models…', 40); loadCustomGlbs(0, function () { loadSeq(neededTypes, 0, onReady); }); }
+
+      var neededLightTypes = getNeededLightTypes();
+      if (neededTypes.length === 0 && customFiles.length === 0 && neededLightTypes.length === 0) { buildRoom(10, 10); hideLoading(); }
+      else {
+        setStatus('Preparing models…', 40);
+        loadCustomGlbs(0, function () {
+          loadSeq(neededTypes, 0, function () {
+            loadLightSeq(neededLightTypes, 0, onReady);
+          });
+        });
+      }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -2143,7 +2325,8 @@
 
       // ── Top-down thumbnail generator ─────────────────────────────────────
       function generateThumbnails() {
-        var keys = Object.keys(bank);
+        // Merge furniture bank + light fixture bank keys
+        var keys = Object.keys(bank).concat(Object.keys(lightBank));
         if (keys.length === 0) return;
         var THUMB_SIZE = 256;
         var tr = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
@@ -2158,7 +2341,7 @@
         function renderOneKey(idx) {
           if (idx >= keys.length) { tr.dispose(); return; }
           var key = keys[idx];
-          var modelScene = bank[key];
+          var modelScene = bank[key] || lightBank[key];
           if (!modelScene) { renderOneKey(idx + 1); return; }
           var clone = modelScene.clone(true);
           ts.add(clone);

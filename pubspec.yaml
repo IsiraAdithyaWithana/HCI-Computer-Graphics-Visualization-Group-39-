@@ -97,6 +97,12 @@ flutter:
     - assets/viewer/three.min.js
     - assets/viewer/OrbitControls.js
     - assets/viewer/GLTFLoader.js
+  #lights
+    - assets/models/lights/ceiling_spot.glb
+    - assets/models/lights/wall_light.glb
+    - assets/models/lights/window_light.glb
+    - assets/models/lights/table_lamp_light.glb
+    - assets/models/lights/floor_lamp_light.glb
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

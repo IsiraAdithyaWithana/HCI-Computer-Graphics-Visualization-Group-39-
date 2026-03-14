@@ -55,6 +55,13 @@ class AssetServer {
     'assets/models/floor_lamp.glb',
     'assets/models/tv_stand.glb',
     'assets/models/rug.glb',
+
+    // ── 3D models — Light fixtures ─────────────────────────────────────────
+    'assets/models/lights/ceiling_spot.glb',
+    'assets/models/lights/wall_light.glb',
+    'assets/models/lights/window_light.glb',
+    'assets/models/lights/table_lamp_light.glb',
+    'assets/models/lights/floor_lamp_light.glb',
   ];
 
   // ── Start (or return cached URL) ─────────────────────────────────────────

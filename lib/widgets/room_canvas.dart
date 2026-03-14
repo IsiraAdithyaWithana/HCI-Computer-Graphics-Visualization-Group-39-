@@ -177,6 +177,23 @@ class RoomCanvasState extends State<RoomCanvas> {
   bool enableSnap = true;
   bool snapResizeEnabled = true;
   static const double _cursorSize = 32;
+
+  /// Returns the (dx, dy) offset to subtract from the pointer position when
+  /// placing the cursor PNG overlay so the visual hotspot matches the actual
+  /// interaction point.
+  ///
+  /// Arrow cursors have their hotspot at the tip (top-left → offset 0,0).
+  /// Crosshair/move/rotate cursors have it at the centre → offset size/2, size/2.
+  static Offset _cursorHotspot(String? asset) {
+    if (asset == null) return Offset.zero;
+    // Arrow pointers: hotspot is the tip at top-left of the image
+    if (asset.contains('main_cursor') || asset.contains('add_cursor')) {
+      return Offset.zero;
+    }
+    // All other cursors (move, rotate, expand, canvas/grab): hotspot is centre
+    return const Offset(_cursorSize / 2, _cursorSize / 2);
+  }
+
   static const double _canvasW = 5000;
   static const double _canvasH = 4000;
 
@@ -860,26 +877,57 @@ class RoomCanvasState extends State<RoomCanvas> {
 
   // ── Snap table lamp to nearest ANY furniture surface ────────────────────
   Offset _snapToFurniture(Offset pos, Size size) {
-    // Exclude other lights — snap to any real furniture item
-    final candidates = furnitureItems.where((f) => !f.type.isLight);
-    if (candidates.isEmpty) {
-      return _findFreePosition(_snapOffset(pos), size);
+    final candidates = furnitureItems.where((f) => !f.type.isLight).toList();
+    if (candidates.isEmpty) return _findFreePosition(_snapOffset(pos), size);
+
+    // The lamp's centre position
+    final lampCx = pos.dx + size.width / 2;
+    final lampCy = pos.dy + size.height / 2;
+
+    // 1. Check if lamp centre is already inside any furniture footprint
+    for (final f in candidates) {
+      final fRect = Rect.fromLTWH(
+        f.position.dx,
+        f.position.dy,
+        f.size.width,
+        f.size.height,
+      );
+      if (fRect.contains(Offset(lampCx, lampCy))) {
+        // Allow free placement — just clamp so lamp stays fully inside furniture
+        return Offset(
+          pos.dx.clamp(
+            f.position.dx,
+            f.position.dx + f.size.width - size.width,
+          ),
+          pos.dy.clamp(
+            f.position.dy,
+            f.position.dy + f.size.height - size.height,
+          ),
+        );
+      }
     }
-    // Find the closest furniture item by centre distance
+
+    // 2. Not inside any furniture → snap to nearest furniture and clamp within it
     FurnitureModel? nearest;
     double bestDist = double.infinity;
     for (final f in candidates) {
       final fc = f.position + Offset(f.size.width / 2, f.size.height / 2);
-      final d = (fc - pos).distance;
+      final d = (fc - Offset(lampCx, lampCy)).distance;
       if (d < bestDist) {
         bestDist = d;
         nearest = f;
       }
     }
-    // Place lamp centred on the nearest furniture
+    // Clamp within nearest furniture bounds
     return Offset(
-      nearest!.position.dx + (nearest.size.width - size.width) / 2,
-      nearest.position.dy + (nearest.size.height - size.height) / 2,
+      pos.dx.clamp(
+        nearest!.position.dx,
+        nearest.position.dx + nearest.size.width - size.width,
+      ),
+      pos.dy.clamp(
+        nearest.position.dy,
+        nearest.position.dy + nearest.size.height - size.height,
+      ),
     );
   }
 
@@ -1179,6 +1227,14 @@ class RoomCanvasState extends State<RoomCanvas> {
                                   .toSet();
                               bool hasOverlap = false;
                               for (final item in selectedItems) {
+                                // onFurniture lights (table lamps) intentionally
+                                // sit ON furniture — always overlap their host.
+                                // Exclude them from the overlap revert check.
+                                if (item.type.isLight &&
+                                    item.type.lightZone ==
+                                        LightZone.onFurniture) {
+                                  continue;
+                                }
                                 final r = Rect.fromLTWH(
                                   item.position.dx,
                                   item.position.dy,
@@ -1187,6 +1243,8 @@ class RoomCanvasState extends State<RoomCanvas> {
                                 );
                                 for (final other in furnitureItems) {
                                   if (draggedIds.contains(other.id)) continue;
+                                  // Also skip furniture that this light sits on
+                                  if (other.type.isLight) continue;
                                   final or2 = Rect.fromLTWH(
                                     other.position.dx,
                                     other.position.dy,
@@ -1293,8 +1351,8 @@ class RoomCanvasState extends State<RoomCanvas> {
                   builder: (_, asset, __) {
                     if (asset == null) return const SizedBox.shrink();
                     return Positioned(
-                      left: pos.dx - _cursorSize / 2,
-                      top: pos.dy - _cursorSize / 2,
+                      left: pos.dx - _cursorHotspot(asset).dx,
+                      top: pos.dy - _cursorHotspot(asset).dy,
                       width: _cursorSize,
                       height: _cursorSize,
                       child: IgnorePointer(
@@ -1567,8 +1625,8 @@ class RoomCanvasState extends State<RoomCanvas> {
                   builder: (_, asset, __) {
                     if (asset == null) return const SizedBox.shrink();
                     return Positioned(
-                      left: pos.dx - _cursorSize / 2,
-                      top: pos.dy - _cursorSize / 2,
+                      left: pos.dx - _cursorHotspot(asset).dx,
+                      top: pos.dy - _cursorHotspot(asset).dy,
                       width: _cursorSize,
                       height: _cursorSize,
                       child: IgnorePointer(
@@ -3340,7 +3398,7 @@ class CeilingPainter extends CustomPainter {
     }
     canvas.restore();
 
-    // ── Ceiling spots — full opacity, interactive ─────────────────────────
+    // ── Ceiling spots — use thumbnail if available ───────────────────────
     for (final item in furnitureItems) {
       if (item.type != FurnitureType.ceilingSpot) continue;
       canvas.save();
@@ -3352,30 +3410,48 @@ class CeilingPainter extends CustomPainter {
 
       final w = item.size.width;
       final h = item.size.height;
+      // Define c and r here so the selection ring always has them in scope
       final r = Math.min(w, h) * 0.45;
       final c = Offset(w / 2, h / 2);
 
-      // Glow
-      canvas.drawCircle(
-        c,
-        r * 1.6,
-        Paint()..color = const Color(0xFFFFFFFF).withOpacity(0.18),
-      );
-      // Housing
-      canvas.drawCircle(c, r, Paint()..color = const Color(0xFFBDBDBD));
-      // Bright inner
-      canvas.drawCircle(c, r * 0.5, Paint()..color = const Color(0xFFFFFFFF));
-      // Ring stroke
-      canvas.drawCircle(
-        c,
-        r,
-        Paint()
-          ..color = const Color(0xFF757575)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.2,
-      );
+      // Try thumbnail first
+      final thumb = thumbnails[item.type.name];
+      if (thumb != null) {
+        try {
+          canvas.drawRRect(
+            RRect.fromRectAndRadius(
+              Rect.fromLTWH(0, 0, w, h),
+              const Radius.circular(3),
+            ),
+            Paint()..color = Colors.black.withOpacity(0.2),
+          );
+          canvas.save();
+          canvas.clipRRect(
+            RRect.fromRectAndRadius(
+              Rect.fromLTWH(0, 0, w, h),
+              const Radius.circular(3),
+            ),
+          );
+          canvas.drawImageRect(
+            thumb,
+            Rect.fromLTWH(
+              0,
+              0,
+              thumb.width.toDouble(),
+              thumb.height.toDouble(),
+            ),
+            Rect.fromLTWH(0, 0, w, h),
+            Paint()..filterQuality = FilterQuality.high,
+          );
+          canvas.restore();
+        } catch (_) {
+          _drawCeilingSpotVector(canvas, item);
+        }
+      } else {
+        _drawCeilingSpotVector(canvas, item);
+      }
 
-      // Selection ring
+      // Selection ring — uses c and r defined above
       if (selectedItems.contains(item)) {
         canvas.drawCircle(
           c,
@@ -3403,6 +3479,28 @@ class CeilingPainter extends CustomPainter {
       textDirection: TextDirection.ltr,
     )..layout();
     tp.paint(canvas, const Offset(8, 6));
+  }
+
+  void _drawCeilingSpotVector(Canvas canvas, FurnitureModel item) {
+    final w = item.size.width;
+    final h = item.size.height;
+    final r = Math.min(w, h) * 0.45;
+    final c = Offset(w / 2, h / 2);
+    canvas.drawCircle(
+      c,
+      r * 1.6,
+      Paint()..color = const Color(0xFFFFFFFF).withOpacity(0.18),
+    );
+    canvas.drawCircle(c, r, Paint()..color = const Color(0xFFBDBDBD));
+    canvas.drawCircle(c, r * 0.5, Paint()..color = const Color(0xFFFFFFFF));
+    canvas.drawCircle(
+      c,
+      r,
+      Paint()
+        ..color = const Color(0xFF757575)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2,
+    );
   }
 
   @override
