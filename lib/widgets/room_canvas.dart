@@ -157,6 +157,13 @@ class RoomCanvasState extends State<RoomCanvas> {
 
   final _cursorPos = ValueNotifier<Offset?>(null);
   final _cursorAsset = ValueNotifier<String?>('assets/cursors/main_cursor.png');
+  // ── Ceiling canvas cursor (separate so the two panels never interfere) ──
+  final _cursorPosC = ValueNotifier<Offset?>(null);
+  final _cursorAssetC = ValueNotifier<String?>(
+    'assets/cursors/main_cursor.png',
+  );
+  // Separate dragging-live flag for ceiling so it doesn't pollute furniture cursor
+  bool _isCeilingDragging = false;
   bool _isRotatingLive = false;
   bool _isResizingLive = false;
   bool _isDraggingLive = false;
@@ -404,6 +411,83 @@ class RoomCanvasState extends State<RoomCanvas> {
       }
     }
     _cursorAsset.value = 'assets/cursors/main_cursor.png';
+  }
+
+  // ── Ceiling canvas cursor ─────────────────────────────────────────────────
+  // scenePos is d.localPosition (already scene coords inside Transform).
+  // localPos is the raw local position used to place the PNG overlay.
+  void _updateCeilingCursor(Offset scenePos, Offset localPos) {
+    _cursorPosC.value = localPos;
+
+    // Outside room floor → default arrow
+    if (!_insideRoom(scenePos)) {
+      _cursorAssetC.value = 'assets/cursors/main_cursor.png';
+      return;
+    }
+
+    // Hand mode → canvas pan cursor
+    if (widget.currentMode == MouseMode.hand) {
+      _cursorAssetC.value = 'assets/cursors/canvas_cursor.png';
+      return;
+    }
+
+    // Draw mode with ceiling spot selected → add cursor
+    if (widget.currentMode == MouseMode.draw &&
+        widget.selectedType == FurnitureType.ceilingSpot) {
+      _cursorAssetC.value = 'assets/cursors/add_cursor.png';
+      return;
+    }
+
+    // Draw mode but non-ceiling type selected → blocked, show default
+    if (widget.currentMode == MouseMode.draw) {
+      _cursorAssetC.value = 'assets/cursors/main_cursor.png';
+      return;
+    }
+
+    // Active ceiling drag → keep move cursor
+    if (_isCeilingDragging) {
+      _cursorAssetC.value = 'assets/cursors/move_cursor.png';
+      return;
+    }
+
+    // Hovering over a ceiling spot → move cursor
+    for (final item in furnitureItems.reversed) {
+      if (item.type != FurnitureType.ceilingSpot) continue;
+      if (_inside(item, scenePos)) {
+        _cursorAssetC.value = 'assets/cursors/move_cursor.png';
+        return;
+      }
+    }
+
+    _cursorAssetC.value = 'assets/cursors/main_cursor.png';
+  }
+
+  // ── Ceiling drag end / cancel helper ─────────────────────────────────────
+  void _endCeilingDrag() {
+    if (_isCeilingDragging && selectedItems.isNotEmpty) {
+      setState(() {
+        for (final item in selectedItems) {
+          if (item.type == FurnitureType.ceilingSpot) {
+            item.position = _clampToRoom(_snapOffset(item.position), item.size);
+          }
+        }
+      });
+      _save();
+    }
+    setState(() {
+      _isCeilingDragging = false;
+      _isPanningCanvas = false;
+      _dragStart = null;
+    });
+    // Restore correct idle cursor based on active mode
+    if (widget.currentMode == MouseMode.hand) {
+      _cursorAssetC.value = 'assets/cursors/canvas_cursor.png';
+    } else if (widget.currentMode == MouseMode.draw &&
+        widget.selectedType == FurnitureType.ceilingSpot) {
+      _cursorAssetC.value = 'assets/cursors/add_cursor.png';
+    } else {
+      _cursorAssetC.value = 'assets/cursors/main_cursor.png';
+    }
   }
 
   // ── Context menu ──────────────────────────────────────────────────────────
@@ -1247,7 +1331,6 @@ class RoomCanvasState extends State<RoomCanvas> {
               child: Stack(
                 children: [
                   _buildFurnitureCanvas(context),
-                  // Divider label
                   Positioned(
                     top: 8,
                     left: 0,
@@ -1276,9 +1359,9 @@ class RoomCanvasState extends State<RoomCanvas> {
                 ],
               ),
             ),
-            // ── Vertical divider ───────────────────────────────────────────
+            // ── Vertical divider ────────────────────────────────────────────
             Container(width: 2, color: const Color(0xFF3A3A5A)),
-            // ── Right: ceiling canvas ──────────────────────────────────────
+            // ── Right: ceiling canvas (cursor overlay is inside it) ─────────
             SizedBox(
               width: halfW - 2,
               height: fullH,
@@ -1291,154 +1374,219 @@ class RoomCanvasState extends State<RoomCanvas> {
   }
 
   Widget _buildCeilingCanvas(BuildContext context) {
-    return Stack(
-      children: [
-        ColoredBox(
-          color: widget.canvasBgColour,
-          child: ClipRect(
-            child: AnimatedBuilder(
-              animation: _transformationController,
-              builder: (context, _) => Transform(
-                transform: _transformationController.value,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTapDown: (d) {
-                    // GestureDetector is INSIDE the Transform widget — Flutter's
-                    // hit-testing already accounts for the transform, so d.localPosition
-                    // IS already in scene coordinates. Do NOT call _toScene() here.
-                    final s = d.localPosition;
-                    if (widget.currentMode == MouseMode.draw &&
-                        widget.selectedType == FurnitureType.ceilingSpot &&
-                        _insideRoom(s)) {
-                      _drawTapPos = s;
-                    } else if (widget.currentMode == MouseMode.select) {
-                      for (final item in furnitureItems.reversed) {
-                        if (item.type != FurnitureType.ceilingSpot) continue;
-                        if (_inside(item, s)) {
+    // Structure mirrors _buildFurnitureCanvas exactly:
+    //   MouseRegion  ← outermost so onHover always fires for normal movement
+    //     Listener   ← onPointerMove still fires during captured drag gestures
+    //       Stack [ canvas, label, cursor(last=on top) ]
+    return MouseRegion(
+      cursor: SystemMouseCursors.none,
+      onHover: (event) {
+        _cursorPosC.value = event.localPosition;
+        _updateCeilingCursor(
+          _toScene(event.localPosition),
+          event.localPosition,
+        );
+      },
+      onExit: (_) {
+        _cursorPosC.value = null;
+        _cursorAssetC.value = null;
+      },
+      child: Listener(
+        // onPointerMove fires even during GestureDetector-captured pans
+        // (raw pointer routing bypasses the gesture arena)
+        onPointerMove: (event) {
+          _cursorPosC.value = event.localPosition;
+          _updateCeilingCursor(
+            _toScene(event.localPosition),
+            event.localPosition,
+          );
+        },
+        onPointerSignal: (event) {
+          if (event is PointerScrollEvent) {
+            _zoomAround(
+              event.scrollDelta.dy < 0 ? 1.10 : 0.90,
+              event.localPosition,
+            );
+          }
+        },
+        child: Stack(
+          children: [
+            // ── Canvas ─────────────────────────────────────────────────
+            ColoredBox(
+              color: widget.canvasBgColour,
+              child: ClipRect(
+                child: AnimatedBuilder(
+                  animation: _transformationController,
+                  builder: (context, _) => Transform(
+                    transform: _transformationController.value,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (d) {
+                        final s =
+                            d.localPosition; // scene coords inside Transform
+                        if (widget.currentMode == MouseMode.draw &&
+                            widget.selectedType == FurnitureType.ceilingSpot &&
+                            _insideRoom(s)) {
+                          _drawTapPos = s;
+                        } else if (widget.currentMode == MouseMode.select) {
+                          for (final item in furnitureItems.reversed) {
+                            if (item.type != FurnitureType.ceilingSpot)
+                              continue;
+                            if (_inside(item, s)) {
+                              setState(() {
+                                selectedItems = [item];
+                                selectedItem = item;
+                              });
+                              return;
+                            }
+                          }
                           setState(() {
-                            selectedItems = [item];
-                            selectedItem = item;
+                            selectedItems.clear();
+                            selectedItem = null;
                           });
-                          return;
                         }
-                      }
-                      setState(() {
-                        selectedItems.clear();
-                        selectedItem = null;
-                      });
-                    }
-                  },
-                  onTapUp: (d) {
-                    if (_drawTapPos != null) {
-                      _pushUndo();
-                      setState(() {
-                        furnitureItems.add(_newItem(position: _drawTapPos!));
-                        _drawTapPos = null;
-                      });
-                      _save();
-                    }
-                  },
-                  onPanStart: (d) {
-                    // d.localPosition is already scene coords (inside Transform)
-                    final s = d.localPosition;
-                    for (final item in furnitureItems.reversed) {
-                      if (item.type != FurnitureType.ceilingSpot) continue;
-                      if (_inside(item, s)) {
-                        setState(() {
-                          selectedItems = [item];
-                          selectedItem = item;
-                          _isDragging = true;
-                          _dragStart = s;
-                        });
-                        return;
-                      }
-                    }
-                  },
-                  onPanUpdate: (d) {
-                    if (_isDragging &&
-                        selectedItems.isNotEmpty &&
-                        _dragStart != null) {
-                      // d.localPosition is already scene coords (inside Transform)
-                      final s = d.localPosition;
-                      final delta = s - _dragStart!;
-                      setState(() {
-                        for (final item in selectedItems) {
-                          if (item.type != FurnitureType.ceilingSpot) continue;
-                          item.position = _clampToRoom(
-                            item.position + delta,
-                            item.size,
-                          );
-                        }
-                      });
-                      _dragStart = s;
-                    }
-                  },
-                  onPanEnd: (_) {
-                    if (selectedItems.isNotEmpty) {
-                      setState(() {
-                        for (final item in selectedItems) {
-                          if (item.type == FurnitureType.ceilingSpot) {
-                            item.position = _clampToRoom(
-                              _snapOffset(item.position),
-                              item.size,
+                      },
+                      onTapUp: (d) {
+                        if (_drawTapPos != null) {
+                          _pushUndo();
+                          setState(() {
+                            furnitureItems.add(
+                              _newItem(position: _drawTapPos!),
                             );
+                            _drawTapPos = null;
+                          });
+                          _save();
+                        }
+                      },
+                      onPanStart: (d) {
+                        final s = d.localPosition;
+                        for (final item in furnitureItems.reversed) {
+                          if (item.type != FurnitureType.ceilingSpot) continue;
+                          if (_inside(item, s)) {
+                            _pushUndo();
+                            setState(() {
+                              selectedItems = [item];
+                              selectedItem = item;
+                              _isCeilingDragging = true;
+                              _dragStart = s;
+                            });
+                            _cursorAssetC.value =
+                                'assets/cursors/move_cursor.png';
+                            return;
                           }
                         }
-                      });
-                      _save();
-                    }
-                    setState(() {
-                      _isDragging = false;
-                      _dragStart = null;
-                    });
-                  },
-                  child: SizedBox(
-                    width: _canvasW,
-                    height: _canvasH,
-                    child: CustomPaint(
-                      painter: CeilingPainter(
-                        furnitureItems: furnitureItems,
-                        selectedItems: selectedItems,
-                        roomWidth: widget.roomWidthPx,
-                        roomDepth: widget.roomDepthPx,
-                        canvasW: _canvasW,
-                        canvasH: _canvasH,
-                        ceilingColour: widget.ceilingColour,
-                        wallColour: widget.roomWallColour,
-                        thumbnails: widget.thumbnails,
+                        if (widget.currentMode == MouseMode.hand) {
+                          setState(() => _isPanningCanvas = true);
+                          _cursorAssetC.value =
+                              'assets/cursors/canvas_cursor.png';
+                          _dragStart = d.localPosition;
+                        }
+                      },
+                      onPanUpdate: (d) {
+                        if (_isCeilingDragging &&
+                            selectedItems.isNotEmpty &&
+                            _dragStart != null) {
+                          final s = d.localPosition;
+                          final delta = s - _dragStart!;
+                          setState(() {
+                            for (final item in selectedItems) {
+                              if (item.type != FurnitureType.ceilingSpot)
+                                continue;
+                              item.position = _clampToRoom(
+                                item.position + delta,
+                                item.size,
+                              );
+                            }
+                          });
+                          _dragStart = s;
+                        } else if (_isPanningCanvas &&
+                            widget.currentMode == MouseMode.hand) {
+                          _transformationController.value =
+                              _transformationController.value.clone()
+                                ..translate(d.delta.dx, d.delta.dy);
+                        }
+                      },
+                      onPanEnd: (_) => _endCeilingDrag(),
+                      onPanCancel: () => _endCeilingDrag(),
+                      child: SizedBox(
+                        width: _canvasW,
+                        height: _canvasH,
+                        child: CustomPaint(
+                          painter: CeilingPainter(
+                            furnitureItems: furnitureItems,
+                            selectedItems: selectedItems,
+                            roomWidth: widget.roomWidthPx,
+                            roomDepth: widget.roomDepthPx,
+                            canvasW: _canvasW,
+                            canvasH: _canvasH,
+                            ceilingColour: widget.ceilingColour,
+                            wallColour: widget.roomWallColour,
+                            thumbnails: widget.thumbnails,
+                          ),
+                          size: const Size(_canvasW, _canvasH),
+                        ),
                       ),
-                      size: const Size(_canvasW, _canvasH),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-        ),
-        // Label
-        Positioned(
-          top: 8,
-          left: 0,
-          right: 0,
-          child: Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1A1A2E).withOpacity(0.85),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Text(
-                '⬆ Ceiling Canvas',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Color(0xFFFFB300),
-                  fontWeight: FontWeight.w600,
+            // ── Label ──────────────────────────────────────────────────
+            Positioned(
+              top: 8,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1A1A2E).withOpacity(0.85),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Text(
+                    '⬆ Ceiling Canvas',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFFFFB300),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
+            // ── Cursor PNG — last child = always rendered on top ───────
+            ValueListenableBuilder<Offset?>(
+              valueListenable: _cursorPosC,
+              builder: (_, pos, __) {
+                if (pos == null) return const SizedBox.shrink();
+                return ValueListenableBuilder<String?>(
+                  valueListenable: _cursorAssetC,
+                  builder: (_, asset, __) {
+                    if (asset == null) return const SizedBox.shrink();
+                    return Positioned(
+                      left: pos.dx - _cursorSize / 2,
+                      top: pos.dy - _cursorSize / 2,
+                      width: _cursorSize,
+                      height: _cursorSize,
+                      child: IgnorePointer(
+                        child: Image.asset(
+                          asset,
+                          width: _cursorSize,
+                          height: _cursorSize,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 
