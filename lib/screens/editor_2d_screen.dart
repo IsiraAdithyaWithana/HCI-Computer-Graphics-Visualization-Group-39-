@@ -27,11 +27,15 @@ class Editor2DScreen extends StatefulWidget {
   /// Optional human-readable project name shown in the app bar.
   final String? projectName;
 
+  /// Whether this user has admin (designer) privileges.
+  final bool isAdmin;
+
   const Editor2DScreen({
     super.key,
     required this.projectId,
     required this.userId,
     this.projectName,
+    this.isAdmin = true,
   });
 
   @override
@@ -174,9 +178,14 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => Realistic3DScreen(
+          isAdmin: widget.isAdmin,
           furniture: List.from(items),
           roomWidth: _roomWidthPx,
           roomDepth: _roomDepthPx,
+          roomShape: _roomShape.name,
+          customShapePoints: _customShapePoints
+              ?.map((p) => {'x': p.dx, 'y': p.dy})
+              .toList(),
           wallColour: _currentScheme.wall,
           floorColour: _currentScheme.floor,
           ceilingColour: _currentScheme.ceiling,
@@ -402,44 +411,45 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       appBar: AppBar(
         title: Text(widget.projectName ?? '2D Room Editor'),
         actions: [
-          // ── Undo ────────────────────────────────────────────────────────
-          ValueListenableBuilder<bool>(
-            valueListenable: _undoNotifier,
-            builder: (_, canUndo, __) => Tooltip(
-              message: 'Undo (Ctrl+Z)',
-              child: IconButton(
-                icon: Icon(
-                  Icons.undo_rounded,
-                  color: canUndo
-                      ? const Color(0xFFC9A96E)
-                      : const Color(0xFF4A4A6A),
+          // ── Admin-only: Undo / Redo ──────────────────────────────────────
+          if (widget.isAdmin) ...[
+            ValueListenableBuilder<bool>(
+              valueListenable: _undoNotifier,
+              builder: (_, canUndo, __) => Tooltip(
+                message: 'Undo (Ctrl+Z)',
+                child: IconButton(
+                  icon: Icon(
+                    Icons.undo_rounded,
+                    color: canUndo
+                        ? const Color(0xFFC9A96E)
+                        : const Color(0xFF4A4A6A),
+                  ),
+                  onPressed: canUndo
+                      ? () => _canvasKey.currentState?.undo()
+                      : null,
                 ),
-                onPressed: canUndo
-                    ? () => _canvasKey.currentState?.undo()
-                    : null,
               ),
             ),
-          ),
-          // ── Redo ────────────────────────────────────────────────────────
-          ValueListenableBuilder<bool>(
-            valueListenable: _redoNotifier,
-            builder: (_, canRedo, __) => Tooltip(
-              message: 'Redo (Ctrl+Shift+Z)',
-              child: IconButton(
-                icon: Icon(
-                  Icons.redo_rounded,
-                  color: canRedo
-                      ? const Color(0xFFC9A96E)
-                      : const Color(0xFF4A4A6A),
+            ValueListenableBuilder<bool>(
+              valueListenable: _redoNotifier,
+              builder: (_, canRedo, __) => Tooltip(
+                message: 'Redo (Ctrl+Shift+Z)',
+                child: IconButton(
+                  icon: Icon(
+                    Icons.redo_rounded,
+                    color: canRedo
+                        ? const Color(0xFFC9A96E)
+                        : const Color(0xFF4A4A6A),
+                  ),
+                  onPressed: canRedo
+                      ? () => _canvasKey.currentState?.redo()
+                      : null,
                 ),
-                onPressed: canRedo
-                    ? () => _canvasKey.currentState?.redo()
-                    : null,
               ),
             ),
-          ),
+          ],
           const SizedBox(width: 4),
-          // ── Room colour scheme picker ───────────────────────────────────
+          // ── Both roles: Colour scheme ────────────────────────────────────
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
             child: ColourSchemeButton(
@@ -450,67 +460,75 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
               },
             ),
           ),
-          // ── Canvas background colour picker ────────────────────────────
-          Tooltip(
-            message: 'Canvas background colour',
-            child: InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: () => _pickCanvasBgColour(context),
-              child: Container(
-                margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 0,
-                ),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1F1F2B),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFF2C2C3E)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 14,
-                      height: 14,
-                      decoration: BoxDecoration(
-                        color: _canvasBgColour,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: const Color(0xFF8E8A9A),
-                          width: 1,
+          // ── Admin-only: Canvas bg colour ─────────────────────────────────
+          if (widget.isAdmin)
+            Tooltip(
+              message: 'Canvas background colour',
+              child: InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => _pickCanvasBgColour(context),
+                child: Container(
+                  margin: const EdgeInsets.symmetric(
+                    vertical: 10,
+                    horizontal: 4,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 0,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1F1F2B),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF2C2C3E)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: _canvasBgColour,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: const Color(0xFF8E8A9A),
+                            width: 1,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    const Icon(
-                      Icons.format_paint_outlined,
-                      size: 16,
-                      color: Color(0xFF8E8A9A),
-                    ),
-                  ],
+                      const SizedBox(width: 6),
+                      const Icon(
+                        Icons.format_paint_outlined,
+                        size: 16,
+                        color: Color(0xFF8E8A9A),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
+          // ── Both roles: 3D View ──────────────────────────────────────────
           IconButton(
             icon: const Icon(Icons.auto_awesome),
             tooltip: 'Realistic 3D View',
             onPressed: _openRealistic3D,
           ),
-          IconButton(
-            icon: Icon(snapEnabled ? Icons.grid_on : Icons.crop_free),
-            tooltip: 'Toggle resize snap',
-            onPressed: _toggleResizeSnap,
-          ),
-          IconButton(
-            icon: const Icon(Icons.save),
-            tooltip: 'Export to JSON',
-            onPressed: () {
-              debugPrint(_canvasKey.currentState?.exportToJson());
-              _snack('Layout exported to console.');
-            },
-          ),
+          // ── Admin-only: Snap + Export ────────────────────────────────────
+          if (widget.isAdmin) ...[
+            IconButton(
+              icon: Icon(snapEnabled ? Icons.grid_on : Icons.crop_free),
+              tooltip: 'Toggle resize snap',
+              onPressed: _toggleResizeSnap,
+            ),
+            IconButton(
+              icon: const Icon(Icons.save),
+              tooltip: 'Export to JSON',
+              onPressed: () {
+                debugPrint(_canvasKey.currentState?.exportToJson());
+                _snack('Layout exported to console.');
+              },
+            ),
+          ],
         ],
       ),
       body: Row(
@@ -559,6 +577,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
               showCeilingLayer: _showCeilingLayer,
               onCeilingLayerToggle: () =>
                   setState(() => _showCeilingLayer = !_showCeilingLayer),
+              isAdmin: widget.isAdmin,
             ),
           ),
           Expanded(
@@ -589,6 +608,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                     typeSizePrefs: _typeSizePrefs,
                     roomShape: _roomShape,
                     customShapePoints: _customShapePoints,
+                    isAdmin: widget.isAdmin,
                   ),
                   Positioned(
                     right: 16,
@@ -1002,6 +1022,7 @@ class _LeftPanel extends StatefulWidget {
   final RoomShape roomShape;
   final List<Offset>? customShapePoints;
   final void Function(RoomShape, List<Offset>?) onShapeChanged;
+  final bool isAdmin;
 
   const _LeftPanel({
     required this.selectedType,
@@ -1020,6 +1041,7 @@ class _LeftPanel extends StatefulWidget {
     this.roomShape = RoomShape.rectangle,
     this.customShapePoints,
     required this.onShapeChanged,
+    this.isAdmin = true,
   });
 
   @override
@@ -1094,29 +1116,30 @@ class _LeftPanelState extends State<_LeftPanel> {
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                 ),
                 const Spacer(),
-                Tooltip(
-                  message: 'Add custom furniture',
-                  child: InkWell(
-                    onTap: _openAddDialog,
-                    borderRadius: BorderRadius.circular(6),
-                    child: Container(
-                      width: 26,
-                      height: 26,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFC9A96E).withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: const Color(0xFFC9A96E).withOpacity(0.35),
+                if (widget.isAdmin)
+                  Tooltip(
+                    message: 'Add custom furniture',
+                    child: InkWell(
+                      onTap: _openAddDialog,
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        width: 26,
+                        height: 26,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFC9A96E).withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: const Color(0xFFC9A96E).withOpacity(0.35),
+                          ),
                         ),
-                      ),
-                      child: const Icon(
-                        Icons.add,
-                        size: 16,
-                        color: const Color(0xFFC9A96E),
+                        child: const Icon(
+                          Icons.add,
+                          size: 16,
+                          color: const Color(0xFFC9A96E),
+                        ),
                       ),
                     ),
                   ),
-                ),
                 const SizedBox(width: 4),
               ],
             ),
@@ -1281,57 +1304,59 @@ class _LeftPanelState extends State<_LeftPanel> {
                       ),
                     ),
 
-                    const Divider(height: 1, thickness: 1),
-                    // ── Room Shape picker ─────────────────────────────────
-                    _RoomShapePicker(
-                      current: widget.roomShape,
-                      onChanged: (s) => widget.onShapeChanged(s, null),
-                      onCustomEdit: () async {
-                        final pts = await showDialog<List<Offset>>(
-                          context: context,
-                          builder: (_) => _CustomShapeDialog(
-                            initial: widget.customShapePoints,
-                            roomW: widget.roomWidthM * 100,
-                            roomH: widget.roomDepthM * 100,
-                          ),
-                        );
-                        if (pts != null) {
-                          widget.onShapeChanged(RoomShape.custom, pts);
-                        }
-                      },
-                    ),
-                    const Divider(height: 1, thickness: 1),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          icon: Icon(
-                            widget.showCeilingLayer
-                                ? Icons.layers_clear
-                                : Icons.layers,
-                            size: 16,
-                          ),
-                          label: Text(
-                            widget.showCeilingLayer
-                                ? 'Hide Ceiling Layer'
-                                : 'Show Ceiling Layer',
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: widget.showCeilingLayer
-                                ? const Color(0xFFFFB300)
-                                : const Color(0xFF9E9E9E),
-                            side: BorderSide(
-                              color: widget.showCeilingLayer
-                                  ? const Color(0xFFFFB300)
-                                  : const Color(0xFF555555),
+                    if (widget.isAdmin) ...[
+                      const Divider(height: 1, thickness: 1),
+                      // ── Room Shape picker (admin only) ────────────────────
+                      _RoomShapePicker(
+                        current: widget.roomShape,
+                        onChanged: (s) => widget.onShapeChanged(s, null),
+                        onCustomEdit: () async {
+                          final pts = await showDialog<List<Offset>>(
+                            context: context,
+                            builder: (_) => _CustomShapeDialog(
+                              initial: widget.customShapePoints,
+                              roomW: widget.roomWidthM * 100,
+                              roomH: widget.roomDepthM * 100,
                             ),
-                            padding: const EdgeInsets.symmetric(vertical: 8),
+                          );
+                          if (pts != null) {
+                            widget.onShapeChanged(RoomShape.custom, pts);
+                          }
+                        },
+                      ),
+                      const Divider(height: 1, thickness: 1),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            icon: Icon(
+                              widget.showCeilingLayer
+                                  ? Icons.layers_clear
+                                  : Icons.layers,
+                              size: 16,
+                            ),
+                            label: Text(
+                              widget.showCeilingLayer
+                                  ? 'Hide Ceiling Layer'
+                                  : 'Show Ceiling Layer',
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: widget.showCeilingLayer
+                                  ? const Color(0xFFFFB300)
+                                  : const Color(0xFF9E9E9E),
+                              side: BorderSide(
+                                color: widget.showCeilingLayer
+                                    ? const Color(0xFFFFB300)
+                                    : const Color(0xFF555555),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                            ),
+                            onPressed: widget.onCeilingLayerToggle,
                           ),
-                          onPressed: widget.onCeilingLayerToggle,
                         ),
                       ),
-                    ),
+                    ],
                     Padding(
                       padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
                       child: SizedBox(

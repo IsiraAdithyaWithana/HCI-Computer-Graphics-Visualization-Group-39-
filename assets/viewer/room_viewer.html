@@ -1463,51 +1463,259 @@
         return new THREE.Color(toLinear(r), toLinear(g), toLinear(b));
       }
       var roomGroup = new THREE.Group(); scene.add(roomGroup);
+      // ── Flat XZ geometry from shape points (XY→XZ vertex remap) ───────────
+      function buildFlatGeometry(pts2d, holes) {
+        var shape = new THREE.Shape();
+        shape.moveTo(pts2d[0][0], pts2d[0][1]);
+        for (var i = 1; i < pts2d.length; i++) shape.lineTo(pts2d[i][0], pts2d[i][1]);
+        shape.closePath();
+        if (holes) {
+          for (var h = 0; h < holes.length; h++) {
+            var hp = holes[h], hole = new THREE.Path();
+            hole.moveTo(hp[0][0], hp[0][1]);
+            for (var j = 1; j < hp.length; j++) hole.lineTo(hp[j][0], hp[j][1]);
+            hole.closePath();
+            shape.holes.push(hole);
+          }
+        }
+        var geo = new THREE.ShapeGeometry(shape);
+        var pos = geo.attributes.position;
+        // Remap XY → XZ (Y becomes Z, flat on floor plane)
+        for (var i = 0; i < pos.count; i++) {
+          var x = pos.getX(i), y = pos.getY(i);
+          pos.setXYZ(i, x, 0, y);
+        }
+        pos.needsUpdate = true;
+        // Reverse triangle winding so normal points UP (+Y) after the XY→XZ remap.
+        // ShapeGeometry produces CCW triangles in XY (normal = +Z).
+        // After remapping Y→Z, the winding viewed from above (+Y) becomes CW → normal = -Y.
+        // Reversing each triangle's indices restores CCW winding from above → normal = +Y.
+        var idx = geo.index;
+        if (idx) {
+          var arr = idx.array;
+          for (var i = 0; i < arr.length; i += 3) {
+            var tmp = arr[i]; arr[i] = arr[i + 2]; arr[i + 2] = tmp;
+          }
+          idx.needsUpdate = true;
+        }
+        geo.computeVertexNormals();
+        return geo;
+      }
+
+      // ── Room shape point generators (mirrors Dart room_shape.dart) ──────────
+      function buildRoomShapePoints(shapeName, rw, rd, customPoints) {
+        var PI = Math.PI;
+        function polygon(n, startAngle) {
+          var pts = [];
+          for (var i = 0; i < n; i++) {
+            var a = startAngle + 2 * PI * i / n;
+            pts.push([rw / 2 + rw / 2 * Math.cos(a), rd / 2 + rd / 2 * Math.sin(a)]);
+          }
+          return pts;
+        }
+        function star(points, ox, oy, ix, iy) {
+          var pts = [];
+          for (var i = 0; i < points * 2; i++) {
+            var a = (PI / points) * i - PI / 2;
+            pts.push([rw / 2 + (i % 2 === 0 ? ox : ix) * Math.cos(a), rd / 2 + (i % 2 === 0 ? oy : iy) * Math.sin(a)]);
+          }
+          return pts;
+        }
+        switch (shapeName) {
+          case 'rectangle': return [[0, 0], [rw, 0], [rw, rd], [0, rd]];
+          case 'circle': case 'oval': { var pts = [], n = 64; for (var i = 0; i < n; i++) { var a = 2 * PI * i / n; pts.push([rw / 2 + rw / 2 * Math.cos(a), rd / 2 + rd / 2 * Math.sin(a)]); } return pts; }
+          case 'triangle': return polygon(3, -PI / 2);
+          case 'pentagon': return polygon(5, -PI / 2);
+          case 'hexagon': return polygon(6, 0);
+          case 'heptagon': return polygon(7, -PI / 2);
+          case 'octagon': return polygon(8, PI / 8);
+          case 'nonagon': return polygon(9, -PI / 2);
+          case 'decagon': return polygon(10, 0);
+          case 'hendecagon': return polygon(11, -PI / 2);
+          case 'trapezoid': { var i = rw * 0.2; return [[i, 0], [rw - i, 0], [rw, rd], [0, rd]]; }
+          case 'diamond': return [[rw / 2, 0], [rw, rd / 2], [rw / 2, rd], [0, rd / 2]];
+          case 'rhombus': return [[rw * 0.3, 0], [rw, rd * 0.4], [rw * 0.7, rd], [0, rd * 0.6]];
+          case 'parallelogram': { var off = rw * 0.25; return [[off, 0], [rw, 0], [rw - off, rd], [0, rd]]; }
+          case 'star': return star(5, rw / 2, rd / 2, rw * 0.22, rd * 0.22);
+          case 'semiCircle': { var pts = [[0, rd], [rw, rd]], n = 48; for (var i = 0; i <= n; i++) { var a = PI + PI * i / n; pts.push([rw / 2 + rw / 2 * Math.cos(a), rd + rd * Math.sin(a)]); } return pts; }
+          case 'heart': return [[rw / 2, rd * 0.28], [rw / 2 - rw * 0.02, rd * 0.02], [rw / 2 - rw * 0.55, rd * 0.02], [rw / 2 - rw * 0.50, rd * 0.35], [rw / 2 - rw * 0.45, rd * 0.60], [rw / 2 - rw * 0.10, rd * 0.72], [rw / 2, rd * 0.88], [rw / 2 + rw * 0.10, rd * 0.72], [rw / 2 + rw * 0.45, rd * 0.60], [rw / 2 + rw * 0.50, rd * 0.35], [rw / 2 + rw * 0.55, rd * 0.02], [rw / 2 + rw * 0.02, rd * 0.02]];
+          case 'ring': { var pts = [], n = 48; for (var i = 0; i < n; i++) { var a = 2 * PI * i / n; pts.push([rw / 2 + rw / 2 * Math.cos(a), rd / 2 + rd / 2 * Math.sin(a)]); } return pts; }
+          case 'pie': { var pts = [[rw / 2, rd / 2]], n = 48, s = -PI * 0.75, sw = PI * 1.5; for (var i = 0; i <= n; i++) { var a = s + sw * i / n; pts.push([rw / 2 + rw / 2 * Math.cos(a), rd / 2 + rd / 2 * Math.sin(a)]); } return pts; }
+          case 'cross': { var t = rw * 0.30, l = rd * 0.30, w = rw, h = rd; return [[(w - t) / 2, 0], [(w + t) / 2, 0], [(w + t) / 2, l], [w, l], [w, l + t], [(w + t) / 2, l + t], [(w + t) / 2, h], [(w - t) / 2, h], [(w - t) / 2, l + t], [0, l + t], [0, l], [(w - t) / 2, l]]; }
+          case 'asteroid': { var pts = [], n = 120; for (var i = 0; i <= n; i++) { var t = 2 * PI * i / n, ct = Math.cos(t), st = Math.sin(t); pts.push([rw / 2 + rw / 2 * ct * ct * ct, rd / 2 + rd / 2 * st * st * st]); } return pts; }
+          case 'custom': { if (!customPoints || customPoints.length < 3) return [[0, 0], [rw, 0], [rw, rd], [0, rd]]; return customPoints.map(function (p) { return [p.x * rw, p.y * rd]; }); }
+          default: return null; // trefoil, crescent → fallback
+        }
+      }
+
       function buildRoom(rw, rd) {
         while (roomGroup.children.length) roomGroup.remove(roomGroup.children[0]);
         var WH = 3.2; _WH = WH; // keep module-level in sync
         var _p = getPayload() || {};
+        var shapeName = (_p.roomShape || 'rectangle');
+        var customPts = _p.customShapePoints || null;
+
+        // ── EXACT original material setup ─────────────────────────────────────
         // Use exact user-chosen colors: sRGB hex → linear → renderer applies sRGB encoding → exact color on screen
         var floorColor = _p.floorColor ? srgbHexToLinear(_p.floorColor) : new THREE.Color(0xd4c4a8).convertSRGBToLinear();
         var wallColor = _p.wallColor ? srgbHexToLinear(_p.wallColor) : new THREE.Color(0xf0ebe2).convertSRGBToLinear();
         var ceilColor = _p.ceilingColor ? srgbHexToLinear(_p.ceilingColor) : new THREE.Color(0xfaf8f4).convertSRGBToLinear();
         var trimColor = _p.trimColor ? srgbHexToLinear(_p.trimColor) : new THREE.Color(0xe8e0d4).convertSRGBToLinear();
         // MeshBasicMaterial ignores scene lighting — colour is rendered exactly
-        var floorMat = new THREE.MeshBasicMaterial({ color: floorColor });
-        var wallMat = new THREE.MeshBasicMaterial({ color: wallColor });
-        var ceilMat = new THREE.MeshBasicMaterial({ color: ceilColor });
+        var floorMat = new THREE.MeshBasicMaterial({ color: floorColor }); // FrontSide, normal now points up after winding fix
+        var wallMat = new THREE.MeshBasicMaterial({ color: wallColor }); // original rect walls
+        var wallMatIn = new THREE.MeshBasicMaterial({ color: wallColor }); // shaped walls, FrontSide faces inward via rotation
+        var ceilMat = new THREE.MeshBasicMaterial({ color: ceilColor, side: THREE.BackSide }); // BackSide: visible looking up from inside
         var trimMat = new THREE.MeshBasicMaterial({ color: trimColor });
-        var floor = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd), floorMat);
-        floor.rotation.x = -Math.PI / 2; floor.position.set(rw / 2, 0, rd / 2); floor.receiveShadow = true; roomGroup.add(floor);
+        var cornColor = _p.trimColor ? srgbHexToLinear(_p.trimColor) : new THREE.Color(0xe8e4de).convertSRGBToLinear();
+        var cornMat = new THREE.MeshBasicMaterial({ color: cornColor });
+
+        // ── EXACT original grid logic ─────────────────────────────────────────
         var gridDiv = Math.round(Math.max(rw, rd) * 2);
         var floorHex = _p.floorColor ? parseInt(_p.floorColor, 16) : 0xd4c4a8;
         var floorR = (floorHex >> 16 & 0xFF) / 255;
         var floorBrightness = floorR * 0.3 + ((floorHex >> 8 & 0xFF) / 255) * 0.59 + ((floorHex & 0xFF) / 255) * 0.11;
         var gridDark = floorBrightness > 0.5 ? 0x808080 : 0xffffff;
         var gridLight = floorBrightness > 0.5 ? 0xa0a0a0 : 0xffffff;
-        var grid = new THREE.GridHelper(Math.max(rw, rd), gridDiv, gridDark, gridLight);
-        grid.position.set(rw / 2, 0.002, rd / 2); grid.scale.set(rw / Math.max(rw, rd), 1, rd / Math.max(rw, rd));
-        grid.material.opacity = 0.25; grid.material.transparent = true;
-        roomGroup.add(grid);
-        function addWall(geo, pos, rotY) { var m = new THREE.Mesh(geo, wallMat.clone()); m.position.copy(pos); if (rotY) m.rotation.y = rotY; m.receiveShadow = true; roomGroup.add(m); }
-        addWall(new THREE.PlaneGeometry(rw, WH), new THREE.Vector3(rw / 2, WH / 2, 0), 0);
-        addWall(new THREE.PlaneGeometry(rw, WH), new THREE.Vector3(rw / 2, WH / 2, rd), Math.PI);
-        addWall(new THREE.PlaneGeometry(rd, WH), new THREE.Vector3(0, WH / 2, rd / 2), Math.PI / 2);
-        addWall(new THREE.PlaneGeometry(rd, WH), new THREE.Vector3(rw, WH / 2, rd / 2), -Math.PI / 2);
-        var ceil = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd), ceilMat); ceil.rotation.x = Math.PI / 2; ceil.position.set(rw / 2, WH, rd / 2); roomGroup.add(ceil);
-        var bh = 0.08, bd = 0.02;
-        function addBoard(geo, pos) { var m = new THREE.Mesh(geo, trimMat.clone()); m.position.copy(pos); roomGroup.add(m); }
-        addBoard(new THREE.BoxGeometry(rw, bh, bd), new THREE.Vector3(rw / 2, bh / 2, bd / 2));
-        addBoard(new THREE.BoxGeometry(rw, bh, bd), new THREE.Vector3(rw / 2, bh / 2, rd - bd / 2));
-        addBoard(new THREE.BoxGeometry(bd, bh, rd), new THREE.Vector3(bd / 2, bh / 2, rd / 2));
-        addBoard(new THREE.BoxGeometry(bd, bh, rd), new THREE.Vector3(rw - bd / 2, bh / 2, rd / 2));
-        var ch = 0.05, cd = 0.04, cornMat = new THREE.MeshBasicMaterial({ color: _p.trimColor ? srgbHexToLinear(_p.trimColor) : new THREE.Color(0xe8e4de).convertSRGBToLinear() });
-        function addCornice(geo, pos) { var m = new THREE.Mesh(geo, cornMat.clone()); m.position.copy(pos); roomGroup.add(m); }
-        addCornice(new THREE.BoxGeometry(rw, ch, cd), new THREE.Vector3(rw / 2, WH - ch / 2, cd / 2));
-        addCornice(new THREE.BoxGeometry(rw, ch, cd), new THREE.Vector3(rw / 2, WH - ch / 2, rd - cd / 2));
-        addCornice(new THREE.BoxGeometry(cd, ch, rd), new THREE.Vector3(cd / 2, WH - ch / 2, rd / 2));
-        addCornice(new THREE.BoxGeometry(cd, ch, rd), new THREE.Vector3(rw - cd / 2, WH - ch / 2, rd / 2));
-        // Decorative ceiling disc removed — users place their own ceiling lights.
+
+        var ch = 0.05, cd = 0.04; // cornice dims — used in both branches
+        var pts2d = buildRoomShapePoints(shapeName, rw, rd, customPts);
+
+        if (pts2d) {
+          // ── Shaped room ───────────────────────────────────────────────────
+
+          // Ring inner hole
+          var holesPts = null;
+          if (shapeName === 'ring') {
+            var inset = Math.min(rw, rd) * 0.28, holePts = [];
+            for (var i = 0; i < 48; i++) { var ha = 2 * Math.PI * i / 48; holePts.push([rw / 2 + (rw / 2 - inset) * Math.cos(ha), rd / 2 + (rd / 2 - inset) * Math.sin(ha)]); }
+            holesPts = [holePts];
+          }
+
+          // Floor — buildFlatGeometry puts vertices directly in XZ at Y=0
+          var floor = new THREE.Mesh(buildFlatGeometry(pts2d, holesPts), floorMat);
+          floor.receiveShadow = true; roomGroup.add(floor);
+
+          // Grid — baked into a CanvasTexture and applied to a second floor mesh
+          // so it clips exactly to the room shape, no overflow outside.
+          (function () {
+            var texSize = 512;
+            var canvas = document.createElement('canvas');
+            canvas.width = texSize; canvas.height = texSize;
+            var ctx = canvas.getContext('2d');
+            // Transparent background
+            ctx.clearRect(0, 0, texSize, texSize);
+            // Grid lines matching original GridHelper appearance
+            var gridLineColor = floorBrightness > 0.5 ? 'rgba(128,128,128,0.30)' : 'rgba(255,255,255,0.25)';
+            ctx.strokeStyle = gridLineColor;
+            ctx.lineWidth = 1;
+            var cells = gridDiv; // same divisions as original
+            var step = texSize / cells;
+            for (var g = 0; g <= cells; g++) {
+              var p = g * step;
+              ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, texSize); ctx.stroke();
+              ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(texSize, p); ctx.stroke();
+            }
+            var tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(1, rd / rw); // keep cells square
+            var gridMat = new THREE.MeshBasicMaterial({
+              map: tex, transparent: true, opacity: 1.0,
+              polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1
+            });
+            var gridMesh = new THREE.Mesh(buildFlatGeometry(pts2d, holesPts), gridMat);
+            gridMesh.position.y = 0.001;
+            roomGroup.add(gridMesh);
+          })();
+
+          // Walls — FrontSide, rotation -atan2 aligns face to point inward
+          for (var i = 0; i < pts2d.length; i++) {
+            var a = pts2d[i], b = pts2d[(i + 1) % pts2d.length];
+            var ax = a[0], az = a[1], bx = b[0], bz = b[1];
+            var len = Math.sqrt((bx - ax) * (bx - ax) + (bz - az) * (bz - az));
+            if (len < 0.001) continue;
+            var wm = new THREE.Mesh(new THREE.PlaneGeometry(len, WH), wallMatIn.clone());
+            wm.position.set((ax + bx) / 2, WH / 2, (az + bz) / 2);
+            wm.rotation.y = -Math.atan2(bz - az, bx - ax);
+            wm.receiveShadow = true; roomGroup.add(wm);
+          }
+
+          // Ceiling — BackSide so visible looking up from inside
+          var ceil = new THREE.Mesh(buildFlatGeometry(pts2d, holesPts), ceilMat);
+          ceil.position.y = WH; roomGroup.add(ceil);
+
+          // Edge outlines — normal depth testing so they don't overdraw furniture
+          var edgeMat = new THREE.LineBasicMaterial({ color: trimColor, transparent: true, opacity: 0.55 });
+
+          // Floor perimeter edge
+          var fp = []; for (var i = 0; i < pts2d.length; i++) fp.push(new THREE.Vector3(pts2d[i][0], 0.005, pts2d[i][1])); fp.push(fp[0].clone());
+          roomGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(fp), edgeMat.clone()));
+
+          // Ceiling perimeter edge
+          var cp = []; for (var i = 0; i < pts2d.length; i++) cp.push(new THREE.Vector3(pts2d[i][0], WH, pts2d[i][1])); cp.push(cp[0].clone());
+          roomGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(cp), edgeMat.clone()));
+
+          // Vertical corner lines
+          for (var i = 0; i < pts2d.length; i++) {
+            var vx = pts2d[i][0], vz = pts2d[i][1];
+            roomGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+              new THREE.Vector3(vx, 0, vz), new THREE.Vector3(vx, WH, vz)
+            ]), edgeMat.clone()));
+          }
+
+          // Skirting board strips — solid filled, DoubleSide, polygonOffset to avoid z-fighting
+          var bh = 0.08;
+          var skirtMat = new THREE.MeshBasicMaterial({ color: trimColor, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+          for (var i = 0; i < pts2d.length; i++) {
+            var a = pts2d[i], b = pts2d[(i + 1) % pts2d.length];
+            var len = Math.sqrt((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]));
+            if (len < 0.001) continue;
+            var sg = new THREE.Mesh(new THREE.PlaneGeometry(len, bh), skirtMat.clone());
+            sg.position.set((a[0] + b[0]) / 2, bh / 2, (a[1] + b[1]) / 2);
+            sg.rotation.y = -Math.atan2(b[1] - a[1], b[0] - a[0]);
+            roomGroup.add(sg);
+          }
+
+          // Cornice strips — solid filled, DoubleSide, polygonOffset to avoid z-fighting
+          var ch = 0.05;
+          var cornStripMat = new THREE.MeshBasicMaterial({ color: cornColor, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+          for (var i = 0; i < pts2d.length; i++) {
+            var a = pts2d[i], b = pts2d[(i + 1) % pts2d.length];
+            var len = Math.sqrt((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]));
+            if (len < 0.001) continue;
+            var cg = new THREE.Mesh(new THREE.PlaneGeometry(len, ch), cornStripMat.clone());
+            cg.position.set((a[0] + b[0]) / 2, WH - ch / 2, (a[1] + b[1]) / 2);
+            cg.rotation.y = -Math.atan2(b[1] - a[1], b[0] - a[0]);
+            roomGroup.add(cg);
+          }
+
+        } else {
+          // ── EXACT original rectangle room code (fallback for trefoil/crescent) ─
+          var floor = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd), floorMat);
+          floor.rotation.x = -Math.PI / 2; floor.position.set(rw / 2, 0, rd / 2); floor.receiveShadow = true; roomGroup.add(floor);
+          var grid = new THREE.GridHelper(Math.max(rw, rd), gridDiv, gridDark, gridLight);
+          grid.position.set(rw / 2, 0.002, rd / 2); grid.scale.set(rw / Math.max(rw, rd), 1, rd / Math.max(rw, rd));
+          grid.material.opacity = 0.25; grid.material.transparent = true; roomGroup.add(grid);
+          function addWall(geo, pos, rotY) { var m = new THREE.Mesh(geo, wallMat.clone()); m.position.copy(pos); if (rotY) m.rotation.y = rotY; m.receiveShadow = true; roomGroup.add(m); }
+          addWall(new THREE.PlaneGeometry(rw, WH), new THREE.Vector3(rw / 2, WH / 2, 0), 0);
+          addWall(new THREE.PlaneGeometry(rw, WH), new THREE.Vector3(rw / 2, WH / 2, rd), Math.PI);
+          addWall(new THREE.PlaneGeometry(rd, WH), new THREE.Vector3(0, WH / 2, rd / 2), Math.PI / 2);
+          addWall(new THREE.PlaneGeometry(rd, WH), new THREE.Vector3(rw, WH / 2, rd / 2), -Math.PI / 2);
+          var ceil = new THREE.Mesh(new THREE.PlaneGeometry(rw, rd), ceilMat); ceil.rotation.x = Math.PI / 2; ceil.position.set(rw / 2, WH, rd / 2); roomGroup.add(ceil);
+          var bh = 0.08, bd = 0.02;
+          function addBoard(geo, pos) { var m = new THREE.Mesh(geo, trimMat.clone()); m.position.copy(pos); roomGroup.add(m); }
+          addBoard(new THREE.BoxGeometry(rw, bh, bd), new THREE.Vector3(rw / 2, bh / 2, bd / 2));
+          addBoard(new THREE.BoxGeometry(rw, bh, bd), new THREE.Vector3(rw / 2, bh / 2, rd - bd / 2));
+          addBoard(new THREE.BoxGeometry(bd, bh, rd), new THREE.Vector3(bd / 2, bh / 2, rd / 2));
+          addBoard(new THREE.BoxGeometry(bd, bh, rd), new THREE.Vector3(rw - bd / 2, bh / 2, rd / 2));
+          function addCornice(geo, pos) { var m = new THREE.Mesh(geo, cornMat.clone()); m.position.copy(pos); roomGroup.add(m); }
+          addCornice(new THREE.BoxGeometry(rw, ch, cd), new THREE.Vector3(rw / 2, WH - ch / 2, cd / 2));
+          addCornice(new THREE.BoxGeometry(rw, ch, cd), new THREE.Vector3(rw / 2, WH - ch / 2, rd - cd / 2));
+          addCornice(new THREE.BoxGeometry(cd, ch, rd), new THREE.Vector3(cd / 2, WH - ch / 2, rd / 2));
+          addCornice(new THREE.BoxGeometry(cd, ch, rd), new THREE.Vector3(rw - cd / 2, WH - ch / 2, rd / 2));
+        }
+
+        // ── EXACT original lighting + camera ──────────────────────────────────
         // Keep a dim fill PointLight so the room isn't pitch black with no lights placed.
         var pl = new THREE.PointLight(0xffe8c0, 0.3, rw * 2.5, 1.8); pl.position.set(rw / 2, WH - 0.15, rd / 2); roomGroup.add(pl); roomLight = pl; _roomLight = pl;
         sun.shadow.camera.left = -(rw + 3); sun.shadow.camera.right = rw + 3; sun.shadow.camera.top = rd + 3; sun.shadow.camera.bottom = -(rd + 3); sun.shadow.camera.updateProjectionMatrix();

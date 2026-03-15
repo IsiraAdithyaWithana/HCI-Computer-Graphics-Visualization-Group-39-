@@ -40,6 +40,15 @@ class Realistic3DScreen extends StatefulWidget {
   final String? Function()? onUndo;
   final String? Function()? onRedo;
 
+  /// Room shape name (matches RoomShape.name e.g. 'circle', 'hexagon').
+  final String roomShape;
+
+  /// Custom polygon points as relative 0..1 coords — only when roomShape == 'custom'.
+  final List<Map<String, double>>? customShapePoints;
+
+  /// Whether this user has admin (designer) privileges.
+  final bool isAdmin;
+
   const Realistic3DScreen({
     super.key,
     required this.furniture,
@@ -49,6 +58,9 @@ class Realistic3DScreen extends StatefulWidget {
     this.floorColour = const Color(0xFFD4C4A8),
     this.ceilingColour = const Color(0xFFFAF8F4),
     this.trimColour = const Color(0xFFE8E0D4),
+    this.roomShape = 'rectangle',
+    this.customShapePoints,
+    this.isAdmin = true,
     this.onSizeUpdated,
     this.onNaturalSizeDetected,
     this.onTintUpdated,
@@ -87,11 +99,12 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
   /// Intercepts Ctrl+Z / Ctrl+Shift+Z at the OS level regardless of focus.
   bool _globalKeyHandler(KeyEvent event) {
     if (event is! KeyDownEvent) return false;
+    if (!widget.isAdmin) return false; // non-admins cannot undo/redo
     final ctrl = HardwareKeyboard.instance.isControlPressed;
     final shift = HardwareKeyboard.instance.isShiftPressed;
     if (ctrl && !shift && event.logicalKey == LogicalKeyboardKey.keyZ) {
       _handleUndo();
-      return true; // consumed
+      return true;
     }
     if (ctrl && shift && event.logicalKey == LogicalKeyboardKey.keyZ) {
       _handleRedo();
@@ -185,6 +198,10 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
       await _controller.loadUrl(url);
 
       setState(() => _sceneReady = true);
+
+      // Apply role-based UI restrictions in the WebView
+      await Future.delayed(const Duration(milliseconds: 600));
+      _applyRoleRestrictions();
     } catch (e, st) {
       debugPrint('[3D] Error: $e\n$st');
       setState(() {
@@ -196,6 +213,40 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
 
   String _colourHex(Color c) =>
       c.value.toRadixString(16).substring(2).toUpperCase();
+
+  void _applyRoleRestrictions() {
+    if (widget.isAdmin) return; // admins see everything
+    // Hide: Select toggle, Scale panel save button, per-item shading sliders
+    _controller.executeScript('''
+      (function() {
+        var selBtn = document.getElementById('select-toggle');
+        if (selBtn) selBtn.style.display = 'none';
+        var saveBtn = document.getElementById('btn-save');
+        if (saveBtn) saveBtn.style.display = 'none';
+        var itemBright = document.getElementById('lp-item-bright');
+        var itemDark   = document.getElementById('lp-item-dark');
+        var lpReset    = document.getElementById('lp-reset');
+        var lbv = document.getElementById('lp-item-bright-val');
+        var ldv = document.getElementById('lp-item-dark-val');
+        [itemBright, itemDark, lpReset, lbv, ldv].forEach(function(el) {
+          if (el) el.closest('.lp-row, button') && (el.closest('.lp-row') || el).style
+            ? (el.closest('.lp-row') || el).style.display = 'none'
+            : (el ? el.style.display = 'none' : null);
+        });
+        // Simplest approach: hide whole selected furniture shading section
+        var shadingLabel = Array.from(document.querySelectorAll('.lp-section-label'))
+          .find(function(el) { return el.textContent.includes('Selected furniture'); });
+        if (shadingLabel) {
+          shadingLabel.style.display = 'none';
+          var next = shadingLabel.nextElementSibling;
+          while (next && !next.classList.contains('lp-divider') && !next.classList.contains('lp-section-label')) {
+            next.style.display = 'none';
+            next = next.nextElementSibling;
+          }
+        }
+      })();
+    ''');
+  }
 
   String _buildUrl(String baseUrl) {
     final items = widget.furniture
@@ -224,6 +275,9 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
       'floorColor': _colourHex(widget.floorColour),
       'ceilingColor': _colourHex(widget.ceilingColour),
       'trimColor': _colourHex(widget.trimColour),
+      'roomShape': widget.roomShape,
+      if (widget.customShapePoints != null)
+        'customShapePoints': widget.customShapePoints,
     });
 
     final encoded = base64Url.encode(utf8.encode(payload));
@@ -242,6 +296,7 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
           canRedoNotifier: widget.canRedoNotifier,
           onUndo: _handleUndo,
           onRedo: _handleRedo,
+          isAdmin: widget.isAdmin,
         ),
       ),
       body: Stack(
@@ -292,6 +347,7 @@ class _AppBar extends StatelessWidget {
   final ValueNotifier<bool>? canRedoNotifier;
   final VoidCallback? onUndo;
   final VoidCallback? onRedo;
+  final bool isAdmin;
 
   const _AppBar({
     required this.itemCount,
@@ -299,6 +355,7 @@ class _AppBar extends StatelessWidget {
     this.canRedoNotifier,
     this.onUndo,
     this.onRedo,
+    this.isAdmin = true,
   });
 
   @override
@@ -332,30 +389,32 @@ class _AppBar extends StatelessWidget {
               ),
             ),
             const Spacer(),
-            // ── Undo / Redo buttons — react live via ValueNotifier ─────────
-            ValueListenableBuilder<bool>(
-              valueListenable: canUndoNotifier ?? ValueNotifier(false),
-              builder: (_, canUndo, __) => Tooltip(
-                message: 'Undo (Ctrl+Z)',
-                child: _AppBarIconBtn(
-                  icon: Icons.undo_rounded,
-                  enabled: canUndo,
-                  onTap: canUndo ? onUndo : null,
+            // ── Undo / Redo buttons (admin only) ──────────────────────
+            if (isAdmin) ...[
+              ValueListenableBuilder<bool>(
+                valueListenable: canUndoNotifier ?? ValueNotifier(false),
+                builder: (_, canUndo, __) => Tooltip(
+                  message: 'Undo (Ctrl+Z)',
+                  child: _AppBarIconBtn(
+                    icon: Icons.undo_rounded,
+                    enabled: canUndo,
+                    onTap: canUndo ? onUndo : null,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 4),
-            ValueListenableBuilder<bool>(
-              valueListenable: canRedoNotifier ?? ValueNotifier(false),
-              builder: (_, canRedo, __) => Tooltip(
-                message: 'Redo (Ctrl+Shift+Z)',
-                child: _AppBarIconBtn(
-                  icon: Icons.redo_rounded,
-                  enabled: canRedo,
-                  onTap: canRedo ? onRedo : null,
+              const SizedBox(width: 4),
+              ValueListenableBuilder<bool>(
+                valueListenable: canRedoNotifier ?? ValueNotifier(false),
+                builder: (_, canRedo, __) => Tooltip(
+                  message: 'Redo (Ctrl+Shift+Z)',
+                  child: _AppBarIconBtn(
+                    icon: Icons.redo_rounded,
+                    enabled: canRedo,
+                    onTap: canRedo ? onRedo : null,
+                  ),
                 ),
               ),
-            ),
+            ],
             const SizedBox(width: 12),
             _Chip(
               icon: Icons.chair_outlined,

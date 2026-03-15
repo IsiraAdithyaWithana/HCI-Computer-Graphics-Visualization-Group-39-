@@ -57,6 +57,7 @@ class RoomCanvas extends StatefulWidget {
 
   /// Custom shape points (relative 0..1 coords) — only used when roomShape == custom.
   final List<Offset>? customShapePoints;
+  final bool isAdmin;
 
   /// Persistent size preferences per furniture type.
   /// Key: FurnitureType.name for built-ins, glbFileName for custom GLBs.
@@ -87,6 +88,7 @@ class RoomCanvas extends StatefulWidget {
     this.typeSizePrefs = const {},
     this.roomShape = RoomShape.rectangle,
     this.customShapePoints,
+    this.isAdmin = true,
   });
 
   @override
@@ -531,6 +533,14 @@ class RoomCanvasState extends State<RoomCanvas> {
   // ── Context menu ──────────────────────────────────────────────────────────
   void _showContextMenu(Offset globalPos) async {
     if (selectedItem == null) return;
+    final items = <PopupMenuEntry<String>>[
+      if (widget.isAdmin)
+        const PopupMenuItem(value: 'delete', child: Text('Delete')),
+      if (widget.isAdmin)
+        const PopupMenuItem(value: 'duplicate', child: Text('Duplicate')),
+      const PopupMenuItem(value: 'rotate', child: Text('Rotate 90°')),
+    ];
+    if (items.isEmpty) return;
     final result = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -539,11 +549,7 @@ class RoomCanvasState extends State<RoomCanvas> {
         globalPos.dx,
         globalPos.dy,
       ),
-      items: const [
-        PopupMenuItem(value: 'delete', child: Text('Delete')),
-        PopupMenuItem(value: 'duplicate', child: Text('Duplicate')),
-        PopupMenuItem(value: 'rotate', child: Text('Rotate 90°')),
-      ],
+      items: items,
     );
     if (result == 'delete') {
       _pushUndo();
@@ -972,8 +978,9 @@ class RoomCanvasState extends State<RoomCanvas> {
           redo();
           return;
         }
-        // Delete → remove selected
-        if (event.logicalKey == LogicalKeyboardKey.delete &&
+        // Delete → remove selected (admin only)
+        if (widget.isAdmin &&
+            event.logicalKey == LogicalKeyboardKey.delete &&
             selectedItems.isNotEmpty) {
           _pushUndo();
           setState(() {
@@ -1019,6 +1026,8 @@ class RoomCanvasState extends State<RoomCanvas> {
                       onTapDown: (d) {
                         final s = _globalToScene(d.globalPosition);
                         if (widget.currentMode == MouseMode.draw) {
+                          // Draw mode restricted to admins
+                          if (!widget.isAdmin) return;
                           // Ceiling spots can only be placed on the ceiling canvas (right panel)
                           if (widget.selectedType == FurnitureType.ceilingSpot)
                             return;
@@ -1110,7 +1119,9 @@ class RoomCanvasState extends State<RoomCanvas> {
                           return;
                         }
                         final s = _globalToScene(d.globalPosition);
-                        if (selectedItem != null &&
+                        // Rotate — admin only
+                        if (widget.isAdmin &&
+                            selectedItem != null &&
                             _onRotate(selectedItem!, s)) {
                           _pushUndo();
                           setState(() => _isRotating = true);
@@ -1121,29 +1132,32 @@ class RoomCanvasState extends State<RoomCanvas> {
                         }
                         // Draw mode — no marquee, no drag on empty canvas
                         if (widget.currentMode == MouseMode.draw) return;
-                        // Resize gesture disabled — use 3D view scale panel instead
-                        for (final item in furnitureItems.reversed) {
-                          if (_inside(item, s)) {
-                            setState(() {
-                              if (!selectedItems.contains(item)) {
-                                if (!HardwareKeyboard.instance.isControlPressed)
-                                  selectedItems.clear();
-                                selectedItems.add(item);
-                              }
-                              selectedItem = item;
-                              _isDragging = true;
-                            });
-                            _isDraggingLive = true;
-                            _cursorAsset.value =
-                                'assets/cursors/move_cursor.png';
-                            _dragStart = s;
-                            _pushUndo();
-                            // Snapshot positions so we can revert if drop overlaps
-                            _preDragPositions = {
-                              for (final it in selectedItems)
-                                it.id: it.position,
-                            };
-                            return;
+                        // Drag furniture — admin only
+                        if (widget.isAdmin) {
+                          for (final item in furnitureItems.reversed) {
+                            if (_inside(item, s)) {
+                              setState(() {
+                                if (!selectedItems.contains(item)) {
+                                  if (!HardwareKeyboard
+                                      .instance
+                                      .isControlPressed)
+                                    selectedItems.clear();
+                                  selectedItems.add(item);
+                                }
+                                selectedItem = item;
+                                _isDragging = true;
+                              });
+                              _isDraggingLive = true;
+                              _cursorAsset.value =
+                                  'assets/cursors/move_cursor.png';
+                              _dragStart = s;
+                              _pushUndo();
+                              _preDragPositions = {
+                                for (final it in selectedItems)
+                                  it.id: it.position,
+                              };
+                              return;
+                            }
                           }
                         }
                         // Select mode only — start marquee box
