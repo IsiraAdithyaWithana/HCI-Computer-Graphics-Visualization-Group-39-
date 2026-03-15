@@ -168,6 +168,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
       widget.userId,
       project,
     );
+
+    // If the template has pre-built furniture, save it into the project's
+    // layout storage now — the editor will load it on first open.
+    if (template?.furnitureJson != null) {
+      await LayoutPersistenceService.instance.save(
+        userId: widget.userId,
+        projectId: id,
+        furnitureJson: template!.furnitureJson!,
+        roomWidthM: project.widthM,
+        roomDepthM: project.depthM,
+      );
+    }
+
     await _loadProjects();
     if (!mounted) return;
     await Navigator.push(
