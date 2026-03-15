@@ -26,12 +26,13 @@ class LayoutPersistenceService {
       'user:$userId:project:$projectId:colourScheme';
   static String _canvasBgKey(String userId, String projectId) =>
       'user:$userId:project:$projectId:canvasBg';
+  static String _shapeKey(String userId, String projectId) =>
+      'user:$userId:project:$projectId:roomShape';
 
   /// Stores the last-used {width, height, scaleFactor} per furniture type name.
-  /// Global per-user (NOT per-project) so resizing in one project carries over
-  /// to all projects automatically. Key: user:u1:globalTypeSizes
-  static String _typeSizeKey(String userId, [String? projectId]) =>
-      'user:$userId:globalTypeSizes';
+  /// Key example: user:u1:project:p1:typeSizes
+  static String _typeSizeKey(String userId, String projectId) =>
+      'user:$userId:project:$projectId:typeSizes';
 
   // ── Project list ──────────────────────────────────────────────────────────
 
@@ -82,6 +83,7 @@ class LayoutPersistenceService {
     await prefs.remove(_schemeKey(userId, projectId));
     await prefs.remove(_canvasBgKey(userId, projectId));
     await prefs.remove(_typeSizeKey(userId, projectId));
+    await prefs.remove(_shapeKey(userId, projectId));
   }
 
   // ── Layout (furniture + room dims) ────────────────────────────────────────
@@ -94,6 +96,7 @@ class LayoutPersistenceService {
     required double roomDepthM,
     RoomColourScheme? colourScheme,
     Color? canvasBgColour,
+    String? roomShape,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_furnitureKey(userId, projectId), furnitureJson);
@@ -107,6 +110,9 @@ class LayoutPersistenceService {
     }
     if (canvasBgColour != null) {
       await prefs.setInt(_canvasBgKey(userId, projectId), canvasBgColour.value);
+    }
+    if (roomShape != null) {
+      await prefs.setString(_shapeKey(userId, projectId), roomShape);
     }
   }
 
@@ -136,12 +142,14 @@ class LayoutPersistenceService {
     Color? canvasBg;
     final bgVal = prefs.getInt(_canvasBgKey(userId, projectId));
     if (bgVal != null) canvasBg = Color(bgVal);
+    final roomShape = prefs.getString(_shapeKey(userId, projectId));
     return LayoutSnapshot(
       furnitureJson: json,
       roomWidthM: w ?? 6.0,
       roomDepthM: d ?? 5.0,
       colourScheme: scheme,
       canvasBgColour: canvasBg,
+      roomShape: roomShape,
     );
   }
 
@@ -151,20 +159,23 @@ class LayoutPersistenceService {
   /// [prefs] maps type name → {'w': double, 'h': double, 'sf': double}
   Future<void> saveTypeSizes(
     String userId,
-    String projectId, // kept for API compat — ignored, global key used
+    String projectId,
     Map<String, Map<String, double>> prefs,
   ) async {
     final sharedPrefs = await SharedPreferences.getInstance();
-    await sharedPrefs.setString(_typeSizeKey(userId), jsonEncode(prefs));
+    await sharedPrefs.setString(
+      _typeSizeKey(userId, projectId),
+      jsonEncode(prefs),
+    );
   }
 
   /// Loads the type size prefs. Returns an empty map if nothing saved yet.
   Future<Map<String, Map<String, double>>> loadTypeSizes(
     String userId,
-    String projectId, // kept for API compat — ignored, global key used
+    String projectId,
   ) async {
     final sharedPrefs = await SharedPreferences.getInstance();
-    final raw = sharedPrefs.getString(_typeSizeKey(userId));
+    final raw = sharedPrefs.getString(_typeSizeKey(userId, projectId));
     if (raw == null || raw.isEmpty) return {};
     try {
       final decoded = jsonDecode(raw) as Map<String, dynamic>;
@@ -209,12 +220,14 @@ class LayoutSnapshot {
   final double roomDepthM;
   final RoomColourScheme? colourScheme;
   final Color? canvasBgColour;
+  final String? roomShape;
   const LayoutSnapshot({
     required this.furnitureJson,
     required this.roomWidthM,
     required this.roomDepthM,
     this.colourScheme,
     this.canvasBgColour,
+    this.roomShape,
   });
 }
 

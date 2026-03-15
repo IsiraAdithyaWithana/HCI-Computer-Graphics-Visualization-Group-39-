@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/furniture_model.dart';
+import '../models/room_shape.dart';
 import 'dart:math' as Math;
 
 enum MouseMode { select, hand, draw }
@@ -51,6 +52,12 @@ class RoomCanvas extends StatefulWidget {
   /// Ceiling surface colour used as the ceiling canvas background tint.
   final Color ceilingColour;
 
+  /// Shape of the room canvas.
+  final RoomShape roomShape;
+
+  /// Custom shape points (relative 0..1 coords) — only used when roomShape == custom.
+  final List<Offset>? customShapePoints;
+
   /// Persistent size preferences per furniture type.
   /// Key: FurnitureType.name for built-ins, glbFileName for custom GLBs.
   /// Value: {'w': width, 'h': height, 'sf': scaleFactor}
@@ -78,6 +85,8 @@ class RoomCanvas extends StatefulWidget {
     this.showCeilingLayer = false,
     this.ceilingColour = const Color(0xFFF0EDE8),
     this.typeSizePrefs = const {},
+    this.roomShape = RoomShape.rectangle,
+    this.customShapePoints,
   });
 
   @override
@@ -347,12 +356,24 @@ class RoomCanvasState extends State<RoomCanvas> {
         l.dy <= item.size.height;
   }
 
-  // Returns true if scene point [p] lies within the room rectangle
+  // Returns the room shape path (cached for this frame via getter)
+  Path get _roomShapePath => buildRoomPath(
+    widget.roomShape,
+    widget.roomWidthPx,
+    widget.roomDepthPx,
+    customPoints: widget.customShapePoints,
+  );
+
+  // Returns true if scene point [p] lies within the room shape
   bool _insideRoom(Offset p) {
-    return p.dx >= 0 &&
-        p.dx <= widget.roomWidthPx &&
-        p.dy >= 0 &&
-        p.dy <= widget.roomDepthPx;
+    if (widget.roomShape == RoomShape.rectangle) {
+      // Fast path for rectangle (most common case)
+      return p.dx >= 0 &&
+          p.dx <= widget.roomWidthPx &&
+          p.dy >= 0 &&
+          p.dy <= widget.roomDepthPx;
+    }
+    return insideShape(_roomShapePath, p);
   }
 
   bool _onResize(FurnitureModel item, Offset p) {
@@ -1336,6 +1357,8 @@ class RoomCanvasState extends State<RoomCanvas> {
                                   roomWallColour: widget.roomWallColour,
                                   thumbnails: widget.thumbnails,
                                   showCeilingLayer: widget.showCeilingLayer,
+                                  roomShape: widget.roomShape,
+                                  customShapePoints: widget.customShapePoints,
                                 ),
                                 size: const Size(_canvasW, _canvasH),
                               ),
@@ -1742,6 +1765,8 @@ class RoomPainter extends CustomPainter {
   final Color roomWallColour;
   final Map<String, ui.Image> thumbnails;
   final bool showCeilingLayer;
+  final RoomShape roomShape;
+  final List<Offset>? customShapePoints;
 
   const RoomPainter({
     required this.furnitureItems,
@@ -1755,6 +1780,8 @@ class RoomPainter extends CustomPainter {
     this.roomWallColour = const Color(0xFF4A4A5A),
     this.thumbnails = const {},
     this.showCeilingLayer = false,
+    this.roomShape = RoomShape.rectangle,
+    this.customShapePoints,
   });
 
   @override
@@ -1764,14 +1791,33 @@ class RoomPainter extends CustomPainter {
       Rect.fromLTWH(0, 0, canvasW, canvasH),
       Paint()..color = canvasBgColour,
     );
-    final rr = Rect.fromLTWH(0, 0, roomWidth, roomDepth);
-    // Room floor — use the scheme colour
-    canvas.drawRect(rr, Paint()..color = roomFloorColour);
 
-    // Ceiling layer overlay — subtle blue tint + label
+    // Build the room shape path
+    final roomPath = buildRoomPath(
+      roomShape,
+      roomWidth,
+      roomDepth,
+      customPoints: customShapePoints,
+    );
+    final rr = Rect.fromLTWH(0, 0, roomWidth, roomDepth);
+
+    // Room floor — use the scheme colour, clipped to shape
+    canvas.save();
+    canvas.clipPath(roomPath);
+    canvas.drawPath(roomPath, Paint()..color = roomFloorColour);
+
+    // Ring inner hole — draw background colour inside to fake a hole
+    if (roomShape == RoomShape.ring) {
+      canvas.drawPath(
+        buildRingHolePath(roomWidth, roomDepth),
+        Paint()..color = canvasBgColour,
+      );
+    }
+
+    // Ceiling layer overlay — subtle blue tint
     if (showCeilingLayer) {
-      canvas.drawRect(
-        rr,
+      canvas.drawPath(
+        roomPath,
         Paint()..color = const Color(0xFF1565C0).withOpacity(0.09),
       );
       final tp = TextPainter(
@@ -1789,9 +1835,7 @@ class RoomPainter extends CustomPainter {
       tp.paint(canvas, const Offset(8, 6));
     }
 
-    // Grid — adapts to floor colour
-    canvas.save();
-    canvas.clipRect(rr);
+    // Grid — clipped to room shape
     final gp = Paint()
       ..color = roomFloorColour.computeLuminance() > 0.5
           ? Colors.black.withOpacity(0.10)
@@ -1803,29 +1847,25 @@ class RoomPainter extends CustomPainter {
       canvas.drawLine(Offset(0, y), Offset(roomWidth, y), gp);
     canvas.restore();
 
-    // Shadow + walls
-    canvas.drawRect(
-      rr.inflate(2),
+    // Shadow under shape
+    canvas.drawPath(
+      roomPath.shift(const Offset(2, 2)),
       Paint()
         ..color = Colors.black.withOpacity(0.18)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
     );
-    canvas.drawRect(
-      rr,
+
+    // Wall stroke — draw the shape outline
+    canvas.drawPath(
+      roomPath,
       Paint()
         ..color = roomWallColour
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 8,
+        ..strokeWidth = 8
+        ..strokeJoin = StrokeJoin.round,
     );
-    final cp = Paint()..color = roomWallColour;
-    for (final c in [
-      Offset(0, 0),
-      Offset(roomWidth, 0),
-      Offset(0, roomDepth),
-      Offset(roomWidth, roomDepth),
-    ])
-      canvas.drawCircle(c, 5, cp);
 
+    // Dimension labels — always based on bounding box
     _dimLabel(
       canvas,
       '${(roomWidth / 100).toStringAsFixed(1)} m',

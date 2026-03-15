@@ -10,6 +10,7 @@ import 'realistic_3d_screen.dart';
 import '../services/layout_persistence_service.dart';
 import '../services/thumbnail_cache.dart';
 import '../services/thumbnail_generator_service.dart';
+import '../models/room_shape.dart';
 import 'dart:ui' as ui;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,6 +55,8 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   Map<String, ui.Image> _thumbnails = {};
   // Ceiling layer toggle — when true, ceiling spots are shown/editable
   bool _showCeilingLayer = false;
+  RoomShape _roomShape = RoomShape.rectangle;
+  List<Offset>? _customShapePoints;
 
   // ── Persistent size preferences per furniture type ─────────────────────
   // Survives item deletion and hot reload.
@@ -349,6 +352,12 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       if (snapshot.canvasBgColour != null) {
         _canvasBgColour = snapshot.canvasBgColour!;
       }
+      if (snapshot.roomShape != null) {
+        _roomShape = RoomShape.values.firstWhere(
+          (s) => s.name == snapshot.roomShape,
+          orElse: () => RoomShape.rectangle,
+        );
+      }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _canvasKey.currentState?.loadFromJson(snapshot.furnitureJson);
@@ -365,6 +374,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       roomWidthM: _roomWidthM,
       roomDepthM: _roomDepthM,
       colourScheme: _currentScheme,
+      roomShape: _roomShape.name,
       canvasBgColour: _canvasBgColour,
     );
     // Update project metadata (furniture count + lastModified) in the list
@@ -526,6 +536,15 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
               }),
               roomWidthM: _roomWidthM,
               roomDepthM: _roomDepthM,
+              roomShape: _roomShape,
+              customShapePoints: _customShapePoints,
+              onShapeChanged: (s, pts) {
+                setState(() {
+                  _roomShape = s;
+                  _customShapePoints = pts;
+                });
+                _saveLayout();
+              },
               minRoomM: _minRoomM,
               maxRoomM: _maxRoomM,
               onWidthChanged: (v) {
@@ -568,6 +587,8 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                     showCeilingLayer: _showCeilingLayer,
                     ceilingColour: _currentScheme.ceiling,
                     typeSizePrefs: _typeSizePrefs,
+                    roomShape: _roomShape,
+                    customShapePoints: _customShapePoints,
                   ),
                   Positioned(
                     right: 16,
@@ -978,6 +999,9 @@ class _LeftPanel extends StatefulWidget {
   final VoidCallback onRealistic3D;
   final bool showCeilingLayer;
   final VoidCallback onCeilingLayerToggle;
+  final RoomShape roomShape;
+  final List<Offset>? customShapePoints;
+  final void Function(RoomShape, List<Offset>?) onShapeChanged;
 
   const _LeftPanel({
     required this.selectedType,
@@ -993,6 +1017,9 @@ class _LeftPanel extends StatefulWidget {
     required this.onRealistic3D,
     required this.showCeilingLayer,
     required this.onCeilingLayerToggle,
+    this.roomShape = RoomShape.rectangle,
+    this.customShapePoints,
+    required this.onShapeChanged,
   });
 
   @override
@@ -1254,6 +1281,25 @@ class _LeftPanelState extends State<_LeftPanel> {
                       ),
                     ),
 
+                    const Divider(height: 1, thickness: 1),
+                    // ── Room Shape picker ─────────────────────────────────
+                    _RoomShapePicker(
+                      current: widget.roomShape,
+                      onChanged: (s) => widget.onShapeChanged(s, null),
+                      onCustomEdit: () async {
+                        final pts = await showDialog<List<Offset>>(
+                          context: context,
+                          builder: (_) => _CustomShapeDialog(
+                            initial: widget.customShapePoints,
+                            roomW: widget.roomWidthM * 100,
+                            roomH: widget.roomDepthM * 100,
+                          ),
+                        );
+                        if (pts != null) {
+                          widget.onShapeChanged(RoomShape.custom, pts);
+                        }
+                      },
+                    ),
                     const Divider(height: 1, thickness: 1),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
@@ -2564,6 +2610,501 @@ class _SectionLabel extends StatelessWidget {
       ),
     ],
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _RoomShapePicker — compact grid of shape buttons in the left panel
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _RoomShapePicker extends StatelessWidget {
+  final RoomShape current;
+  final ValueChanged<RoomShape> onChanged;
+  final VoidCallback onCustomEdit;
+
+  const _RoomShapePicker({
+    required this.current,
+    required this.onChanged,
+    required this.onCustomEdit,
+  });
+
+  static const _accent = Color(0xFFC9A96E);
+  static const _dark = Color(0xFF1F1F2B);
+
+  // Shapes grouped for the grid — 4 per row
+  static const List<RoomShape> _shapes = [
+    RoomShape.rectangle,
+    RoomShape.circle,
+    RoomShape.oval,
+    RoomShape.triangle,
+    RoomShape.pentagon,
+    RoomShape.hexagon,
+    RoomShape.heptagon,
+    RoomShape.octagon,
+    RoomShape.nonagon,
+    RoomShape.decagon,
+    RoomShape.hendecagon,
+    RoomShape.trapezoid,
+    RoomShape.diamond,
+    RoomShape.rhombus,
+    RoomShape.parallelogram,
+    RoomShape.star,
+    RoomShape.semiCircle,
+    RoomShape.heart,
+    RoomShape.ring,
+    RoomShape.trefoil,
+    RoomShape.asteroid,
+    RoomShape.pie,
+    RoomShape.cross,
+    RoomShape.crescent,
+    RoomShape.custom,
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header
+        Container(
+          color: _dark,
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
+          child: Row(
+            children: const [
+              Icon(Icons.grid_view_rounded, size: 14, color: Color(0xFF8E8A9A)),
+              SizedBox(width: 6),
+              Text(
+                'Room Shape',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  color: Color(0xFFF0EDE8),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Shape grid
+        Padding(
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+          child: GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 5,
+              crossAxisSpacing: 5,
+              mainAxisSpacing: 5,
+              childAspectRatio: 1,
+            ),
+            itemCount: _shapes.length,
+            itemBuilder: (_, i) {
+              final shape = _shapes[i];
+              final isActive = current == shape;
+              return Tooltip(
+                message: shape.label,
+                child: GestureDetector(
+                  onTap: shape == RoomShape.custom
+                      ? onCustomEdit
+                      : () => onChanged(shape),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 130),
+                    decoration: BoxDecoration(
+                      color: isActive
+                          ? _accent.withOpacity(0.18)
+                          : const Color(0xFF17171F),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isActive
+                            ? _accent.withOpacity(0.75)
+                            : const Color(0xFF2A2A3E),
+                        width: isActive ? 1.5 : 1,
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // Mini shape preview
+                        SizedBox(
+                          width: 24,
+                          height: 20,
+                          child: CustomPaint(
+                            painter: _ShapePreviewPainter(
+                              shape: shape,
+                              color: isActive
+                                  ? _accent
+                                  : const Color(0xFF8888AA),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          shape.label
+                              .split('-')
+                              .first, // shorten e.g. "Semi-circle" → "Semi"
+                          style: TextStyle(
+                            fontSize: 7,
+                            color: isActive ? _accent : const Color(0xFF666688),
+                            fontWeight: isActive
+                                ? FontWeight.w700
+                                : FontWeight.w400,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// Mini shape preview painter used inside each grid cell
+class _ShapePreviewPainter extends CustomPainter {
+  final RoomShape shape;
+  final Color color;
+  const _ShapePreviewPainter({required this.shape, required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = buildRoomPath(shape, size.width, size.height);
+    final fillPaint = Paint()..color = color.withOpacity(0.25);
+    final strokePaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    canvas.drawPath(path, fillPaint);
+    canvas.drawPath(path, strokePaint);
+    // Ring inner hole
+    if (shape == RoomShape.ring) {
+      canvas.drawPath(
+        buildRingHolePath(size.width, size.height),
+        Paint()..color = const Color(0xFF1F1F2B),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ShapePreviewPainter old) =>
+      old.shape != shape || old.color != color;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _CustomShapeDialog — draw a custom polygon by clicking points
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _CustomShapeDialog extends StatefulWidget {
+  final List<Offset>? initial;
+  final double roomW, roomH;
+  const _CustomShapeDialog({
+    this.initial,
+    required this.roomW,
+    required this.roomH,
+  });
+
+  @override
+  State<_CustomShapeDialog> createState() => _CustomShapeDialogState();
+}
+
+class _CustomShapeDialogState extends State<_CustomShapeDialog> {
+  late List<Offset> _points;
+  int? _dragging;
+
+  Size _canvasSize = const Size(440, 320);
+  final _canvasKey = GlobalKey();
+
+  Offset? _downPos;
+  Offset? _lastTapPos;
+  DateTime? _lastTapTime;
+
+  static const _accent = Color(0xFFC9A96E);
+
+  @override
+  void initState() {
+    super.initState();
+    _points = (widget.initial != null && widget.initial!.length >= 3)
+        ? List.from(widget.initial!)
+        : [
+            const Offset(0.1, 0.1),
+            const Offset(0.9, 0.1),
+            const Offset(0.9, 0.9),
+            const Offset(0.1, 0.9),
+          ];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final box = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+      if (box != null && box.size != _canvasSize) {
+        setState(() => _canvasSize = box.size);
+      }
+    });
+  }
+
+  Offset _rel(Offset p) => Offset(
+    (p.dx / _canvasSize.width).clamp(0.02, 0.98),
+    (p.dy / _canvasSize.height).clamp(0.02, 0.98),
+  );
+
+  Offset _px(Offset rel) =>
+      Offset(rel.dx * _canvasSize.width, rel.dy * _canvasSize.height);
+
+  int _hitIndex(Offset pos) {
+    for (int i = 0; i < _points.length; i++) {
+      if ((_px(_points[i]) - pos).distance < 20) return i;
+    }
+    return -1;
+  }
+
+  void _onDown(PointerDownEvent e) {
+    final pos = e.localPosition;
+    final idx = _hitIndex(pos);
+    _downPos = pos;
+    if (idx >= 0) setState(() => _dragging = idx);
+  }
+
+  void _onMove(PointerMoveEvent e) {
+    if (_dragging != null)
+      setState(() => _points[_dragging!] = _rel(e.localPosition));
+  }
+
+  void _onUp(PointerUpEvent e) {
+    final pos = e.localPosition;
+    final moved = _downPos != null ? (pos - _downPos!).distance : 999.0;
+
+    if (_dragging != null) {
+      setState(() => _dragging = null);
+      _downPos = null;
+      return;
+    }
+
+    if (moved < 10) {
+      final now = DateTime.now();
+      final isDouble =
+          _lastTapPos != null &&
+          (pos - _lastTapPos!).distance < 20 &&
+          _lastTapTime != null &&
+          now.difference(_lastTapTime!).inMilliseconds < 400;
+
+      if (isDouble) {
+        final idx = _hitIndex(pos);
+        if (idx >= 0 && _points.length > 3)
+          setState(() => _points.removeAt(idx));
+        _lastTapPos = null;
+        _lastTapTime = null;
+      } else {
+        if (_hitIndex(pos) < 0) setState(() => _points.add(_rel(pos)));
+        _lastTapPos = pos;
+        _lastTapTime = now;
+      }
+    }
+    _downPos = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: const Color(0xFF14141E),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        width: 480,
+        height: 520,
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.edit_outlined, color: _accent, size: 18),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text(
+                    'Custom Room Shape',
+                    style: TextStyle(
+                      color: Color(0xFFF0EDE8),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(
+                    Icons.close_rounded,
+                    color: Color(0xFF8888AA),
+                    size: 18,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Click to add  ·  Drag to move  ·  Double-click on a point to remove',
+              style: TextStyle(fontSize: 11, color: Color(0xFF666688)),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: MouseRegion(
+                cursor: SystemMouseCursors.precise,
+                child: Listener(
+                  key: _canvasKey,
+                  behavior: HitTestBehavior.opaque,
+                  onPointerDown: _onDown,
+                  onPointerMove: _onMove,
+                  onPointerUp: _onUp,
+                  onPointerCancel: (_) => setState(() {
+                    _dragging = null;
+                    _downPos = null;
+                  }),
+                  child: CustomPaint(
+                    size: Size.infinite,
+                    painter: _CustomShapeEditorPainter(
+                      points: _points,
+                      dragging: _dragging,
+                      canvasSize: _canvasSize,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: () => setState(
+                    () => _points = [
+                      const Offset(0.1, 0.1),
+                      const Offset(0.9, 0.1),
+                      const Offset(0.9, 0.9),
+                      const Offset(0.1, 0.9),
+                    ],
+                  ),
+                  icon: const Icon(Icons.refresh_rounded, size: 15),
+                  label: const Text('Reset'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF8888AA),
+                  ),
+                ),
+                const Spacer(),
+                OutlinedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF8888AA),
+                    side: const BorderSide(color: Color(0xFF2A2A3E)),
+                  ),
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton.icon(
+                  onPressed: _points.length >= 3
+                      ? () => Navigator.pop(context, _points)
+                      : null,
+                  icon: const Icon(Icons.check_rounded, size: 16),
+                  label: const Text('Apply Shape'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _accent,
+                    foregroundColor: const Color(0xFF0D0D11),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CustomShapeEditorPainter extends CustomPainter {
+  final List<Offset> points;
+  final int? dragging;
+  final Size canvasSize;
+  const _CustomShapeEditorPainter({
+    required this.points,
+    required this.canvasSize,
+    this.dragging,
+  });
+
+  static const _accent = Color(0xFFC9A96E);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Use the measured canvas size (size may be infinite with Size.infinite)
+    final w = canvasSize.width.isFinite ? canvasSize.width : size.width;
+    final h = canvasSize.height.isFinite ? canvasSize.height : size.height;
+
+    // Background
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, w, h),
+      Paint()..color = const Color(0xFF0D0D11),
+    );
+    // Grid
+    final gp = Paint()
+      ..color = Colors.white.withOpacity(0.05)
+      ..strokeWidth = 1;
+    for (double x = 0; x <= w; x += w / 10)
+      canvas.drawLine(Offset(x, 0), Offset(x, h), gp);
+    for (double y = 0; y <= h; y += h / 10)
+      canvas.drawLine(Offset(0, y), Offset(w, y), gp);
+
+    if (points.isEmpty) return;
+
+    // Build actual pixel path
+    final path = Path();
+    final first = Offset(points.first.dx * w, points.first.dy * h);
+    path.moveTo(first.dx, first.dy);
+    for (final pt in points.skip(1)) {
+      path.lineTo(pt.dx * w, pt.dy * h);
+    }
+    path.close();
+
+    // Fill
+    canvas.drawPath(path, Paint()..color = _accent.withOpacity(0.12));
+    // Stroke
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = _accent.withOpacity(0.8)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..strokeJoin = StrokeJoin.round,
+    );
+    // Points
+    for (int i = 0; i < points.length; i++) {
+      final px = Offset(points[i].dx * w, points[i].dy * h);
+      final isDragging = dragging == i;
+      canvas.drawCircle(
+        px,
+        isDragging ? 10 : 7,
+        Paint()..color = isDragging ? Colors.white : _accent,
+      );
+      canvas.drawCircle(
+        px,
+        isDragging ? 10 : 7,
+        Paint()
+          ..color = const Color(0xFF0D0D11)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+      // Index label
+      final tp = TextPainter(
+        text: TextSpan(
+          text: '${i + 1}',
+          style: TextStyle(
+            fontSize: 8,
+            color: isDragging ? Colors.black : const Color(0xFF0D0D11),
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, px - Offset(tp.width / 2, tp.height / 2));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CustomShapeEditorPainter old) => true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
