@@ -723,7 +723,7 @@
     #lighting-toggle {
       position: fixed;
       top: 14px;
-      right: 110px;
+      right: 240px;
       display: flex;
       align-items: center;
       gap: 7px;
@@ -1056,8 +1056,85 @@
 
   <!-- Lighting controls removed — lights placed in 2D canvas -->
 
+  <!-- Shading toggle button -->
+  <div id="lighting-toggle">
+    <span class="lt-icon">◑</span>
+    <span>Shading</span>
+  </div>
+
+  <!-- Shading / lighting panel -->
+  <div id="lighting-panel">
+    <div id="lp-header">
+      <div id="lp-title">Shading &amp; Lighting</div>
+      <div id="lp-close">×</div>
+    </div>
+    <div id="lp-body">
+
+      <div class="lp-section-label">Scene lighting</div>
+
+      <div class="lp-row">
+        <span class="lp-label">Ambient</span>
+        <input type="range" class="lp-slider" id="lp-ambient" min="0" max="3" step="0.05" value="0.7">
+        <span class="lp-badge" id="lp-ambient-val">0.70</span>
+      </div>
+
+      <div class="lp-row">
+        <span class="lp-label">Sunlight</span>
+        <input type="range" class="lp-slider" id="lp-sun" min="0" max="4" step="0.05" value="1.0">
+        <span class="lp-badge" id="lp-sun-val">1.00</span>
+      </div>
+
+      <div class="lp-row">
+        <span class="lp-label">Fill light</span>
+        <input type="range" class="lp-slider" id="lp-fill" min="0" max="2" step="0.05" value="0.3">
+        <span class="lp-badge" id="lp-fill-val">0.30</span>
+      </div>
+
+      <div class="lp-row">
+        <span class="lp-label">Sky light</span>
+        <input type="range" class="lp-slider" id="lp-hemi" min="0" max="2" step="0.05" value="0.5">
+        <span class="lp-badge" id="lp-hemi-val">0.50</span>
+      </div>
+
+      <div class="lp-divider"></div>
+
+      <div class="lp-section-label">Shading presets</div>
+
+      <div class="lp-presets">
+        <div class="lp-preset active" onclick="applyLightPreset('natural')">Natural</div>
+        <div class="lp-preset" onclick="applyLightPreset('bright')">Bright</div>
+        <div class="lp-preset" onclick="applyLightPreset('moody')">Moody</div>
+        <div class="lp-preset" onclick="applyLightPreset('dramatic')">Dramatic</div>
+        <div class="lp-preset" onclick="applyLightPreset('night')">Night</div>
+        <div class="lp-preset" onclick="applyLightPreset('showroom')">Showroom</div>
+      </div>
+
+      <div class="lp-divider"></div>
+
+      <div class="lp-section-label">Selected furniture shading</div>
+
+      <div class="lp-row">
+        <span class="lp-label">Brightness</span>
+        <input type="range" class="lp-slider" id="lp-item-bright" min="-1" max="1" step="0.05" value="0">
+        <span class="lp-badge" id="lp-item-bright-val">0.00</span>
+      </div>
+
+      <div class="lp-row">
+        <span class="lp-label">Darkness</span>
+        <input type="range" class="lp-slider" id="lp-item-dark" min="0" max="1" step="0.05" value="0">
+        <span class="lp-badge" id="lp-item-dark-val">0.00</span>
+      </div>
+
+      <button id="lp-reset" onclick="resetItemShading()">↺ Reset item shading</button>
+
+    </div>
+  </div>
+
   <script>
     var bank = {};
+    // Suppress the browser's native right-click context menu everywhere in the
+    // 3D view — right-click is used by Flutter's tool wheel instead.
+    document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     var lightBank = {};  // GLB models for light fixtures
     var _WH = 3.2;       // room ceiling height — must match buildRoom's WH
     var _scenePayload = null; // set by onReady so placeItem can access all items
@@ -2691,6 +2768,218 @@
     });
 
     initBgPicker();
+
+    // ── Shading & Lighting panel ─────────────────────────────────────────────
+
+    // Light presets: [ambient, sun, fill, hemi]
+    var _lightPresets = {
+      'natural': { ambient: 0.70, sun: 1.00, fill: 0.30, hemi: 0.50 },
+      'bright': { ambient: 1.40, sun: 2.00, fill: 0.60, hemi: 0.80 },
+      'moody': { ambient: 0.25, sun: 0.60, fill: 0.10, hemi: 0.20 },
+      'dramatic': { ambient: 0.10, sun: 2.50, fill: 0.05, hemi: 0.10 },
+      'night': { ambient: 0.05, sun: 0.00, fill: 0.00, hemi: 0.03 },
+      'showroom': { ambient: 1.80, sun: 1.50, fill: 1.00, hemi: 1.20 },
+    };
+
+    function _sliderPct(el) {
+      var min = parseFloat(el.min), max = parseFloat(el.max), val = parseFloat(el.value);
+      return ((val - min) / (max - min) * 100).toFixed(1) + '%';
+    }
+
+    function _updateSliderStyle(el) {
+      el.style.setProperty('--pct', _sliderPct(el));
+    }
+
+    function initShadingPanel() {
+      // Toggle button
+      var toggle = document.getElementById('lighting-toggle');
+      var panel = document.getElementById('lighting-panel');
+      var close = document.getElementById('lp-close');
+
+      toggle.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var isOpen = panel.classList.toggle('open');
+        toggle.classList.toggle('active', isOpen);
+      });
+      close.addEventListener('click', function (e) {
+        e.stopPropagation();
+        panel.classList.remove('open');
+        toggle.classList.remove('active');
+      });
+
+      // Stop orbit controls stealing events on the panel
+      ['mousedown', 'pointerdown', 'click'].forEach(function (ev) {
+        panel.addEventListener(ev, function (e) { e.stopPropagation(); });
+        toggle.addEventListener(ev, function (e) { e.stopPropagation(); });
+      });
+
+      // ── Scene sliders ────────────────────────────────────────────────────
+      function wireSceneSlider(id, valId, getLightFn, setFn) {
+        var sl = document.getElementById(id);
+        var vl = document.getElementById(valId);
+        _updateSliderStyle(sl);
+        sl.addEventListener('input', function () {
+          var v = parseFloat(sl.value);
+          vl.textContent = v.toFixed(2);
+          _updateSliderStyle(sl);
+          if (setFn) setFn(v);
+        });
+        sl.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+        sl.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
+      }
+
+      wireSceneSlider('lp-ambient', 'lp-ambient-val', null, function (v) {
+        if (_ambientLight) _ambientLight.intensity = v;
+      });
+      wireSceneSlider('lp-sun', 'lp-sun-val', null, function (v) {
+        if (_sun) _sun.intensity = v;
+      });
+      wireSceneSlider('lp-fill', 'lp-fill-val', null, function (v) {
+        if (_fill) _fill.intensity = v;
+      });
+      wireSceneSlider('lp-hemi', 'lp-hemi-val', null, function (v) {
+        if (_hemiLight) _hemiLight.intensity = v;
+      });
+
+      // ── Per-item shading sliders ──────────────────────────────────────────
+      var _itemBrightOrig = {};  // id → original emissive per mesh
+
+      function applyItemShading(brightDelta, darkAmount) {
+        if (!selectedEntry) return;
+        selectedEntry.obj.traverse(function (c) {
+          if (!c.isMesh || !c.material) return;
+          var mats = Array.isArray(c.material) ? c.material : [c.material];
+          mats.forEach(function (mat) {
+            // MeshBasicMaterial has no emissive and ignores lighting — skip it
+            if (mat.isMeshBasicMaterial) return;
+            // Store originals once per material, keyed on first use
+            if (!mat.userData._shadingOrig) {
+              mat.userData._shadingOrig = {
+                emissiveR: mat.emissive ? mat.emissive.r : 0,
+                emissiveG: mat.emissive ? mat.emissive.g : 0,
+                emissiveB: mat.emissive ? mat.emissive.b : 0,
+                emissiveIntensity: mat.emissiveIntensity || 0,
+                colorR: mat.color ? mat.color.r : 1,
+                colorG: mat.color ? mat.color.g : 1,
+                colorB: mat.color ? mat.color.b : 1,
+              };
+            }
+            var orig = mat.userData._shadingOrig;
+            // Brightness: add emissive warm-white glow using .set() not assignment
+            if (mat.emissive) {
+              if (brightDelta > 0) {
+                mat.emissive.set(1, 0.95, 0.85);
+                mat.emissiveIntensity = brightDelta * 1.5;
+              } else {
+                mat.emissive.setRGB(orig.emissiveR, orig.emissiveG, orig.emissiveB);
+                mat.emissiveIntensity = orig.emissiveIntensity;
+              }
+            }
+            // Darkness: darken base colour toward black using .setRGB()
+            if (mat.color) {
+              if (darkAmount > 0) {
+                var factor = 1.0 - darkAmount * 0.85;
+                mat.color.setRGB(
+                  orig.colorR * factor,
+                  orig.colorG * factor,
+                  orig.colorB * factor
+                );
+              } else {
+                mat.color.setRGB(orig.colorR, orig.colorG, orig.colorB);
+              }
+            }
+            mat.needsUpdate = true;
+          });
+        });
+      }
+
+      var brightSlider = document.getElementById('lp-item-bright');
+      var brightVal = document.getElementById('lp-item-bright-val');
+      var darkSlider = document.getElementById('lp-item-dark');
+      var darkVal = document.getElementById('lp-item-dark-val');
+
+      _updateSliderStyle(brightSlider);
+      _updateSliderStyle(darkSlider);
+
+      brightSlider.addEventListener('input', function () {
+        var v = parseFloat(brightSlider.value);
+        brightVal.textContent = v.toFixed(2);
+        _updateSliderStyle(brightSlider);
+        applyItemShading(Math.max(0, v), parseFloat(darkSlider.value));
+      });
+      darkSlider.addEventListener('input', function () {
+        var v = parseFloat(darkSlider.value);
+        darkVal.textContent = v.toFixed(2);
+        _updateSliderStyle(darkSlider);
+        applyItemShading(Math.max(0, parseFloat(brightSlider.value)), v);
+      });
+      ['mousedown', 'pointerdown'].forEach(function (ev) {
+        brightSlider.addEventListener(ev, function (e) { e.stopPropagation(); });
+        darkSlider.addEventListener(ev, function (e) { e.stopPropagation(); });
+      });
+    }
+
+    function applyLightPreset(name) {
+      var p = _lightPresets[name];
+      if (!p) return;
+      // Update lights
+      if (_ambientLight) _ambientLight.intensity = p.ambient;
+      if (_sun) _sun.intensity = p.sun;
+      if (_fill) _fill.intensity = p.fill;
+      if (_hemiLight) _hemiLight.intensity = p.hemi;
+      // Sync sliders
+      function syncSlider(id, valId, v, min, max) {
+        var sl = document.getElementById(id);
+        var vl = document.getElementById(valId);
+        if (!sl || !vl) return;
+        sl.value = v;
+        vl.textContent = v.toFixed(2);
+        _updateSliderStyle(sl);
+      }
+      syncSlider('lp-ambient', 'lp-ambient-val', p.ambient, 0, 3);
+      syncSlider('lp-sun', 'lp-sun-val', p.sun, 0, 4);
+      syncSlider('lp-fill', 'lp-fill-val', p.fill, 0, 2);
+      syncSlider('lp-hemi', 'lp-hemi-val', p.hemi, 0, 2);
+      // Highlight active preset button
+      document.querySelectorAll('.lp-preset').forEach(function (el) {
+        el.classList.toggle('active', el.textContent.toLowerCase() === name);
+      });
+    }
+
+    function resetItemShading() {
+      if (!selectedEntry) return;
+      selectedEntry.obj.traverse(function (c) {
+        if (!c.isMesh || !c.material) return;
+        var mats = Array.isArray(c.material) ? c.material : [c.material];
+        mats.forEach(function (mat) {
+          if (mat.isMeshBasicMaterial) return;
+          if (mat.userData._shadingOrig) {
+            var orig = mat.userData._shadingOrig;
+            if (mat.emissive) mat.emissive.setRGB(orig.emissiveR, orig.emissiveG, orig.emissiveB);
+            mat.emissiveIntensity = orig.emissiveIntensity;
+            if (mat.color) mat.color.setRGB(orig.colorR, orig.colorG, orig.colorB);
+            mat.needsUpdate = true;
+          }
+        });
+      });
+      var bs = document.getElementById('lp-item-bright');
+      var ds = document.getElementById('lp-item-dark');
+      if (bs) { bs.value = 0; document.getElementById('lp-item-bright-val').textContent = '0.00'; _updateSliderStyle(bs); }
+      if (ds) { ds.value = 0; document.getElementById('lp-item-dark-val').textContent = '0.00'; _updateSliderStyle(ds); }
+    }
+
+    // Reset per-item sliders whenever a new furniture item is selected
+    (function () {
+      var origSelect = window.selectFurniture;
+      if (typeof origSelect === 'function') {
+        window.selectFurniture = function (entry) {
+          origSelect(entry);
+          resetItemShading();
+        };
+      }
+    })();
+
+    initShadingPanel();
   </script>
 </body>
 

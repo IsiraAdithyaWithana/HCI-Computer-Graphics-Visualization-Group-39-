@@ -1046,6 +1046,24 @@ class RoomCanvasState extends State<RoomCanvas> {
                           _drawTapPos = null;
                         }
                       },
+                      onSecondaryTap: () {
+                        // Quick right-click on furniture = context menu.
+                        // The tool wheel (hold + drag) is handled by
+                        // _ToolWheelScope above this widget.
+                        if (selectedItem != null) {
+                          final RenderBox box =
+                              context.findRenderObject() as RenderBox;
+                          final pos = box.localToGlobal(
+                            Offset(
+                              selectedItem!.position.dx +
+                                  selectedItem!.size.width / 2,
+                              selectedItem!.position.dy +
+                                  selectedItem!.size.height / 2,
+                            ),
+                          );
+                          _showContextMenu(pos);
+                        }
+                      },
                       onSecondaryTapDown: (d) {
                         final s = _globalToScene(d.globalPosition);
                         for (final item in furnitureItems.reversed) {
@@ -1057,7 +1075,6 @@ class RoomCanvasState extends State<RoomCanvas> {
                                   ..clear()
                                   ..add(item);
                             });
-                            _showContextMenu(d.globalPosition);
                             return;
                           }
                         }

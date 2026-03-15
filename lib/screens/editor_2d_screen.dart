@@ -543,45 +543,422 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             ),
           ),
           Expanded(
-            child: Stack(
-              children: [
-                RoomCanvas(
-                  key: _canvasKey,
-                  selectedType: _selectedType,
-                  currentMode: _currentMode,
-                  roomWidthPx: _roomWidthPx,
-                  roomDepthPx: _roomDepthPx,
-                  onZoomChanged: _onZoomChanged,
-                  customGlbOverride: _customGlbOverride,
-                  customLabelOverride: _customLabelOverride,
-                  customColor: _customColor,
-                  customDefaultSize: _customDefaultSize,
-                  onChanged: _saveLayout,
-                  onUndoStateChanged: _onUndoStateChanged,
-                  canvasBgColour: _canvasBgColour,
-                  roomFloorColour: _currentScheme.floor,
-                  roomWallColour: _currentScheme.wall,
-                  thumbnails: _thumbnails,
-                  showCeilingLayer: _showCeilingLayer,
-                  ceilingColour: _currentScheme.ceiling,
-                  typeSizePrefs: _typeSizePrefs,
-                ),
-                Positioned(
-                  right: 16,
-                  bottom: 16,
-                  child: _ZoomControl(
-                    zoom: _canvasZoom,
-                    min: 0.05,
-                    max: 5.0,
-                    label: _zoomLabel,
-                    onChanged: _setZoom,
-                    onReset: () => _setZoom(1.0),
+            child: _ToolWheelScope(
+              currentMode: _currentMode,
+              onModeChanged: (m) => setState(() => _currentMode = m),
+              child: Stack(
+                children: [
+                  RoomCanvas(
+                    key: _canvasKey,
+                    selectedType: _selectedType,
+                    currentMode: _currentMode,
+                    roomWidthPx: _roomWidthPx,
+                    roomDepthPx: _roomDepthPx,
+                    onZoomChanged: _onZoomChanged,
+                    customGlbOverride: _customGlbOverride,
+                    customLabelOverride: _customLabelOverride,
+                    customColor: _customColor,
+                    customDefaultSize: _customDefaultSize,
+                    onChanged: _saveLayout,
+                    onUndoStateChanged: _onUndoStateChanged,
+                    canvasBgColour: _canvasBgColour,
+                    roomFloorColour: _currentScheme.floor,
+                    roomWallColour: _currentScheme.wall,
+                    thumbnails: _thumbnails,
+                    showCeilingLayer: _showCeilingLayer,
+                    ceilingColour: _currentScheme.ceiling,
+                    typeSizePrefs: _typeSizePrefs,
                   ),
-                ),
-              ],
+                  Positioned(
+                    right: 16,
+                    bottom: 16,
+                    child: _ZoomControl(
+                      zoom: _canvasZoom,
+                      min: 0.05,
+                      max: 5.0,
+                      label: _zoomLabel,
+                      onChanged: _setZoom,
+                      onReset: () => _setZoom(1.0),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _ToolWheelScope — right-click-hold tool switcher (Cubase-style)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ToolWheelScope extends StatefulWidget {
+  final MouseMode currentMode;
+  final ValueChanged<MouseMode> onModeChanged;
+  final Widget child;
+
+  const _ToolWheelScope({
+    required this.currentMode,
+    required this.onModeChanged,
+    required this.child,
+  });
+
+  @override
+  State<_ToolWheelScope> createState() => _ToolWheelScopeState();
+}
+
+class _ToolWheelScopeState extends State<_ToolWheelScope>
+    with SingleTickerProviderStateMixin {
+  // Wheel visibility
+  bool _visible = false;
+  Offset _origin = Offset.zero; // where right-click was pressed (global)
+
+  // Which slot is hovered — null = none
+  int? _hoveredIndex;
+
+  // Animation
+  late AnimationController _anim;
+  late Animation<double> _scaleAnim;
+  late Animation<double> _fadeAnim;
+
+  // Drag threshold: must move >8px before committing to a slot
+  static const double _deadzone = 8.0;
+
+  static const List<_WheelTool> _tools = [
+    _WheelTool(
+      mode: MouseMode.select,
+      icon: Icons.mouse_outlined,
+      label: 'Select',
+      shortcut: 'S',
+    ),
+    _WheelTool(
+      mode: MouseMode.hand,
+      icon: Icons.pan_tool_outlined,
+      label: 'Hand',
+      shortcut: 'H',
+    ),
+    _WheelTool(
+      mode: MouseMode.draw,
+      icon: Icons.edit_outlined,
+      label: 'Draw',
+      shortcut: 'D',
+    ),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _anim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 160),
+    );
+    _scaleAnim = CurvedAnimation(parent: _anim, curve: Curves.easeOutBack);
+    _fadeAnim = CurvedAnimation(parent: _anim, curve: Curves.easeOut);
+  }
+
+  @override
+  void dispose() {
+    _anim.dispose();
+    super.dispose();
+  }
+
+  void _open(Offset globalPos) {
+    setState(() {
+      _visible = true;
+      _origin = globalPos;
+      _hoveredIndex = null;
+    });
+    _anim.forward(from: 0);
+  }
+
+  void _move(Offset globalPos) {
+    if (!_visible) return;
+    final dx = globalPos.dx - _origin.dx;
+    final dy = globalPos.dy - _origin.dy;
+    final dist = (dx * dx + dy * dy).abs();
+
+    if (dist < _deadzone * _deadzone) {
+      setState(() => _hoveredIndex = null);
+      return;
+    }
+
+    // Slot zones match _WheelPanel: each slot is 72px wide with 4px gaps.
+    // Centre of panel is at dx=0. Slot centres: -76, 0, +76
+    const double slotW = _WheelPanel._itemW + _WheelPanel._gap; // 76
+    int idx;
+    if (dx < -slotW / 2) {
+      idx = 0;
+    } else if (dx > slotW / 2) {
+      idx = 2;
+    } else {
+      idx = 1;
+    }
+    if (_hoveredIndex != idx) {
+      setState(() => _hoveredIndex = idx);
+    }
+  }
+
+  void _close() {
+    if (_hoveredIndex != null) {
+      // Drag-release on a slot → switch to that tool
+      widget.onModeChanged(_tools[_hoveredIndex!].mode);
+    } else {
+      // Plain right-click (no drag past deadzone) → switch to Select
+      widget.onModeChanged(MouseMode.select);
+    }
+    _anim.reverse().then((_) {
+      if (mounted) setState(() => _visible = false);
+    });
+    setState(() => _hoveredIndex = null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (e) {
+        // kSecondaryMouseButton = 2
+        if (e.buttons == 2) _open(e.position);
+      },
+      onPointerMove: (e) {
+        if (_visible) _move(e.position);
+      },
+      onPointerUp: (e) {
+        if (_visible) _close();
+      },
+      onPointerCancel: (e) {
+        if (_visible) {
+          _anim.reverse().then((_) {
+            if (mounted) setState(() => _visible = false);
+          });
+        }
+      },
+      child: Stack(
+        children: [
+          widget.child,
+          if (_visible)
+            Positioned.fill(
+              // Restore the real OS cursor while the wheel is shown —
+              // the canvas uses SystemMouseCursors.none which hides it.
+              child: MouseRegion(
+                cursor: SystemMouseCursors.basic,
+                child: IgnorePointer(child: _buildWheel()),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWheel() {
+    final RenderBox? box = context.findRenderObject() as RenderBox?;
+    if (box == null) return const SizedBox.shrink();
+    final localOrigin = box.globalToLocal(_origin);
+
+    // Use the panel's own constants so sizing is always in sync
+    final double totalW = _WheelPanel.panelW;
+    final double wheelH = _WheelPanel.panelH;
+    const double connectorH = 14.0;
+
+    double left = localOrigin.dx - totalW / 2;
+    double top = localOrigin.dy - wheelH - connectorH - 4;
+
+    final size = box.size;
+    left = left.clamp(
+      8.0,
+      (size.width - totalW - 8.0).clamp(8.0, double.infinity),
+    );
+    top = top.clamp(
+      8.0,
+      (size.height - wheelH - 8.0).clamp(8.0, double.infinity),
+    );
+
+    return FadeTransition(
+      opacity: _fadeAnim,
+      child: ScaleTransition(
+        scale: _scaleAnim,
+        alignment: Alignment.bottomCenter,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // Connector line from origin up to wheel bottom
+            Positioned(
+              left: localOrigin.dx - 1,
+              top: top + wheelH,
+              child: Container(
+                width: 2,
+                height: (localOrigin.dy - top - wheelH).clamp(0.0, 60.0),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFC9A96E).withOpacity(0.4),
+                  borderRadius: BorderRadius.circular(1),
+                ),
+              ),
+            ),
+            // Wheel panel
+            Positioned(
+              left: left,
+              top: top,
+              child: _WheelPanel(
+                tools: _tools,
+                hoveredIndex: _hoveredIndex,
+                currentMode: widget.currentMode,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WheelTool {
+  final MouseMode mode;
+  final IconData icon;
+  final String label;
+  final String shortcut;
+  const _WheelTool({
+    required this.mode,
+    required this.icon,
+    required this.label,
+    required this.shortcut,
+  });
+}
+
+class _WheelPanel extends StatelessWidget {
+  final List<_WheelTool> tools;
+  final int? hoveredIndex;
+  final MouseMode currentMode;
+
+  const _WheelPanel({
+    required this.tools,
+    required this.hoveredIndex,
+    required this.currentMode,
+  });
+
+  // All sizing in one place — panel width is computed from these
+  static const double _itemW = 72.0;
+  static const double _itemH = 78.0;
+  static const double _gap = 4.0;
+  static const double _pad = 8.0;
+  // panelW = _pad + _itemW + _gap + _itemW + _gap + _itemW + _pad
+  static const double panelW = _pad * 2 + _itemW * 3 + _gap * 2; // 232
+  static const double panelH = _pad * 2 + _itemH; // 94
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: panelW,
+      height: panelH,
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E0E1A).withOpacity(0.97),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: const Color(0xFFC9A96E).withOpacity(0.25),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.55),
+            blurRadius: 28,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      // Use a Stack with Positioned slots — guaranteed no overflow
+      child: Stack(
+        children: List.generate(tools.length, (i) {
+          final tool = tools[i];
+          final isHovered = hoveredIndex == i;
+          final isCurrent = currentMode == tool.mode;
+          final left = _pad + i * (_itemW + _gap);
+
+          return Positioned(
+            left: left,
+            top: _pad,
+            width: _itemW,
+            height: _itemH,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 110),
+              decoration: BoxDecoration(
+                color: isHovered
+                    ? const Color(0xFFC9A96E).withOpacity(0.18)
+                    : isCurrent
+                    ? const Color(0xFFC9A96E).withOpacity(0.08)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: isHovered
+                      ? const Color(0xFFC9A96E).withOpacity(0.8)
+                      : isCurrent
+                      ? const Color(0xFFC9A96E).withOpacity(0.35)
+                      : const Color(0xFF2A2A3E),
+                  width: 1,
+                ),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  AnimatedScale(
+                    scale: isHovered ? 1.15 : 1.0,
+                    duration: const Duration(milliseconds: 110),
+                    child: Icon(
+                      tool.icon,
+                      size: 22,
+                      color: isHovered
+                          ? const Color(0xFFC9A96E)
+                          : isCurrent
+                          ? const Color(0xFFC9A96E).withOpacity(0.7)
+                          : const Color(0xFF8888AA),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    tool.label,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: isHovered ? FontWeight.w700 : FontWeight.w500,
+                      color: isHovered
+                          ? const Color(0xFFC9A96E)
+                          : const Color(0xFF8888AA),
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isHovered
+                          ? const Color(0xFFC9A96E).withOpacity(0.15)
+                          : const Color(0xFF1A1A2E),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: isHovered
+                            ? const Color(0xFFC9A96E).withOpacity(0.3)
+                            : const Color(0xFF2A2A3E),
+                      ),
+                    ),
+                    child: Text(
+                      tool.shortcut,
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: isHovered
+                            ? const Color(0xFFC9A96E)
+                            : const Color(0xFF555577),
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
       ),
     );
   }
