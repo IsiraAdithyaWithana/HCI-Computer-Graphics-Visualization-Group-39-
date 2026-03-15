@@ -1465,6 +1465,7 @@ class _AddFurnitureDialogState extends State<_AddFurnitureDialog> {
 
   final List<String> _builtinCategories = kFurnitureCategories
       .map((c) => c.name)
+      .where((name) => name != 'Lighting')
       .toList();
   static const _accent = const Color(0xFFC9A96E);
   static const _accentLight = Color(0xFF252534);

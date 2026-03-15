@@ -96,6 +96,136 @@
       color: rgba(255, 255, 255, 0.75);
     }
 
+    #bg-colour-btn {
+      position: fixed;
+      top: 14px;
+      right: 118px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: rgba(0, 0, 0, 0.55);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 20px;
+      padding: 7px 14px 7px 10px;
+      color: rgba(255, 255, 255, 0.65);
+      font: 12px/1 sans-serif;
+      font-weight: 500;
+      cursor: pointer;
+      z-index: 9999;
+      pointer-events: all;
+      isolation: isolate;
+      transition: background 0.2s, border-color 0.2s, color 0.2s;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #bg-colour-btn:hover {
+      background: rgba(255, 255, 255, 0.10);
+      border-color: rgba(255, 255, 255, 0.3);
+      color: #fff;
+    }
+
+    #bg-colour-swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #1a1a2e;
+      border: 2px solid rgba(255, 255, 255, 0.35);
+      flex-shrink: 0;
+      transition: background 0.2s;
+    }
+
+    #bg-colour-popup {
+      position: fixed;
+      top: 52px;
+      right: 118px;
+      background: rgba(10, 12, 30, 0.97);
+      border: 1px solid rgba(99, 102, 241, 0.35);
+      border-radius: 14px;
+      padding: 14px;
+      z-index: 10000;
+      min-width: 220px;
+      display: none;
+      box-shadow: 0 12px 48px rgba(0, 0, 0, 0.8);
+    }
+
+    #bg-colour-popup.open {
+      display: block;
+    }
+
+    .bcp-label {
+      font: 600 10px/1 sans-serif;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.35);
+      margin-bottom: 8px;
+    }
+
+    .bcp-presets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-bottom: 12px;
+    }
+
+    .bcp-preset {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      cursor: pointer;
+      transition: transform 0.15s, border-color 0.15s;
+    }
+
+    .bcp-preset:hover {
+      transform: scale(1.18);
+      border-color: rgba(255, 255, 255, 0.5);
+    }
+
+    .bcp-preset.active {
+      border-color: #6366f1;
+    }
+
+    .bcp-hex-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .bcp-hex-label {
+      color: rgba(255, 255, 255, 0.4);
+      font: 13px/1 monospace;
+    }
+
+    #bg-hex-input {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 7px;
+      color: #fff;
+      font: 13px/1 monospace;
+      padding: 6px 8px;
+      outline: none;
+    }
+
+    #bg-hex-input:focus {
+      border-color: rgba(99, 102, 241, 0.6);
+    }
+
+    #bg-hex-apply {
+      background: rgba(99, 102, 241, 0.7);
+      border: none;
+      border-radius: 7px;
+      color: #fff;
+      font: 12px/1 sans-serif;
+      padding: 7px 12px;
+      cursor: pointer;
+    }
+
+    #bg-hex-apply:hover {
+      background: rgba(99, 102, 241, 0.9);
+    }
+
     #select-toggle {
       position: fixed;
       top: 14px;
@@ -849,6 +979,24 @@
     <span id="select-toggle-label">Select</span>
   </div>
 
+  <!-- Background colour button -->
+  <div id="bg-colour-btn">
+    <div id="bg-colour-swatch"></div>
+    <span>Background</span>
+  </div>
+
+  <!-- Background colour popup -->
+  <div id="bg-colour-popup">
+    <div class="bcp-label">Presets</div>
+    <div class="bcp-presets" id="bcp-presets"></div>
+    <div class="bcp-label">Custom hex</div>
+    <div class="bcp-hex-row">
+      <span class="bcp-hex-label">#</span>
+      <input type="text" id="bg-hex-input" maxlength="6" placeholder="1a1a2e">
+      <button id="bg-hex-apply" onclick="applyBgHex()">OK</button>
+    </div>
+  </div>
+
   <div id="size-panel">
     <div id="panel-header">
       <div id="panel-furniture-name">Chair</div>
@@ -1124,6 +1272,7 @@
       // ── Scene / Camera ───────────────────────────────────────────────────
       var scene = new THREE.Scene();
       _scene = scene;
+      window._sceneRef = scene;
       scene.background = new THREE.Color(0x1a1a2e);
       var camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
       camera.position.set(12, 8, 14);
@@ -1561,6 +1710,21 @@
               mesh.rotation.set(0, 0, 0);
               mesh.position.y = roomH - bb0.max.y * sc;
               group.add(mesh);
+            } else {
+              // Fallback procedural ceiling spot: recessed disc + outer ring
+              var spotR = 0.12 * sf;
+              var housingMat = new THREE.MeshStandardMaterial({ color: 0xd0d0d0, roughness: 0.5, metalness: 0.6 });
+              var ringGeo = new THREE.TorusGeometry(spotR, spotR * 0.18, 8, 24);
+              var ringMesh = new THREE.Mesh(ringGeo, housingMat);
+              ringMesh.rotation.x = Math.PI / 2;
+              ringMesh.position.y = roomH - 0.01;
+              group.add(ringMesh);
+              var discMat = new THREE.MeshStandardMaterial({ color: 0xfffde7, emissive: new THREE.Color(0xfff176), emissiveIntensity: 3.0, roughness: 0.1 });
+              var discGeo = new THREE.CircleGeometry(spotR * 0.65, 16);
+              var discMesh = new THREE.Mesh(discGeo, discMat);
+              discMesh.rotation.x = Math.PI / 2;
+              discMesh.position.y = roomH - 0.005;
+              group.add(discMesh);
             }
             // SpotLight pointing straight down from ceiling
             var sl2 = new THREE.SpotLight(cfg.color, cfg.intensity * sf, cfg.distance, cfg.angle || Math.PI / 7, 0.25, 1.5);
@@ -1596,14 +1760,68 @@
             // height using actual 3D bounding boxes — no double-count.
             group.position.set(cx, 0, cz);
             var mesh = cloneLightMesh('tableLampLight');
+            var usedProceduralLamp = false;
             if (mesh) {
               mesh.scale.set(1, 1, 1); mesh.rotation.set(0, 0, 0); mesh.position.set(0, 0, 0);
               var tgtH4 = LIGHT_MODEL_HEIGHT['tableLampLight'] * sf;
               var bb4 = meshBBoxDirect(mesh);
-              var sc4 = (bb4.max.y - bb4.min.y) > 0.001 ? tgtH4 / (bb4.max.y - bb4.min.y) : 1.0;
+              var meshH = bb4.max.y - bb4.min.y;
+              var meshW = Math.max(bb4.max.x - bb4.min.x, bb4.max.z - bb4.min.z);
+              var sc4 = meshH > 0.001 ? tgtH4 / meshH : 1.0;
               mesh.scale.setScalar(sc4);
-              mesh.position.y = -bb4.min.y * sc4; // base at y=0 (floor)
-              group.add(mesh);
+              mesh.position.y = -bb4.min.y * sc4;
+              // If the GLB is roughly spherical (a bare bulb/globe — width ≈ height)
+              // supplement it with a proper lamp shade so it looks like a real lamp.
+              var isGlobeOnly = meshW > 0 && (meshH / meshW) < 1.4;
+              if (isGlobeOnly) {
+                // Build a procedural table lamp: base disc + pole + cone shade
+                var lampH = tgtH4;
+                var shadeR = lampH * 0.28;
+                var poleR = lampH * 0.025;
+                // Base disc
+                var baseMat = new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.7, metalness: 0.3 });
+                var baseGeo = new THREE.CylinderGeometry(shadeR * 0.35, shadeR * 0.4, lampH * 0.04, 16);
+                var baseMesh = new THREE.Mesh(baseGeo, baseMat);
+                baseMesh.position.y = lampH * 0.02; baseMesh.castShadow = true;
+                group.add(baseMesh);
+                // Pole
+                var poleMat = new THREE.MeshStandardMaterial({ color: 0xb8960a, roughness: 0.4, metalness: 0.7 });
+                var poleGeo = new THREE.CylinderGeometry(poleR, poleR, lampH * 0.72, 8);
+                var poleMesh = new THREE.Mesh(poleGeo, poleMat);
+                poleMesh.position.y = lampH * 0.04 + lampH * 0.36; poleMesh.castShadow = true;
+                group.add(poleMesh);
+                // Shade (open cone — two-sided so interior is visible)
+                var shadeMat = new THREE.MeshStandardMaterial({ color: 0xf5e6c8, roughness: 0.85, metalness: 0.0, side: THREE.DoubleSide, emissive: new THREE.Color(0xffe8b0), emissiveIntensity: 0.35 });
+                var shadeGeo = new THREE.CylinderGeometry(shadeR * 0.15, shadeR, lampH * 0.28, 16, 1, true);
+                var shadeMesh = new THREE.Mesh(shadeGeo, shadeMat);
+                var shadeBase = lampH * 0.04 + lampH * 0.72;
+                shadeMesh.position.y = shadeBase + lampH * 0.14;
+                shadeMesh.castShadow = true; shadeMesh.receiveShadow = true;
+                group.add(shadeMesh);
+                // Bulb glow sphere
+                var bulbMat = new THREE.MeshStandardMaterial({ color: 0xfffde7, emissive: new THREE.Color(0xffee58), emissiveIntensity: 2.5, roughness: 0.2, metalness: 0.0 });
+                var bulbGeo = new THREE.SphereGeometry(poleR * 2.5, 8, 8);
+                var bulbMesh = new THREE.Mesh(bulbGeo, bulbMat);
+                bulbMesh.position.y = shadeBase + lampH * 0.06;
+                group.add(bulbMesh);
+                usedProceduralLamp = true;
+              } else {
+                group.add(mesh);
+              }
+            }
+            if (!mesh || !usedProceduralLamp && !mesh) {
+              // Full fallback: GLB unavailable — build entire lamp procedurally
+              var lampH2 = LIGHT_MODEL_HEIGHT['tableLampLight'] * sf;
+              var shadeR2 = lampH2 * 0.28; var poleR2 = lampH2 * 0.025;
+              var baseMat2 = new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.7, metalness: 0.3 });
+              var bMesh = new THREE.Mesh(new THREE.CylinderGeometry(shadeR2 * 0.35, shadeR2 * 0.4, lampH2 * 0.04, 16), baseMat2);
+              bMesh.position.y = lampH2 * 0.02; group.add(bMesh);
+              var poleMat2 = new THREE.MeshStandardMaterial({ color: 0xb8960a, roughness: 0.4, metalness: 0.7 });
+              var pMesh = new THREE.Mesh(new THREE.CylinderGeometry(poleR2, poleR2, lampH2 * 0.72, 8), poleMat2);
+              pMesh.position.y = lampH2 * 0.04 + lampH2 * 0.36; group.add(pMesh);
+              var shadeMat2 = new THREE.MeshStandardMaterial({ color: 0xf5e6c8, roughness: 0.85, side: THREE.DoubleSide, emissive: new THREE.Color(0xffe8b0), emissiveIntensity: 0.35 });
+              var sMesh = new THREE.Mesh(new THREE.CylinderGeometry(shadeR2 * 0.15, shadeR2, lampH2 * 0.28, 16, 1, true), shadeMat2);
+              sMesh.position.y = lampH2 * 0.04 + lampH2 * 0.72 + lampH2 * 0.14; group.add(sMesh);
             }
             var pl3 = new THREE.PointLight(cfg.color, cfg.intensity * sf, cfg.distance, cfg.decay || 2.0);
             pl3.position.set(0, cfg.height * sf, 0); // above floor; post-pass will lift
@@ -2387,6 +2605,92 @@
       }
 
     })();
+
+    // ── Background colour picker ──────────────────────────────────────────────
+    var _bgPresets = [
+      { hex: '1a1a2e', label: 'Dark Navy' },
+      { hex: '0a0a1a', label: 'Near Black' },
+      { hex: '1c1c1c', label: 'Charcoal' },
+      { hex: '2b2b2b', label: 'Dark Grey' },
+      { hex: '263238', label: 'Blue Grey' },
+      { hex: '1a2a1a', label: 'Dark Forest' },
+      { hex: '1a1a3e', label: 'Deep Purple' },
+      { hex: '3d2b1a', label: 'Dark Mocha' },
+      { hex: 'f0f0f0', label: 'Light Grey' },
+      { hex: 'd0e8f0', label: 'Sky Blue' },
+      { hex: 'e8e0d0', label: 'Warm Sand' },
+      { hex: 'ffffff', label: 'White' },
+    ];
+    var _currentBgHex = '1a1a2e';
+
+    function initBgPicker() {
+      var container = document.getElementById('bcp-presets');
+      _bgPresets.forEach(function (p) {
+        var el = document.createElement('div');
+        el.className = 'bcp-preset' + (p.hex === _currentBgHex ? ' active' : '');
+        el.style.background = '#' + p.hex;
+        el.title = p.label;
+        el.addEventListener('click', function (e) {
+          e.stopPropagation();
+          applyBgColour(p.hex);
+          document.querySelectorAll('.bcp-preset').forEach(function (x) { x.classList.remove('active'); });
+          el.classList.add('active');
+          document.getElementById('bg-hex-input').value = p.hex;
+        });
+        container.appendChild(el);
+      });
+      document.getElementById('bg-hex-input').value = _currentBgHex;
+      updateBgSwatch(_currentBgHex);
+    }
+
+    function applyBgColour(hex) {
+      _currentBgHex = hex;
+      // Update Three.js scene background
+      if (typeof THREE !== 'undefined' && window._sceneRef) {
+        window._sceneRef.background = new THREE.Color('#' + hex);
+      }
+      document.body.style.background = '#' + hex;
+      updateBgSwatch(hex);
+    }
+
+    function applyBgHex() {
+      var val = document.getElementById('bg-hex-input').value.replace('#', '').trim();
+      if (/^[0-9a-fA-F]{6}$/.test(val)) {
+        applyBgColour(val);
+        document.querySelectorAll('.bcp-preset').forEach(function (x) { x.classList.remove('active'); });
+      }
+    }
+
+    function updateBgSwatch(hex) {
+      var swatch = document.getElementById('bg-colour-swatch');
+      if (swatch) swatch.style.background = '#' + hex;
+    }
+
+    function toggleBgPopup() {
+      document.getElementById('bg-colour-popup').classList.toggle('open');
+    }
+
+    document.addEventListener('click', function (e) {
+      var popup = document.getElementById('bg-colour-popup');
+      var btn = document.getElementById('bg-colour-btn');
+      if (!popup.contains(e.target) && !btn.contains(e.target)) {
+        popup.classList.remove('open');
+      }
+    });
+
+    ['mousedown', 'pointerdown'].forEach(function (ev) {
+      document.getElementById('bg-colour-btn').addEventListener(ev, function (e) { e.stopPropagation(); });
+      document.getElementById('bg-colour-popup').addEventListener(ev, function (e) { e.stopPropagation(); });
+      document.getElementById('bg-hex-input').addEventListener(ev, function (e) { e.stopPropagation(); });
+      document.getElementById('bg-hex-apply').addEventListener(ev, function (e) { e.stopPropagation(); });
+    });
+    document.getElementById('bg-colour-btn').addEventListener('click', function (e) { e.stopPropagation(); toggleBgPopup(); });
+    document.getElementById('bg-hex-input').addEventListener('keydown', function (e) {
+      e.stopPropagation();
+      if (e.key === 'Enter') applyBgHex();
+    });
+
+    initBgPicker();
   </script>
 </body>
 

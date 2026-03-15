@@ -28,9 +28,10 @@ class LayoutPersistenceService {
       'user:$userId:project:$projectId:canvasBg';
 
   /// Stores the last-used {width, height, scaleFactor} per furniture type name.
-  /// Key example: user:u1:project:p1:typeSizes
-  static String _typeSizeKey(String userId, String projectId) =>
-      'user:$userId:project:$projectId:typeSizes';
+  /// Global per-user (NOT per-project) so resizing in one project carries over
+  /// to all projects automatically. Key: user:u1:globalTypeSizes
+  static String _typeSizeKey(String userId, [String? projectId]) =>
+      'user:$userId:globalTypeSizes';
 
   // ── Project list ──────────────────────────────────────────────────────────
 
@@ -150,23 +151,20 @@ class LayoutPersistenceService {
   /// [prefs] maps type name → {'w': double, 'h': double, 'sf': double}
   Future<void> saveTypeSizes(
     String userId,
-    String projectId,
+    String projectId, // kept for API compat — ignored, global key used
     Map<String, Map<String, double>> prefs,
   ) async {
     final sharedPrefs = await SharedPreferences.getInstance();
-    await sharedPrefs.setString(
-      _typeSizeKey(userId, projectId),
-      jsonEncode(prefs),
-    );
+    await sharedPrefs.setString(_typeSizeKey(userId), jsonEncode(prefs));
   }
 
   /// Loads the type size prefs. Returns an empty map if nothing saved yet.
   Future<Map<String, Map<String, double>>> loadTypeSizes(
     String userId,
-    String projectId,
+    String projectId, // kept for API compat — ignored, global key used
   ) async {
     final sharedPrefs = await SharedPreferences.getInstance();
-    final raw = sharedPrefs.getString(_typeSizeKey(userId, projectId));
+    final raw = sharedPrefs.getString(_typeSizeKey(userId));
     if (raw == null || raw.isEmpty) return {};
     try {
       final decoded = jsonDecode(raw) as Map<String, dynamic>;

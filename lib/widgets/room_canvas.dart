@@ -3486,20 +3486,36 @@ class CeilingPainter extends CustomPainter {
     final h = item.size.height;
     final r = Math.min(w, h) * 0.45;
     final c = Offset(w / 2, h / 2);
+
+    // Large soft glow halo — very visible on dark ceiling background
     canvas.drawCircle(
       c,
-      r * 1.6,
-      Paint()..color = const Color(0xFFFFFFFF).withOpacity(0.18),
+      r * 3.2,
+      Paint()
+        ..color = const Color(0xFFFFEE58).withOpacity(0.22)
+        ..style = PaintingStyle.fill,
     );
-    canvas.drawCircle(c, r, Paint()..color = const Color(0xFFBDBDBD));
-    canvas.drawCircle(c, r * 0.5, Paint()..color = const Color(0xFFFFFFFF));
+    canvas.drawCircle(
+      c,
+      r * 2.0,
+      Paint()
+        ..color = const Color(0xFFFFEE58).withOpacity(0.38)
+        ..style = PaintingStyle.fill,
+    );
+    // Housing ring (dark grey outer rim)
+    canvas.drawCircle(c, r, Paint()..color = const Color(0xFF9E9E9E));
+    // Bright inner bulb
+    canvas.drawCircle(c, r * 0.58, Paint()..color = const Color(0xFFFFF9C4));
+    // Emissive centre dot
+    canvas.drawCircle(c, r * 0.28, Paint()..color = const Color(0xFFFFFFFF));
+    // Outer housing stroke
     canvas.drawCircle(
       c,
       r,
       Paint()
-        ..color = const Color(0xFF757575)
+        ..color = const Color(0xFF616161)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.2,
+        ..strokeWidth = 1.5,
     );
   }
 
