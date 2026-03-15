@@ -172,7 +172,6 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   void _openRealistic3D() {
     final items = _canvasKey.currentState?.furnitureItems ?? [];
     if (items.isEmpty) {
-      _snack('Add some furniture first.');
       return;
     }
     Navigator.of(context).push(
@@ -238,11 +237,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
 
             // Save both layout AND type size prefs to disk
             _saveLayout();
-            LayoutPersistenceService.instance.saveTypeSizes(
-              widget.userId,
-              widget.projectId,
-              _typeSizePrefs,
-            );
+            LayoutPersistenceService.instance.saveTypeSizes(_typeSizePrefs);
           },
           onNaturalSizeDetected: (String id, double widthPx, double depthPx) {
             _canvasKey.currentState?.updateItemNaturalSize(
@@ -278,9 +273,6 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       ),
     );
   }
-
-  void _snack(String msg) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
   void _toggleResizeSnap() {
     _canvasKey.currentState?.toggleResizeSnap();
@@ -343,11 +335,8 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       userId: widget.userId,
       projectId: widget.projectId,
     );
-    // Load type size preferences (persisted separately from furniture items)
-    final sizePrefs = await LayoutPersistenceService.instance.loadTypeSizes(
-      widget.userId,
-      widget.projectId,
-    );
+    // Load global type size preferences (shared across all projects and users)
+    final sizePrefs = await LayoutPersistenceService.instance.loadTypeSizes();
     if (sizePrefs.isNotEmpty) {
       setState(() => _typeSizePrefs = sizePrefs);
     }
@@ -525,7 +514,6 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
               tooltip: 'Export to JSON',
               onPressed: () {
                 debugPrint(_canvasKey.currentState?.exportToJson());
-                _snack('Layout exported to console.');
               },
             ),
           ],

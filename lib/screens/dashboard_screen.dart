@@ -141,7 +141,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     ctrl.dispose();
     if (result == null) return; // user cancelled
 
-    final id = 'proj_\${DateTime.now().millisecondsSinceEpoch}';
+    final id = 'proj_${DateTime.now().millisecondsSinceEpoch}';
     final now = DateTime.now();
     final rt = template?.type ?? RoomType.other;
     final colorMap = {
@@ -213,25 +213,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final backup = List<PersistedProject>.from(_projects);
     setState(() => _projects.removeWhere((p) => p.id == id));
     await LayoutPersistenceService.instance.deleteProject(widget.userId, id);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Project deleted'),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: AppTheme.surfaceAlt,
-        action: SnackBarAction(
-          label: 'Undo',
-          textColor: AppTheme.accent,
-          onPressed: () async {
-            await LayoutPersistenceService.instance.saveProjects(
-              widget.userId,
-              backup,
-            );
-            _loadProjects();
-          },
-        ),
-      ),
-    );
   }
 
   void _renameProject(String id) async {
@@ -290,14 +271,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       );
     }
     await _loadProjects();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Duplicated as "${copy.name}"'),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: AppTheme.surfaceAlt,
-      ),
-    );
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────
