@@ -1151,242 +1151,296 @@ class _Sidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final w = expanded ? AppTheme.sidebarWidth : AppTheme.sidebarCollapsed;
+    final targetW = expanded
+        ? AppTheme.sidebarWidth
+        : AppTheme.sidebarCollapsed;
+    // Use LayoutBuilder so every child knows the REAL available width at every
+    // frame of the animation — not the boolean `expanded` which flips instantly.
+    // This prevents all RenderFlex overflow errors during expand/collapse.
     return AnimatedContainer(
       duration: const Duration(milliseconds: 240),
       curve: Curves.easeInOutCubic,
-      width: w,
+      width: targetW,
+      clipBehavior: Clip.hardEdge,
       color: AppTheme.surfaceDark,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Logo bar
-          Container(
-            height: 64,
-            padding: EdgeInsets.symmetric(horizontal: expanded ? 20 : 12),
-            child: Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: AppTheme.accent.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: AppTheme.accent.withOpacity(0.3)),
-                  ),
-                  child: const Icon(
-                    Icons.grid_view_rounded,
-                    color: AppTheme.accent,
-                    size: 19,
-                  ),
-                ),
-                if (expanded) ...[
-                  const SizedBox(width: 12),
-                  const Text(
-                    'Spazio',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                      color: AppTheme.textPrimary,
-                      letterSpacing: -0.3,
-                    ),
-                  ),
-                  const Spacer(),
-                  InkWell(
-                    onTap: onToggle,
-                    borderRadius: BorderRadius.circular(6),
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: Icon(
-                        Icons.keyboard_double_arrow_left_rounded,
-                        size: 18,
-                        color: AppTheme.textMuted,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // During animation, actualW is the real pixel width at this frame.
+          // We treat the sidebar as "expanded" only when it's wide enough to
+          // safely show expanded content (threshold = halfway point).
+          final actualW = constraints.maxWidth;
+          final threshold =
+              (AppTheme.sidebarWidth + AppTheme.sidebarCollapsed) / 2;
+          final isWide = actualW >= threshold;
 
-          Divider(color: AppTheme.borderDark, height: 1),
-
-          // New Design button
-          Padding(
-            padding: EdgeInsets.all(expanded ? 14 : 10),
-            child: expanded
-                ? ElevatedButton.icon(
-                    onPressed: onNewDesign,
-                    icon: const Icon(Icons.add, size: 16),
-                    label: Text(isAdmin ? 'New Design' : 'Request Design'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.accent,
-                      foregroundColor: AppTheme.bgDark,
-                      minimumSize: const Size(double.infinity, 40),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      textStyle: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  )
-                : Tooltip(
-                    message: 'New Design',
-                    child: InkWell(
-                      onTap: onNewDesign,
-                      borderRadius: BorderRadius.circular(10),
-                      child: Container(
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: AppTheme.accent.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: AppTheme.accent.withOpacity(0.3),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Logo bar ────────────────────────────────────────────────
+              SizedBox(
+                height: 64,
+                child: isWide
+                    ? Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: AppTheme.accent.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: AppTheme.accent.withOpacity(0.3),
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.grid_view_rounded,
+                                color: AppTheme.accent,
+                                size: 19,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            const Expanded(
+                              child: Text(
+                                'Spazio',
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppTheme.textPrimary,
+                                  letterSpacing: -0.3,
+                                ),
+                              ),
+                            ),
+                            InkWell(
+                              onTap: onToggle,
+                              borderRadius: BorderRadius.circular(6),
+                              child: Padding(
+                                padding: const EdgeInsets.all(4),
+                                child: Icon(
+                                  Icons.keyboard_double_arrow_left_rounded,
+                                  size: 18,
+                                  color: AppTheme.textMuted,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : Center(
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: AppTheme.accent.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: AppTheme.accent.withOpacity(0.3),
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.grid_view_rounded,
+                            color: AppTheme.accent,
+                            size: 19,
                           ),
                         ),
-                        child: const Icon(
-                          Icons.add,
-                          color: AppTheme.accent,
-                          size: 20,
-                        ),
                       ),
-                    ),
-                  ),
-          ),
-
-          // Nav items
-          Expanded(
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: expanded ? 10 : 8),
-              child: Column(
-                children: [
-                  ..._NavItem.values
-                      .where((n) => n != _NavItem.settings)
-                      .map(
-                        (nav) => _NavTile(
-                          nav: nav,
-                          current: current,
-                          expanded: expanded,
-                          onTap: () => onNavChanged(nav),
-                        ),
-                      ),
-                ],
               ),
-            ),
-          ),
 
-          Divider(color: AppTheme.borderDark, height: 1),
+              Divider(color: AppTheme.borderDark, height: 1),
 
-          Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: expanded ? 10 : 8,
-              vertical: 8,
-            ),
-            child: _NavTile(
-              nav: _NavItem.settings,
-              current: current,
-              expanded: expanded,
-              onTap: () => onNavChanged(_NavItem.settings),
-            ),
-          ),
-
-          // User avatar — shows actual login userId
-          Container(
-            margin: EdgeInsets.fromLTRB(
-              expanded ? 12 : 8,
-              0,
-              expanded ? 12 : 8,
-              14,
-            ),
-            padding: EdgeInsets.all(expanded ? 10 : 8),
-            decoration: BoxDecoration(
-              color: AppTheme.surfaceAlt,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: AppTheme.borderDark),
-            ),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor: AppTheme.accentDark.withOpacity(0.3),
-                  child: Text(
-                    initials,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: AppTheme.accent,
-                    ),
-                  ),
-                ),
-                if (expanded) ...[
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          displayName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+              // ── New Design button ─────────────────────────────────────
+              Padding(
+                padding: EdgeInsets.all(isWide ? 14 : 10),
+                child: isWide
+                    ? ElevatedButton.icon(
+                        onPressed: onNewDesign,
+                        icon: const Icon(Icons.add, size: 16),
+                        label: Text(isAdmin ? 'New Design' : 'Request Design'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.accent,
+                          foregroundColor: AppTheme.bgDark,
+                          minimumSize: const Size(double.infinity, 40),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          textStyle: const TextStyle(
                             fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: AppTheme.textPrimary,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
-                        Text(
-                          userId == 'guest' ? 'Guest user' : userId,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                      )
+                    : Tooltip(
+                        message: isAdmin ? 'New Design' : 'Request Design',
+                        child: InkWell(
+                          onTap: onNewDesign,
+                          borderRadius: BorderRadius.circular(10),
+                          child: Container(
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: AppTheme.accent.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: AppTheme.accent.withOpacity(0.3),
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.add,
+                              color: AppTheme.accent,
+                              size: 20,
+                            ),
+                          ),
+                        ),
+                      ),
+              ),
+
+              // ── Nav items ────────────────────────────────────────────
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: isWide ? 10 : 8),
+                  child: Column(
+                    children: _NavItem.values
+                        .where((n) => n != _NavItem.settings)
+                        .map(
+                          (nav) => _NavTile(
+                            nav: nav,
+                            current: current,
+                            expanded: isWide,
+                            onTap: () => onNavChanged(nav),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+              ),
+
+              Divider(color: AppTheme.borderDark, height: 1),
+
+              Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: isWide ? 10 : 8,
+                  vertical: 8,
+                ),
+                child: _NavTile(
+                  nav: _NavItem.settings,
+                  current: current,
+                  expanded: isWide,
+                  onTap: () => onNavChanged(_NavItem.settings),
+                ),
+              ),
+
+              // ── User profile ──────────────────────────────────────────
+              if (isWide)
+                Container(
+                  margin: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceAlt,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppTheme.borderDark),
+                  ),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 16,
+                        backgroundColor: AppTheme.accentDark.withOpacity(0.3),
+                        child: Text(
+                          initials,
                           style: const TextStyle(
-                            fontSize: 10,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.accent,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              displayName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.textPrimary,
+                              ),
+                            ),
+                            Text(
+                              userId == 'guest' ? 'Guest user' : userId,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: AppTheme.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      InkWell(
+                        onTap: onLogout,
+                        borderRadius: BorderRadius.circular(6),
+                        child: const Padding(
+                          padding: EdgeInsets.all(4),
+                          child: Icon(
+                            Icons.logout_rounded,
+                            size: 16,
                             color: AppTheme.textMuted,
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                  InkWell(
-                    onTap: onLogout,
-                    borderRadius: BorderRadius.circular(6),
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: const Icon(
-                        Icons.logout_rounded,
-                        size: 16,
-                        color: AppTheme.textMuted,
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: Center(
+                    child: CircleAvatar(
+                      radius: 16,
+                      backgroundColor: AppTheme.accentDark.withOpacity(0.3),
+                      child: Text(
+                        initials,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.accent,
+                        ),
                       ),
                     ),
                   ),
-                ],
-              ],
-            ),
-          ),
+                ),
 
-          if (!expanded)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 14),
-              child: InkWell(
-                onTap: onToggle,
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  width: double.infinity,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: AppTheme.surfaceHover,
+              // Re-expand button (only shown when narrow)
+              if (!isWide)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 14),
+                  child: InkWell(
+                    onTap: onToggle,
                     borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(
-                    Icons.keyboard_double_arrow_right_rounded,
-                    size: 16,
-                    color: AppTheme.textMuted,
+                    child: Container(
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: AppTheme.surfaceHover,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Center(
+                        child: Icon(
+                          Icons.keyboard_double_arrow_right_rounded,
+                          size: 16,
+                          color: AppTheme.textMuted,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }
