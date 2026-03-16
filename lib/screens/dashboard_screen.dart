@@ -23,8 +23,7 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen>
-    with WidgetsBindingObserver {
+class _DashboardScreenState extends State<DashboardScreen> {
   _NavItem _currentNav = _NavItem.home;
   bool _sidebarExpanded = true;
   List<PersistedProject> _projects = [];
@@ -65,24 +64,13 @@ class _DashboardScreenState extends State<DashboardScreen>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _loadProjects();
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _searchCtrl.dispose();
     super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Reload when user returns to foreground — picks up any deletions/changes
-    // made by the admin while this dashboard was in the background.
-    if (state == AppLifecycleState.resumed) {
-      _loadProjects();
-    }
   }
 
   Future<void> _loadProjects() async {
@@ -264,9 +252,44 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   void _deleteProject(String id) async {
+    final project = _projects.firstWhere(
+      (p) => p.id == id,
+      orElse: () => PersistedProject(
+        id: id,
+        name: 'this design',
+        roomType: 'other',
+        widthM: 0,
+        depthM: 0,
+        furnitureCount: 0,
+        lastModified: DateTime.now(),
+        createdAt: DateTime.now(),
+        previewColorValue: 0xFF7C9A92,
+      ),
+    );
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Design?'),
+        content: Text(
+          'Are you sure you want to delete "${project.name}"? '
+          'This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
     setState(() => _projects.removeWhere((p) => p.id == id));
     await LayoutPersistenceService.instance.deleteProject(widget.userId, id);
-    // Reload to refresh shared-project lists for all users
     await _loadProjects();
   }
 

@@ -78,6 +78,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   // Live undo/redo state — ValueNotifier so the 3D screen reacts without being rebuilt.
   final ValueNotifier<bool> _undoNotifier = ValueNotifier(false);
   final ValueNotifier<bool> _redoNotifier = ValueNotifier(false);
+  final ValueNotifier<bool> _savedNotifier = ValueNotifier(false);
 
   void _onUndoStateChanged() {
     _undoNotifier.value = _canvasKey.currentState?.canUndo ?? false;
@@ -89,6 +90,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
     ThumbnailCache.instance.removeListener(_onThumbsUpdated);
     _undoNotifier.dispose();
     _redoNotifier.dispose();
+    _savedNotifier.dispose();
     super.dispose();
   }
 
@@ -417,6 +419,13 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
         ),
       );
     }
+    // Flash "Saved ✓" indicator — triggered on every save regardless of source
+    if (mounted) {
+      _savedNotifier.value = true;
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) _savedNotifier.value = false;
+      });
+    }
   }
 
   @override
@@ -528,18 +537,62 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             tooltip: 'Realistic 3D View',
             onPressed: _openRealistic3D,
           ),
-          // Snap toggle kept (useful for admins placing furniture precisely)
-          if (widget.isAdmin)
-            Tooltip(
-              message: snapEnabled ? 'Grid Snap: ON' : 'Grid Snap: OFF',
-              child: IconButton(
-                icon: Icon(
-                  snapEnabled ? Icons.grid_on : Icons.grid_off,
-                  color: snapEnabled ? const Color(0xFFE8C97E) : null,
+          // Saved ✓ indicator — appears briefly after every save
+          ValueListenableBuilder<bool>(
+            valueListenable: _savedNotifier,
+            builder: (_, saved, __) => AnimatedOpacity(
+              opacity: saved ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 300),
+              child: Container(
+                margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
                 ),
-                onPressed: _toggleResizeSnap,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF4CAF50).withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: const Color(0xFF4CAF50).withOpacity(0.5),
+                  ),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.check_circle_outline,
+                      size: 14,
+                      color: Color(0xFF4CAF50),
+                    ),
+                    SizedBox(width: 4),
+                    Text(
+                      'Saved',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF4CAF50),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
+          ),
+          // ── Admin-only: Snap + Export ────────────────────────────────────
+          if (widget.isAdmin) ...[
+            IconButton(
+              icon: Icon(snapEnabled ? Icons.grid_on : Icons.crop_free),
+              tooltip: 'Toggle resize snap',
+              onPressed: _toggleResizeSnap,
+            ),
+            IconButton(
+              icon: const Icon(Icons.save),
+              tooltip: 'Export to JSON',
+              onPressed: () {
+                debugPrint(_canvasKey.currentState?.exportToJson());
+              },
+            ),
+          ],
         ],
       ),
       body: Row(

@@ -168,6 +168,7 @@ class RoomCanvasState extends State<RoomCanvas> {
 
   final _cursorPos = ValueNotifier<Offset?>(null);
   final _cursorAsset = ValueNotifier<String?>('assets/cursors/main_cursor.png');
+  final _hoveredItem = ValueNotifier<FurnitureModel?>(null);
   // ── Ceiling canvas cursor (separate so the two panels never interfere) ──
   final _cursorPosC = ValueNotifier<Offset?>(null);
   final _cursorAssetC = ValueNotifier<String?>(
@@ -315,6 +316,18 @@ class RoomCanvasState extends State<RoomCanvas> {
     }
   }
 
+  @override
+  void dispose() {
+    _hoveredItem.dispose();
+    _cursorPos.dispose();
+    _cursorAsset.dispose();
+    _cursorPosC.dispose();
+    _cursorAssetC.dispose();
+    _transformationController.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
   void _save() => widget.onChanged?.call();
 
   // ── Coordinate helpers ────────────────────────────────────────────────────
@@ -331,8 +344,7 @@ class RoomCanvasState extends State<RoomCanvas> {
   }
 
   // ── Snap ──────────────────────────────────────────────────────────────────
-  double _snap(double v) =>
-      snapResizeEnabled ? (v / gridSize).round() * gridSize : v;
+  double _snap(double v) => enableSnap ? (v / gridSize).round() * gridSize : v;
   Offset _snapOffset(Offset o) => Offset(_snap(o.dx), _snap(o.dy));
 
   // ── Geometry ──────────────────────────────────────────────────────────────
@@ -534,11 +546,11 @@ class RoomCanvasState extends State<RoomCanvas> {
   // ── Context menu ──────────────────────────────────────────────────────────
   void _showContextMenu(Offset globalPos) async {
     if (selectedItem == null) return;
-    // Only show context menu for admins — users are in read-only view mode
-    if (!widget.isAdmin) return;
     final items = <PopupMenuEntry<String>>[
-      const PopupMenuItem(value: 'delete', child: Text('Delete')),
-      const PopupMenuItem(value: 'duplicate', child: Text('Duplicate')),
+      if (widget.isAdmin)
+        const PopupMenuItem(value: 'delete', child: Text('Delete')),
+      if (widget.isAdmin)
+        const PopupMenuItem(value: 'duplicate', child: Text('Duplicate')),
       const PopupMenuItem(value: 'rotate', child: Text('Rotate 90°')),
     ];
     if (items.isEmpty) return;
@@ -959,6 +971,67 @@ class RoomCanvasState extends State<RoomCanvas> {
     );
   }
 
+  /// Human-readable label for tooltip display
+  String _furnitureLabel(FurnitureModel item) {
+    if (item.labelOverride != null && item.labelOverride!.isNotEmpty) {
+      return item.labelOverride!;
+    }
+    switch (item.type) {
+      case FurnitureType.chair:
+        return 'Chair';
+      case FurnitureType.sofa:
+        return 'Sofa';
+      case FurnitureType.armchair:
+        return 'Armchair';
+      case FurnitureType.bench:
+        return 'Bench';
+      case FurnitureType.stool:
+        return 'Stool';
+      case FurnitureType.table:
+        return 'Table';
+      case FurnitureType.coffeeTable:
+        return 'Coffee Table';
+      case FurnitureType.desk:
+        return 'Desk';
+      case FurnitureType.sideTable:
+        return 'Side Table';
+      case FurnitureType.wardrobe:
+        return 'Wardrobe';
+      case FurnitureType.bookshelf:
+        return 'Bookshelf';
+      case FurnitureType.cabinet:
+        return 'Cabinet';
+      case FurnitureType.dresser:
+        return 'Dresser';
+      case FurnitureType.bed:
+        return 'Double Bed';
+      case FurnitureType.singleBed:
+        return 'Single Bed';
+      case FurnitureType.nightstand:
+        return 'Nightstand';
+      case FurnitureType.plant:
+        return 'Plant';
+      case FurnitureType.lamp:
+        return 'Floor Lamp';
+      case FurnitureType.tvStand:
+        return 'TV Stand';
+      case FurnitureType.rug:
+        return 'Rug';
+      case FurnitureType.floorLampLight:
+        return 'Floor Lamp Light';
+      case FurnitureType.tableLampLight:
+        return 'Table Lamp';
+      case FurnitureType.wallLight:
+        return 'Wall Light';
+      case FurnitureType.ceilingSpot:
+        return 'Ceiling Spot';
+      case FurnitureType.windowLight:
+        return 'Window Light';
+      case FurnitureType.custom:
+        return item.labelOverride ?? 'Custom';
+    }
+  }
+
   // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -1002,11 +1075,23 @@ class RoomCanvasState extends State<RoomCanvas> {
   Widget _buildFurnitureCanvas(BuildContext context) {
     return MouseRegion(
       cursor: SystemMouseCursors.none,
-      onHover: (event) =>
-          _updateCursor(_toScene(event.localPosition), event.localPosition),
+      onHover: (event) {
+        final scenePos = _toScene(event.localPosition);
+        _updateCursor(scenePos, event.localPosition);
+        FurnitureModel? found;
+        for (final item in furnitureItems.reversed) {
+          if (item.type == FurnitureType.ceilingSpot) continue;
+          if (_inside(item, scenePos)) {
+            found = item;
+            break;
+          }
+        }
+        _hoveredItem.value = found;
+      },
       onExit: (_) {
         _cursorPos.value = null;
         _cursorAsset.value = null;
+        _hoveredItem.value = null;
       },
       child: Listener(
         onPointerSignal: _onPointerSignal,
@@ -1222,6 +1307,28 @@ class RoomCanvasState extends State<RoomCanvas> {
                                 ..translate(d.delta.dx, d.delta.dy);
                         }
                       },
+                      onPanCancel: () {
+                        // Fired when gesture is cancelled (e.g. drag started
+                        // outside canvas bounds). Reset all interaction state
+                        // so cursor never gets stuck.
+                        setState(() {
+                          _isRotating = _isDragging = _isResizing =
+                              _isPanningCanvas = _isSelectingBox = false;
+                          _selectionStart = _selectionCurrent = null;
+                          _preDragPositions = {};
+                        });
+                        _isRotatingLive = _isResizingLive = _isDraggingLive =
+                            false;
+                        _dragStart = null;
+                        if (widget.currentMode == MouseMode.hand) {
+                          _cursorAsset.value =
+                              'assets/cursors/canvas_cursor.png';
+                        } else if (widget.currentMode == MouseMode.draw) {
+                          _cursorAsset.value = 'assets/cursors/add_cursor.png';
+                        } else {
+                          _cursorAsset.value = 'assets/cursors/main_cursor.png';
+                        }
+                      },
                       onPanEnd: (_) {
                         if (_isTrackpadActive) return;
                         // Restore hand-mode cursor after releasing grab
@@ -1395,6 +1502,61 @@ class RoomCanvasState extends State<RoomCanvas> {
                   ),
                 ),
               ),
+            ),
+            // ── Hover tooltip overlay ───────────────────────────────
+            ValueListenableBuilder<FurnitureModel?>(
+              valueListenable: _hoveredItem,
+              builder: (_, hovered, __) {
+                if (hovered == null) return const SizedBox.shrink();
+                final matrix = _transformationController.value;
+                final scale = matrix.getMaxScaleOnAxis();
+                final tx = matrix.storage[12];
+                final ty = matrix.storage[13];
+                final cx =
+                    (hovered.position.dx + hovered.size.width / 2) * scale + tx;
+                final cy =
+                    (hovered.position.dy + hovered.size.height / 2) * scale +
+                    ty;
+                return Positioned(
+                  left: cx - 60,
+                  top: (cy - hovered.size.height / 2 * scale - 30).clamp(
+                    4.0,
+                    double.infinity,
+                  ),
+                  child: IgnorePointer(
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 120),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF1A1A2E).withOpacity(0.92),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: const Color(0xFF6366F1).withOpacity(0.5),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.4),
+                            blurRadius: 6,
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        _furnitureLabel(hovered),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
             // Cursor overlay
             ValueListenableBuilder<Offset?>(

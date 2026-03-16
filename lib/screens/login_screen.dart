@@ -65,16 +65,19 @@ class _LoginScreenState extends State<LoginScreen>
       _loading = true;
       _error = null;
     });
-    await Future.delayed(const Duration(milliseconds: 600));
+    await Future.delayed(const Duration(milliseconds: 900));
     if (!mounted) return;
     setState(() => _loading = false);
 
     if (guest) {
+      // Give each guest session a unique ID so multiple guests
+      // don't overwrite each other's designs.
+      final guestId = 'guest_${DateTime.now().millisecondsSinceEpoch}';
+      if (!mounted) return;
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) =>
-              const DashboardScreen(userId: 'guest', isAdmin: false),
+          builder: (_) => DashboardScreen(userId: guestId, isAdmin: false),
         ),
       );
       return;
@@ -92,10 +95,9 @@ class _LoginScreenState extends State<LoginScreen>
       return;
     }
 
-    // Verify credentials (admin hardcoded, users from storage)
+    // Verify credentials (admin hardcoded, users stored via createAccount)
     final ok = await LayoutPersistenceService.verifyPassword(email, password);
     if (!ok) {
-      // Check if account exists at all — give a better error message
       final exists = await LayoutPersistenceService.accountExists(email);
       setState(
         () => _error = exists
@@ -274,7 +276,6 @@ class _LoginScreenState extends State<LoginScreen>
                     setS(() => err = error);
                     return;
                   }
-                  // Close dialog then go straight to dashboard — no need to log in again
                   if (ctx.mounted) Navigator.pop(ctx);
                   if (!mounted) return;
                   await LayoutPersistenceService.registerUser(email);

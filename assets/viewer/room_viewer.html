@@ -1409,7 +1409,21 @@
 
       // ── Keyboard controls ────────────────────────────────────────────────
       var keys = {};
-      window.addEventListener('keydown', function (e) { keys[e.key] = true; });
+      window.addEventListener('keydown', function (e) {
+        keys[e.key] = true;
+        // Forward Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y to Flutter so undo/redo
+        // works even when WebView2 owns the keyboard focus.
+        if (e.ctrlKey && !e.altKey) {
+          if (e.key === 'z' || e.key === 'Z') {
+            e.preventDefault();
+            var type = e.shiftKey ? 'redo' : 'undo';
+            try { window.chrome.webview.postMessage(JSON.stringify({ type: type })); } catch (_) { }
+          } else if (e.key === 'y' || e.key === 'Y') {
+            e.preventDefault();
+            try { window.chrome.webview.postMessage(JSON.stringify({ type: 'redo' })); } catch (_) { }
+          }
+        }
+      });
       window.addEventListener('keyup', function (e) { keys[e.key] = false; });
       function handleKeys() {
         var any = false; for (var k in keys) { if (keys[k]) { any = true; break; } } if (!any) return;
@@ -2216,15 +2230,13 @@
             var sZ = sz.z > 0.001 ? naturalTD / sz.z : 1.0;
             s = Math.min(sX, sZ);
           } else {
-            // Built-in model: fit the 2D footprint (X/Z) exactly, just like custom GLBs.
-            // The 2D tile size already represents real-world dimensions, so X/Z must match.
-            // We no longer constrain by Y (MODEL_HEIGHT) because it was making furniture
-            // appear much smaller than the 2D canvas representation when GLB Y-extents
-            // are large. Instead, cap only absurdly tall results (>3.5m).
+            // Built-in model: scale to match the 2D canvas footprint (X/Z only).
+            // Do NOT constrain by MODEL_HEIGHT — it was making furniture appear
+            // much smaller than the 2D tile when the GLB's Y-extent is large.
             var sXb = sz.x > 0.001 ? naturalTW / sz.x : 1;
             var sZb = sz.z > 0.001 ? naturalTD / sz.z : 1;
             s = Math.min(sXb, sZb);
-            // Safety cap: if the resulting height is > 3.5m, scale down uniformly
+            // Safety cap: prevent absurdly tall results (> 3.5m)
             var resultH = sz.y * s;
             if (resultH > 3.5) s = s * (3.5 / resultH);
           }
@@ -2619,6 +2631,11 @@
             entry.obj.scale.setScalar(entry.baseScale * newSF);
             if (typeof THREE !== 'undefined') {
               var sx = entry.obj.position.x, sz = entry.obj.position.z;
+              // Reset Y to 0 BEFORE measuring bbox so the bounding box min
+              // is computed in model-local space only (no existing offset).
+              // Without this, bb.min.y includes the old position.y which
+              // causes the model to sink below the floor on each undo/redo.
+              entry.obj.position.y = 0;
               var bb = new THREE.Box3().setFromObject(entry.obj);
               entry.obj.position.set(sx, -bb.min.y, sz);
             }
