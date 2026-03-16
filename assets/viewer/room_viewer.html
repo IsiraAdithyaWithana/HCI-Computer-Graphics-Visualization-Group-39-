@@ -2216,12 +2216,17 @@
             var sZ = sz.z > 0.001 ? naturalTD / sz.z : 1.0;
             s = Math.min(sX, sZ);
           } else {
-            // Built-in model: fit natural footprint + target model height.
-            var th = MODEL_HEIGHT[item.type] || 0.85;
+            // Built-in model: fit the 2D footprint (X/Z) exactly, just like custom GLBs.
+            // The 2D tile size already represents real-world dimensions, so X/Z must match.
+            // We no longer constrain by Y (MODEL_HEIGHT) because it was making furniture
+            // appear much smaller than the 2D canvas representation when GLB Y-extents
+            // are large. Instead, cap only absurdly tall results (>3.5m).
             var sXb = sz.x > 0.001 ? naturalTW / sz.x : 1;
             var sZb = sz.z > 0.001 ? naturalTD / sz.z : 1;
-            var sYb = sz.y > 0.001 ? th / sz.y : 1;
-            s = Math.min(sXb, sZb, sYb);
+            s = Math.min(sXb, sZb);
+            // Safety cap: if the resulting height is > 3.5m, scale down uniformly
+            var resultH = sz.y * s;
+            if (resultH > 3.5) s = s * (3.5 / resultH);
           }
 
           // s is now the scale at scaleFactor=1.0 (the "natural" scale).

@@ -287,6 +287,9 @@ class FurnitureModel {
   /// Also used to tint the 2D canvas tile so both views stay in sync.
   String? tintHex;
 
+  /// Tint strength 0.0–1.0 (default 0.4). Persisted alongside tintHex.
+  double tintStrength;
+
   FurnitureModel({
     required this.id,
     required this.type,
@@ -298,6 +301,7 @@ class FurnitureModel {
     this.labelOverride,
     this.scaleFactor = 1.0,
     this.tintHex,
+    this.tintStrength = 0.4,
   });
 
   Map<String, dynamic> toJson() => {
@@ -313,6 +317,7 @@ class FurnitureModel {
     if (glbOverride != null) 'glbOverride': glbOverride,
     if (labelOverride != null) 'labelOverride': labelOverride,
     if (tintHex != null) 'tintHex': tintHex,
+    if (tintHex != null) 'tintStrength': tintStrength,
   };
 
   factory FurnitureModel.fromJson(Map<String, dynamic> json) => FurnitureModel(
@@ -335,5 +340,6 @@ class FurnitureModel {
     glbOverride: json['glbOverride'] as String?,
     labelOverride: json['labelOverride'] as String?,
     tintHex: json['tintHex'] as String?,
+    tintStrength: (json['tintStrength'] as num?)?.toDouble() ?? 0.4,
   );
 }

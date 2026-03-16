@@ -30,7 +30,8 @@ class Realistic3DScreen extends StatefulWidget {
 
   /// Called when the user saves a tint on a selected furniture item.
   /// [tintHex] is null when tint is cleared.
-  final void Function(String id, String? tintHex)? onTintUpdated;
+  final void Function(String id, String? tintHex, {double strength})?
+  onTintUpdated;
 
   /// Undo / Redo — ValueNotifier so the appbar reacts live to canvas history changes.
   final ValueNotifier<bool>? canUndoNotifier;
@@ -172,9 +173,12 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
           } else if (data['type'] == 'tintUpdate') {
             final id = data['id'] as String?;
             final tintHex = data['tintHex'] as String?;
+            final strength = (data['tintStrength'] as num?)?.toDouble() ?? 0.4;
             if (id != null) {
-              widget.onTintUpdated?.call(id, tintHex);
-              debugPrint('[3D→Flutter] tintUpdate id=$id tint=$tintHex');
+              widget.onTintUpdated?.call(id, tintHex, strength: strength);
+              debugPrint(
+                '[3D→Flutter] tintUpdate id=$id tint=$tintHex strength=$strength',
+              );
             }
           } else if (data['type'] == 'thumbnail') {
             final key = data['key'] as String?;
@@ -263,6 +267,7 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
             if (f.glbOverride != null) 'glbFile': f.glbOverride,
             if (f.labelOverride != null) 'label': f.labelOverride,
             if (f.tintHex != null) 'tint': f.tintHex,
+            if (f.tintHex != null) 'tintStrength': f.tintStrength,
           },
         )
         .toList();

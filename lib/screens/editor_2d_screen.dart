@@ -280,11 +280,14 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             }
             _saveLayout();
           },
-          onTintUpdated: (String id, String? tintHex) {
+          onTintUpdated: (String id, String? tintHex, {double strength = 0.4}) {
             final canvasItems = _canvasKey.currentState?.furnitureItems ?? [];
             final idx = canvasItems.indexWhere((f) => f.id == id);
             if (idx != -1) {
-              setState(() => canvasItems[idx].tintHex = tintHex);
+              setState(() {
+                canvasItems[idx].tintHex = tintHex;
+                canvasItems[idx].tintStrength = strength;
+              });
               _saveLayout();
             }
           },
@@ -525,21 +528,18 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             tooltip: 'Realistic 3D View',
             onPressed: _openRealistic3D,
           ),
-          // ── Admin-only: Snap + Export ────────────────────────────────────
-          if (widget.isAdmin) ...[
-            IconButton(
-              icon: Icon(snapEnabled ? Icons.grid_on : Icons.crop_free),
-              tooltip: 'Toggle resize snap',
-              onPressed: _toggleResizeSnap,
+          // Snap toggle kept (useful for admins placing furniture precisely)
+          if (widget.isAdmin)
+            Tooltip(
+              message: snapEnabled ? 'Grid Snap: ON' : 'Grid Snap: OFF',
+              child: IconButton(
+                icon: Icon(
+                  snapEnabled ? Icons.grid_on : Icons.grid_off,
+                  color: snapEnabled ? const Color(0xFFE8C97E) : null,
+                ),
+                onPressed: _toggleResizeSnap,
+              ),
             ),
-            IconButton(
-              icon: const Icon(Icons.save),
-              tooltip: 'Export to JSON',
-              onPressed: () {
-                debugPrint(_canvasKey.currentState?.exportToJson());
-              },
-            ),
-          ],
         ],
       ),
       body: Row(
@@ -604,7 +604,6 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             child: _ToolWheelScope(
               currentMode: _currentMode,
               onModeChanged: (m) => setState(() => _currentMode = m),
-              enabled: widget.isAdmin,
               child: Stack(
                 children: [
                   RoomCanvas(
@@ -662,15 +661,10 @@ class _ToolWheelScope extends StatefulWidget {
   final ValueChanged<MouseMode> onModeChanged;
   final Widget child;
 
-  /// When false (non-admin / view-only users) the wheel is completely disabled
-  /// and right-click does nothing.
-  final bool enabled;
-
   const _ToolWheelScope({
     required this.currentMode,
     required this.onModeChanged,
     required this.child,
-    this.enabled = true,
   });
 
   @override
@@ -784,9 +778,6 @@ class _ToolWheelScopeState extends State<_ToolWheelScope>
 
   @override
   Widget build(BuildContext context) {
-    // Non-admin users: skip all gesture handling, just render the child
-    if (!widget.enabled) return widget.child;
-
     return Listener(
       behavior: HitTestBehavior.translucent,
       onPointerDown: (e) {

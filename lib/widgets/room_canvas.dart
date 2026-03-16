@@ -331,7 +331,8 @@ class RoomCanvasState extends State<RoomCanvas> {
   }
 
   // ── Snap ──────────────────────────────────────────────────────────────────
-  double _snap(double v) => enableSnap ? (v / gridSize).round() * gridSize : v;
+  double _snap(double v) =>
+      snapResizeEnabled ? (v / gridSize).round() * gridSize : v;
   Offset _snapOffset(Offset o) => Offset(_snap(o.dx), _snap(o.dy));
 
   // ── Geometry ──────────────────────────────────────────────────────────────
