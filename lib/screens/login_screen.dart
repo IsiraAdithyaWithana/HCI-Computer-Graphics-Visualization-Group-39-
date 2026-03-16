@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'dashboard_screen.dart';
+import '../services/layout_persistence_service.dart';
 import '../theme/app_theme.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,7 +60,7 @@ class _LoginScreenState extends State<LoginScreen>
     super.dispose();
   }
 
-  Future<void> _login() async {
+  Future<void> _login({bool guest = false}) async {
     setState(() {
       _loading = true;
       _error = null;
@@ -67,15 +68,55 @@ class _LoginScreenState extends State<LoginScreen>
     await Future.delayed(const Duration(milliseconds: 900));
     if (!mounted) return;
     setState(() => _loading = false);
-    // Derive a stable userId from the email (lowercase, trimmed).
-    // Later this can be replaced with a real auth token/UID.
-    final userId = _emailCtrl.text.trim().toLowerCase().isNotEmpty
-        ? _emailCtrl.text.trim().toLowerCase()
-        : 'guest';
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => DashboardScreen(userId: userId)),
-    );
+
+    if (guest) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              const DashboardScreen(userId: 'guest', isAdmin: false),
+        ),
+      );
+      return;
+    }
+
+    final email = _emailCtrl.text.trim().toLowerCase();
+    final password = _passwordCtrl.text;
+
+    // Credential validation
+    const adminEmail = 'admin@gmail.com';
+    const adminPass = 'admin123';
+    const userEmail = 'user@gmail.com';
+    const userPass = 'user123';
+
+    if (email == adminEmail && password == adminPass) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              const DashboardScreen(userId: adminEmail, isAdmin: true),
+        ),
+      );
+    } else if (email == userEmail && password == userPass) {
+      await LayoutPersistenceService.registerUser(email);
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DashboardScreen(userId: email, isAdmin: false),
+        ),
+      );
+    } else if (email.isNotEmpty) {
+      // Any other email treated as normal user
+      await LayoutPersistenceService.registerUser(email);
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DashboardScreen(userId: email, isAdmin: false),
+        ),
+      );
+    } else {
+      setState(() => _error = 'Please enter your email address.');
+    }
   }
 
   @override
@@ -292,7 +333,7 @@ class _LoginScreenState extends State<LoginScreen>
             width: double.infinity,
             height: 50,
             child: OutlinedButton.icon(
-              onPressed: _login,
+              onPressed: () => _login(guest: true),
               icon: Icon(
                 Icons.play_arrow_rounded,
                 color: AppTheme.lightText,

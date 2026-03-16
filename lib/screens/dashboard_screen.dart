@@ -13,15 +13,25 @@ import '../services/layout_persistence_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String userId;
-  const DashboardScreen({super.key, required this.userId});
+  final bool isAdmin;
+  const DashboardScreen({
+    super.key,
+    required this.userId,
+    this.isAdmin = false,
+  });
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen>
+    with WidgetsBindingObserver {
   _NavItem _currentNav = _NavItem.home;
   bool _sidebarExpanded = true;
   List<PersistedProject> _projects = [];
+  // Shared projects: entries loaded from other users (for normal-user view)
+  List<Map<String, dynamic>> _sharedProjects = [];
+  List<Map<String, dynamic>> _requests =
+      []; // all requests (admin sees all, user sees own)
   String _searchQuery = '';
   final _searchCtrl = TextEditingController();
 
@@ -55,20 +65,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadProjects();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Reload when user returns to foreground — picks up any deletions/changes
+    // made by the admin while this dashboard was in the background.
+    if (state == AppLifecycleState.resumed) {
+      _loadProjects();
+    }
   }
 
   Future<void> _loadProjects() async {
     final projects = await LayoutPersistenceService.instance.loadProjects(
       widget.userId,
     );
-    if (mounted) setState(() => _projects = projects);
+    final shared = await LayoutPersistenceService.instance.loadSharedProjects(
+      widget.userId,
+    );
+    final allRequests = await LayoutPersistenceService.instance.loadRequests();
+    if (mounted)
+      setState(() {
+        _projects = projects;
+        _sharedProjects = shared;
+        _requests = allRequests;
+      });
   }
 
   List<PersistedProject> get _filtered {
@@ -104,17 +134,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // ── Project actions ───────────────────────────────────────────────────────
 
   void _openProject(String projectId) async {
+    // Check if this is a shared project — if so, load from owner's storage slot
+    final sharedEntry = _sharedProjects
+        .where((e) => e['projectId'] == projectId)
+        .firstOrNull;
+
     final project = _projects.firstWhere(
       (p) => p.id == projectId,
-      orElse: () => _projects.first,
+      orElse: () => PersistedProject(
+        id: projectId,
+        name: sharedEntry?['name'] as String? ?? 'Shared Design',
+        roomType: sharedEntry?['roomType'] as String? ?? 'other',
+        widthM: (sharedEntry?['widthM'] as num?)?.toDouble() ?? 6.0,
+        depthM: (sharedEntry?['depthM'] as num?)?.toDouble() ?? 5.0,
+        furnitureCount: 0,
+        lastModified: DateTime.now(),
+        createdAt: DateTime.now(),
+        previewColorValue:
+            (sharedEntry?['previewColorValue'] as num?)?.toInt() ?? 0xFF7C9A92,
+      ),
     );
+
+    // For shared projects, load layout data from the owner's user slot
+    final effectiveUserId = sharedEntry != null
+        ? sharedEntry['ownerUserId'] as String
+        : widget.userId;
+
     await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => Editor2DScreen(
           projectId: project.id,
-          userId: widget.userId,
+          userId: effectiveUserId,
           projectName: project.name,
+          isAdmin: widget.isAdmin,
         ),
       ),
     );
@@ -190,6 +243,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           projectId: project.id,
           userId: widget.userId,
           projectName: project.name,
+          isAdmin: widget.isAdmin,
         ),
       ),
     );
@@ -210,9 +264,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _deleteProject(String id) async {
-    final backup = List<PersistedProject>.from(_projects);
     setState(() => _projects.removeWhere((p) => p.id == id));
     await LayoutPersistenceService.instance.deleteProject(widget.userId, id);
+    // Reload to refresh shared-project lists for all users
+    await _loadProjects();
   }
 
   void _renameProject(String id) async {
@@ -289,13 +344,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 initials: _initials,
                 displayName: _displayName,
                 userId: widget.userId,
-                onNavChanged: (n) => setState(() {
-                  _currentNav = n;
-                  _showNotifications = false;
-                }),
+                isAdmin: widget.isAdmin,
+                onNavChanged: (n) {
+                  setState(() {
+                    _currentNav = n;
+                    _showNotifications = false;
+                  });
+                  _loadProjects();
+                },
                 onToggle: () =>
                     setState(() => _sidebarExpanded = !_sidebarExpanded),
-                onNewDesign: () => _createNewProject(),
+                onNewDesign: () =>
+                    widget.isAdmin ? _createNewProject() : _submitRequest(),
                 onLogout: () => Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(builder: (_) => const LoginScreen()),
@@ -308,7 +368,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       title: _currentNav.label,
                       searchCtrl: _searchCtrl,
                       onSearchChanged: (v) => setState(() => _searchQuery = v),
-                      onNewDesign: () => _createNewProject(),
+                      onNewDesign: widget.isAdmin
+                          ? () => _createNewProject()
+                          : () => _submitRequest(),
+                      newDesignLabel: widget.isAdmin
+                          ? 'New Design'
+                          : 'Request Design',
                       notificationCount: _notifications.length,
                       onNotification: () => setState(
                         () => _showNotifications = !_showNotifications,
@@ -336,6 +401,595 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Future<void> _fulfillRequest(Map<String, dynamic> req) async {
+    // Admin creates a new project pre-filled with the user's request details
+    final reqName = req['roomName'] as String? ?? 'Room Design';
+    final reqType = req['roomType'] as String? ?? 'other';
+    final reqUserId = req['userId'] as String? ?? '';
+    final reqId = req['id'] as String? ?? '';
+    final notes = req['notes'] as String? ?? '';
+
+    final ctrl = TextEditingController(text: reqName);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: AppTheme.surfaceDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        child: Container(
+          width: 380,
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Design for Request',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.accent.withOpacity(0.06),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.borderDark),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'From: ${req['userName'] ?? reqUserId}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    if (notes.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        'Notes: $notes',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Project name',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: AppTheme.textPrimary,
+                ),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: AppTheme.surfaceAlt,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: AppTheme.borderDark),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: BorderSide(color: AppTheme.borderDark),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(
+                      color: AppTheme.accent,
+                      width: 1.5,
+                    ),
+                  ),
+                ),
+                onSubmitted: (v) =>
+                    Navigator.pop(ctx, v.trim().isEmpty ? reqName : v.trim()),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(color: AppTheme.textMuted),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(
+                      ctx,
+                      ctrl.text.trim().isEmpty ? reqName : ctrl.text.trim(),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.accent,
+                      foregroundColor: AppTheme.bgDark,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(9),
+                      ),
+                    ),
+                    child: const Text(
+                      'Create & Design',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    ctrl.dispose();
+    if (result == null) return;
+
+    // Create the project
+    final id = 'proj_${DateTime.now().millisecondsSinceEpoch}';
+    final now = DateTime.now();
+    final colorMap = {
+      'livingRoom': 0xFF7C9A92,
+      'bedroom': 0xFF9A7C8E,
+      'kitchen': 0xFFB8956A,
+      'office': 0xFF6A82B8,
+      'diningRoom': 0xFF8EA87C,
+      'bathroom': 0xFF6AA8B8,
+      'other': 0xFFB86A6A,
+    };
+    final project = PersistedProject(
+      id: id,
+      name: result,
+      roomType: reqType,
+      widthM: 6.0,
+      depthM: 5.0,
+      furnitureCount: 0,
+      lastModified: now,
+      createdAt: now,
+      previewColorValue: colorMap[reqType] ?? 0xFF7C9A92,
+    );
+    await LayoutPersistenceService.instance.upsertProject(
+      widget.userId,
+      project,
+    );
+
+    // Auto-share with the requesting user
+    if (reqUserId.isNotEmpty) {
+      await LayoutPersistenceService.instance.shareProject(
+        ownerUserId: widget.userId,
+        projectId: id,
+        targetUserId: reqUserId,
+        projectName: result,
+        roomType: reqType,
+        widthM: 6.0,
+        depthM: 5.0,
+        previewColorValue: colorMap[reqType] ?? 0xFF7C9A92,
+      );
+    }
+
+    // Mark request as fulfilled
+    if (reqId.isNotEmpty) {
+      await LayoutPersistenceService.instance.fulfillRequest(
+        requestId: reqId,
+        projectId: id,
+        ownerUserId: widget.userId,
+      );
+    }
+
+    await _loadProjects();
+    if (!mounted) return;
+
+    // Open the editor immediately so admin can start designing
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Editor2DScreen(
+          projectId: id,
+          userId: widget.userId,
+          projectName: result,
+          isAdmin: true,
+        ),
+      ),
+    );
+    _loadProjects();
+  }
+
+  Future<void> _submitRequest() async {
+    final nameCtrl = TextEditingController();
+    String selectedRoomType = 'livingRoom';
+    final notesCtrl = TextEditingController();
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => Dialog(
+          backgroundColor: AppTheme.surfaceDark,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Container(
+            width: 400,
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: AppTheme.accent.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.design_services_outlined,
+                        color: AppTheme.accent,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    const Expanded(
+                      child: Text(
+                        'Request a Design',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: AppTheme.textMuted,
+                        size: 18,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Describe the room you want designed. An admin will create it for you.',
+                  style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                ),
+                const SizedBox(height: 20),
+                const Text(
+                  'Room name',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: nameCtrl,
+                  autofocus: true,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppTheme.textPrimary,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'e.g. My Living Room',
+                    hintStyle: const TextStyle(color: AppTheme.textMuted),
+                    filled: true,
+                    fillColor: AppTheme.surfaceAlt,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: AppTheme.borderDark),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: AppTheme.borderDark),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(
+                        color: AppTheme.accent,
+                        width: 1.5,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Room type',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  height: 42,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceAlt,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppTheme.borderDark),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      value: selectedRoomType,
+                      dropdownColor: AppTheme.surfaceAlt,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: AppTheme.textPrimary,
+                      ),
+                      icon: const Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 18,
+                        color: AppTheme.textMuted,
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'livingRoom',
+                          child: Text('Living Room'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'bedroom',
+                          child: Text('Bedroom'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'kitchen',
+                          child: Text('Kitchen'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'office',
+                          child: Text('Home Office'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'diningRoom',
+                          child: Text('Dining Room'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'bathroom',
+                          child: Text('Bathroom'),
+                        ),
+                        DropdownMenuItem(value: 'other', child: Text('Other')),
+                      ],
+                      onChanged: (v) =>
+                          setSt(() => selectedRoomType = v ?? 'livingRoom'),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Notes (optional)',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: notesCtrl,
+                  maxLines: 3,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppTheme.textPrimary,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'Any specific requirements or preferences…',
+                    hintStyle: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 12,
+                    ),
+                    filled: true,
+                    fillColor: AppTheme.surfaceAlt,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: AppTheme.borderDark),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: AppTheme.borderDark),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(
+                        color: AppTheme.accent,
+                        width: 1.5,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(color: AppTheme.textMuted),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    ElevatedButton.icon(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      icon: const Icon(Icons.send_rounded, size: 15),
+                      label: const Text(
+                        'Submit Request',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.accent,
+                        foregroundColor: AppTheme.bgDark,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(9),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 11,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    nameCtrl.dispose();
+    notesCtrl.dispose();
+    if (result != true) return;
+
+    final requestId = 'req_${DateTime.now().millisecondsSinceEpoch}';
+    await LayoutPersistenceService.instance.submitRequest(
+      requestId: requestId,
+      userId: widget.userId,
+      userName: _displayName,
+      roomName: nameCtrl.text.trim().isEmpty ? 'My Room' : nameCtrl.text.trim(),
+      roomType: selectedRoomType,
+      notes: notesCtrl.text.trim(),
+    );
+    await _loadProjects();
+    if (mounted) {
+      showDialog(
+        context: context,
+        builder: (_) => Dialog(
+          backgroundColor: AppTheme.surfaceDark,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Container(
+            width: 340,
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4CAF7D).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: const Icon(
+                    Icons.check_circle_outline_rounded,
+                    color: Color(0xFF4CAF7D),
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Request Submitted!',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'An admin will design your room and share it with you. You\'ll see it in the \"Shared with Me\" section.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.textSecondary,
+                    height: 1.5,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.accent,
+                    foregroundColor: AppTheme.bgDark,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    minimumSize: const Size(double.infinity, 42),
+                  ),
+                  child: const Text(
+                    'OK',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _shareProject(String projectId) async {
+    // Reload projects first to make sure we have the latest data
+    await _loadProjects();
+    if (!mounted) return;
+
+    final project = _projects.firstWhere(
+      (p) => p.id == projectId,
+      orElse: () => throw StateError('Project $projectId not found'),
+    );
+    final users = await LayoutPersistenceService.getKnownUserIds();
+    // Load current share state for this project across all known users
+    final currentShares = <String>{};
+    for (final uid in users) {
+      final shared = await LayoutPersistenceService.instance.loadSharedProjects(
+        uid,
+      );
+      if (shared.any((e) => e['projectId'] == projectId)) {
+        currentShares.add(uid);
+      }
+    }
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      builder: (ctx) => _ShareDialog(
+        project: project,
+        availableUsers: users,
+        currentShares: currentShares,
+        ownerUserId: widget.userId,
+        onToggle: (uid, enable) async {
+          if (enable) {
+            await LayoutPersistenceService.instance.shareProject(
+              ownerUserId: widget.userId,
+              projectId: project.id,
+              targetUserId: uid,
+              projectName: project.name,
+              roomType: project.roomType,
+              widthM: project.widthM,
+              depthM: project.depthM,
+              previewColorValue: project.previewColorValue,
+            );
+          } else {
+            await LayoutPersistenceService.instance.unshareProject(
+              ownerUserId: widget.userId,
+              projectId: project.id,
+              targetUserId: uid,
+            );
+          }
+        },
+      ),
+    );
+    // Reload so Shared badges update immediately on admin's dashboard
+    _loadProjects();
+  }
+
   Widget _buildContent() {
     switch (_currentNav) {
       case _NavItem.home:
@@ -350,6 +1004,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
           onTemplate: (t) => _createNewProject(template: t),
           onViewAllProjects: () =>
               setState(() => _currentNav = _NavItem.projects),
+          isAdmin: widget.isAdmin,
+          sharedProjects: _sharedProjects,
+          onShare: _shareProject,
+          requests: widget.isAdmin
+              ? _requests
+              : _requests.where((r) => r['userId'] == widget.userId).toList(),
+          onFulfillRequest: _fulfillRequest,
+          onDeleteRequest: (id) async {
+            await LayoutPersistenceService.instance.deleteRequest(id);
+            _loadProjects();
+          },
         );
       case _NavItem.projects:
         return _ProjectsContent(
@@ -361,6 +1026,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           onRename: _renameProject,
           onDuplicate: _duplicateProject,
           onNew: () => _createNewProject(),
+          isAdmin: widget.isAdmin,
+          sharedProjects: _sharedProjects,
+          onShare: _shareProject,
         );
       case _NavItem.templates:
         return _TemplatesContent(
@@ -443,6 +1111,7 @@ class _Sidebar extends StatelessWidget {
   final String initials, displayName, userId;
   final ValueChanged<_NavItem> onNavChanged;
   final VoidCallback onToggle, onNewDesign, onLogout;
+  final bool isAdmin;
 
   const _Sidebar({
     required this.expanded,
@@ -450,6 +1119,7 @@ class _Sidebar extends StatelessWidget {
     required this.initials,
     required this.displayName,
     required this.userId,
+    required this.isAdmin,
     required this.onNavChanged,
     required this.onToggle,
     required this.onNewDesign,
@@ -525,7 +1195,7 @@ class _Sidebar extends StatelessWidget {
                 ? ElevatedButton.icon(
                     onPressed: onNewDesign,
                     icon: const Icon(Icons.add, size: 16),
-                    label: const Text('New Design'),
+                    label: Text(isAdmin ? 'New Design' : 'Request Design'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppTheme.accent,
                       foregroundColor: AppTheme.bgDark,
@@ -782,6 +1452,7 @@ class _TopBar extends StatelessWidget {
   final TextEditingController searchCtrl;
   final ValueChanged<String> onSearchChanged;
   final VoidCallback onNewDesign;
+  final String newDesignLabel;
   final int notificationCount;
   final VoidCallback onNotification;
   final VoidCallback onHelp;
@@ -791,6 +1462,7 @@ class _TopBar extends StatelessWidget {
     required this.searchCtrl,
     required this.onSearchChanged,
     required this.onNewDesign,
+    this.newDesignLabel = 'New Design',
     required this.notificationCount,
     required this.onNotification,
     required this.onHelp,
@@ -870,7 +1542,7 @@ class _TopBar extends StatelessWidget {
           ElevatedButton.icon(
             onPressed: onNewDesign,
             icon: const Icon(Icons.add, size: 16),
-            label: const Text('New Design'),
+            label: Text(newDesignLabel),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.accent,
               foregroundColor: AppTheme.bgDark,
@@ -1136,6 +1808,12 @@ class _HomeContent extends StatelessWidget {
       onDuplicate;
   final ValueChanged<RoomTemplate> onTemplate;
   final VoidCallback onViewAllProjects;
+  final bool isAdmin;
+  final List<Map<String, dynamic>> sharedProjects;
+  final Future<void> Function(String projectId) onShare;
+  final List<Map<String, dynamic>> requests;
+  final Future<void> Function(Map<String, dynamic> req) onFulfillRequest;
+  final Future<void> Function(String reqId) onDeleteRequest;
 
   const _HomeContent({
     required this.projects,
@@ -1147,6 +1825,12 @@ class _HomeContent extends StatelessWidget {
     required this.onDuplicate,
     required this.onTemplate,
     required this.onViewAllProjects,
+    required this.isAdmin,
+    required this.sharedProjects,
+    required this.onShare,
+    required this.requests,
+    required this.onFulfillRequest,
+    required this.onDeleteRequest,
   });
 
   @override
@@ -1195,47 +1879,137 @@ class _HomeContent extends StatelessWidget {
           _StatsStrip(projects: allProjects),
           const SizedBox(height: 32),
 
-          // Recent projects
-          _SectionHeader(
-            title: 'Recent Projects',
-            subtitle: '${allProjects.length} designs total',
-            action: TextButton(
-              onPressed: onViewAllProjects,
-              child: const Text(
-                'View all →',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppTheme.accent,
-                  fontWeight: FontWeight.w600,
+          // ── Design Requests section ─────────────────────────────────────
+          // Admin sees pending requests; user sees their own request status
+          // Admin: show all pending requests
+          if (isAdmin && requests.isNotEmpty) ...[
+            _SectionHeader(
+              title: 'Design Requests',
+              subtitle:
+                  '${requests.where((r) => r['status'] == 'pending').length} pending',
+            ),
+            const SizedBox(height: 14),
+            ...requests.map(
+              (req) => _RequestCard(
+                request: req,
+                isAdmin: true,
+                onFulfill: () => onFulfillRequest(req),
+                onDelete: () => onDeleteRequest(req['id'] as String),
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
+          // User: show their own requests
+          if (!isAdmin && requests.isNotEmpty) ...[
+            const _SectionHeader(
+              title: 'My Requests',
+              subtitle: 'Track your design requests',
+            ),
+            const SizedBox(height: 14),
+            ...requests.map(
+              (req) => _RequestCard(
+                request: req,
+                isAdmin: false,
+                onFulfill: null,
+                onDelete: null,
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
+
+          // Recent projects — admin only (users cannot create projects)
+          if (isAdmin) ...[
+            _SectionHeader(
+              title: 'Recent Projects',
+              subtitle: '${allProjects.length} designs total',
+              action: TextButton(
+                onPressed: onViewAllProjects,
+                child: const Text(
+                  'View all →',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.accent,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(height: 14),
-
-          projects.isEmpty
-              ? _EmptyProjects(onNew: onViewAllProjects)
-              : GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 320,
-                    crossAxisSpacing: 14,
-                    mainAxisSpacing: 14,
-                    childAspectRatio: 1.22,
+            const SizedBox(height: 14),
+            projects.isEmpty
+                ? _EmptyProjects(onNew: onViewAllProjects)
+                : GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate:
+                        const SliverGridDelegateWithMaxCrossAxisExtent(
+                          maxCrossAxisExtent: 320,
+                          crossAxisSpacing: 14,
+                          mainAxisSpacing: 14,
+                          childAspectRatio: 1.22,
+                        ),
+                    itemCount: projects.length > 6 ? 6 : projects.length,
+                    itemBuilder: (_, i) => _ProjectCard(
+                      project: projects[i],
+                      onOpen: () => onOpen(projects[i].id),
+                      onFavorite: () => onFavorite(projects[i].id),
+                      onDelete: () => onDelete(projects[i].id),
+                      onRename: () => onRename(projects[i].id),
+                      onDuplicate: () => onDuplicate(projects[i].id),
+                      isAdmin: isAdmin,
+                      isShared: sharedProjects.any(
+                        (e) => e['projectId'] == projects[i].id,
+                      ),
+                      onShare: isAdmin ? () => onShare(projects[i].id) : null,
+                    ),
                   ),
-                  itemCount: projects.length > 6 ? 6 : projects.length,
-                  itemBuilder: (_, i) => _ProjectCard(
-                    project: projects[i],
-                    onOpen: () => onOpen(projects[i].id),
-                    onFavorite: () => onFavorite(projects[i].id),
-                    onDelete: () => onDelete(projects[i].id),
-                    onRename: () => onRename(projects[i].id),
-                    onDuplicate: () => onDuplicate(projects[i].id),
-                  ),
-                ),
+            const SizedBox(height: 36),
+          ],
 
-          const SizedBox(height: 36),
+          // Shared with me section (normal users only)
+          if (!isAdmin && sharedProjects.isNotEmpty) ...[
+            _SectionHeader(
+              title: 'Shared with Me',
+              subtitle: 'Designs shared by your admin',
+            ),
+            const SizedBox(height: 14),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                maxCrossAxisExtent: 320,
+                crossAxisSpacing: 14,
+                mainAxisSpacing: 14,
+                childAspectRatio: 1.22,
+              ),
+              itemCount: sharedProjects.length,
+              itemBuilder: (_, i) {
+                final e = sharedProjects[i];
+                final sp = PersistedProject(
+                  id: e['projectId'] as String,
+                  name: e['name'] as String? ?? 'Shared Design',
+                  roomType: e['roomType'] as String? ?? 'other',
+                  widthM: (e['widthM'] as num?)?.toDouble() ?? 6.0,
+                  depthM: (e['depthM'] as num?)?.toDouble() ?? 5.0,
+                  furnitureCount: 0,
+                  lastModified: DateTime.now(),
+                  createdAt: DateTime.now(),
+                  previewColorValue:
+                      (e['previewColorValue'] as num?)?.toInt() ?? 0xFF6A82B8,
+                );
+                return _ProjectCard(
+                  project: sp,
+                  onOpen: () => onOpen(sp.id),
+                  onFavorite: () {},
+                  onDelete: () {},
+                  onRename: () {},
+                  onDuplicate: () {},
+                  isAdmin: false,
+                  isShared: true,
+                );
+              },
+            ),
+            const SizedBox(height: 36),
+          ],
 
           // Templates
           const _SectionHeader(
@@ -1306,6 +2080,9 @@ class _ProjectsContent extends StatefulWidget {
       onRename,
       onDuplicate;
   final VoidCallback onNew;
+  final bool isAdmin;
+  final List<Map<String, dynamic>> sharedProjects;
+  final Future<void> Function(String projectId) onShare;
 
   const _ProjectsContent({
     required this.projects,
@@ -1316,6 +2093,9 @@ class _ProjectsContent extends StatefulWidget {
     required this.onRename,
     required this.onDuplicate,
     required this.onNew,
+    required this.isAdmin,
+    required this.sharedProjects,
+    required this.onShare,
   });
 
   @override
@@ -1428,9 +2208,62 @@ class _ProjectsContentState extends State<_ProjectsContent> {
                       onDelete: () => widget.onDelete(_display[i].id),
                       onRename: () => widget.onRename(_display[i].id),
                       onDuplicate: () => widget.onDuplicate(_display[i].id),
+                      isAdmin: widget.isAdmin,
+                      isShared: widget.sharedProjects.any(
+                        (e) => e['projectId'] == _display[i].id,
+                      ),
+                      onShare: widget.isAdmin
+                          ? () => widget.onShare(_display[i].id)
+                          : null,
                     ),
                   ),
           ),
+
+          // Shared with me section (normal users only) in My Projects tab
+          if (!widget.isAdmin && widget.sharedProjects.isNotEmpty) ...[
+            const SizedBox(height: 28),
+            const _SectionHeader(
+              title: 'Shared with Me',
+              subtitle: 'Designs shared by your admin',
+            ),
+            const SizedBox(height: 14),
+            Expanded(
+              child: GridView.builder(
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 300,
+                  crossAxisSpacing: 14,
+                  mainAxisSpacing: 14,
+                  childAspectRatio: 1.22,
+                ),
+                itemCount: widget.sharedProjects.length,
+                itemBuilder: (_, i) {
+                  final e = widget.sharedProjects[i];
+                  final sp = PersistedProject(
+                    id: e['projectId'] as String,
+                    name: e['name'] as String? ?? 'Shared Design',
+                    roomType: e['roomType'] as String? ?? 'other',
+                    widthM: (e['widthM'] as num?)?.toDouble() ?? 6.0,
+                    depthM: (e['depthM'] as num?)?.toDouble() ?? 5.0,
+                    furnitureCount: 0,
+                    lastModified: DateTime.now(),
+                    createdAt: DateTime.now(),
+                    previewColorValue:
+                        (e['previewColorValue'] as num?)?.toInt() ?? 0xFF6A82B8,
+                  );
+                  return _ProjectCard(
+                    project: sp,
+                    onOpen: () => widget.onOpen(sp.id),
+                    onFavorite: () {},
+                    onDelete: () {},
+                    onRename: () {},
+                    onDuplicate: () {},
+                    isAdmin: false,
+                    isShared: true,
+                  );
+                },
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -2525,6 +3358,9 @@ class _SectionHeader extends StatelessWidget {
 class _ProjectCard extends StatefulWidget {
   final PersistedProject project;
   final VoidCallback onOpen, onFavorite, onDelete, onRename, onDuplicate;
+  final bool isAdmin;
+  final bool isShared;
+  final VoidCallback? onShare;
   const _ProjectCard({
     required this.project,
     required this.onOpen,
@@ -2532,6 +3368,9 @@ class _ProjectCard extends StatefulWidget {
     required this.onDelete,
     required this.onRename,
     required this.onDuplicate,
+    this.isAdmin = true,
+    this.isShared = false,
+    this.onShare,
   });
 
   @override
@@ -2616,31 +3455,74 @@ class _ProjectCardState extends State<_ProjectCard> {
                       Positioned(
                         top: 10,
                         left: 10,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 9,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppTheme.bgDark.withOpacity(0.75),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: color.withOpacity(0.3)),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(rt.icon, size: 11, color: color),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 9,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppTheme.bgDark.withOpacity(0.75),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: color.withOpacity(0.3),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(rt.icon, size: 11, color: color),
+                                  const SizedBox(width: 5),
+                                  Text(
+                                    rt.label,
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      color: color,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (widget.isShared) ...[
                               const SizedBox(width: 5),
-                              Text(
-                                rt.label,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                  color: color,
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.bgDark.withOpacity(0.75),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: const Color(
+                                      0xFF6A82B8,
+                                    ).withOpacity(0.5),
+                                  ),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.share_outlined,
+                                      size: 9,
+                                      color: Color(0xFF6A82B8),
+                                    ),
+                                    SizedBox(width: 3),
+                                    Text(
+                                      'Shared',
+                                      style: TextStyle(
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w600,
+                                        color: Color(0xFF6A82B8),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],
-                          ),
+                          ],
                         ),
                       ),
                       Positioned(
@@ -2697,6 +3579,9 @@ class _ProjectCardState extends State<_ProjectCard> {
                           onDelete: widget.onDelete,
                           onRename: widget.onRename,
                           onDuplicate: widget.onDuplicate,
+                          isAdmin: widget.isAdmin,
+                          canDelete: !widget.isShared,
+                          onShare: widget.onShare,
                         ),
                       ],
                     ),
@@ -2754,11 +3639,17 @@ class _MetaChip extends StatelessWidget {
 
 class _CardMenu extends StatelessWidget {
   final VoidCallback onOpen, onDelete, onRename, onDuplicate;
+  final bool isAdmin;
+  final bool canDelete;
+  final VoidCallback? onShare;
   const _CardMenu({
     required this.onOpen,
     required this.onDelete,
     required this.onRename,
     required this.onDuplicate,
+    this.isAdmin = true,
+    this.canDelete = false,
+    this.onShare,
   });
 
   @override
@@ -2777,30 +3668,49 @@ class _CardMenu extends StatelessWidget {
         'Open',
         AppTheme.textPrimary,
       ),
-      _menuItem(
-        'rename',
-        Icons.drive_file_rename_outline,
-        'Rename',
-        AppTheme.textSecondary,
-      ),
-      _menuItem(
-        'duplicate',
-        Icons.copy_rounded,
-        'Duplicate',
-        AppTheme.textSecondary,
-      ),
-      const PopupMenuDivider(height: 4),
-      _menuItem(
-        'delete',
-        Icons.delete_outline_rounded,
-        'Delete',
-        AppTheme.error,
-      ),
+      if (isAdmin) ...[
+        _menuItem(
+          'rename',
+          Icons.drive_file_rename_outline,
+          'Rename',
+          AppTheme.textSecondary,
+        ),
+        _menuItem(
+          'duplicate',
+          Icons.copy_rounded,
+          'Duplicate',
+          AppTheme.textSecondary,
+        ),
+        _menuItem(
+          'share',
+          Icons.share_outlined,
+          'Share with User',
+          const Color(0xFF6A82B8),
+        ),
+        const PopupMenuDivider(height: 4),
+        _menuItem(
+          'delete',
+          Icons.delete_outline_rounded,
+          'Delete',
+          AppTheme.error,
+        ),
+      ],
+      // Normal users can delete their own projects (not shared ones)
+      if (!isAdmin && canDelete) ...[
+        const PopupMenuDivider(height: 4),
+        _menuItem(
+          'delete',
+          Icons.delete_outline_rounded,
+          'Delete',
+          AppTheme.error,
+        ),
+      ],
     ],
     onSelected: (v) {
       if (v == 'open') onOpen();
       if (v == 'rename') onRename();
       if (v == 'duplicate') onDuplicate();
+      if (v == 'share') onShare?.call();
       if (v == 'delete') onDelete();
     },
   );
@@ -3154,4 +4064,519 @@ class _MiniFloorPlanPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _MiniFloorPlanPainter old) =>
       old.color != color || old.widthM != widthM || old.depthM != depthM;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _ShareDialog — admin picks which users to share a project with
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ShareDialog extends StatefulWidget {
+  final PersistedProject project;
+  final List<String> availableUsers;
+  final Set<String> currentShares;
+  final String ownerUserId;
+  final Future<void> Function(String uid, bool enable) onToggle;
+
+  const _ShareDialog({
+    required this.project,
+    required this.availableUsers,
+    required this.currentShares,
+    required this.ownerUserId,
+    required this.onToggle,
+  });
+
+  @override
+  State<_ShareDialog> createState() => _ShareDialogState();
+}
+
+class _ShareDialogState extends State<_ShareDialog> {
+  late final Set<String> _shared;
+  // Per-user saving flag so one toggle doesn't block others
+  final Set<String> _saving = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _shared = Set.from(widget.currentShares);
+  }
+
+  bool get _anySaving => _saving.isNotEmpty;
+
+  String _displayName(String uid) {
+    if (uid == 'guest') return 'Guest User';
+    final local = uid.split('@').first;
+    return local
+        .split(RegExp(r'[._-]'))
+        .map((w) => w.isEmpty ? '' : '${w[0].toUpperCase()}${w.substring(1)}')
+        .join(' ')
+        .trim();
+  }
+
+  Future<void> _toggle(String uid) async {
+    if (_saving.contains(uid)) return; // already saving this user
+    final enable = !_shared.contains(uid);
+    setState(() => _saving.add(uid));
+    try {
+      await widget.onToggle(uid, enable);
+      if (mounted) {
+        setState(() {
+          if (enable) {
+            _shared.add(uid);
+          } else {
+            _shared.remove(uid);
+          }
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _saving.remove(uid));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.surfaceDark,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Container(
+        width: 400,
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF6A82B8).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.share_outlined,
+                    color: Color(0xFF6A82B8),
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Share Project',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                      Text(
+                        widget.project.name,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppTheme.textMuted,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(
+                    Icons.close_rounded,
+                    color: AppTheme.textMuted,
+                    size: 18,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Toggle users below to give them view access to this design.',
+              style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: 16),
+            Divider(color: AppTheme.borderDark),
+            const SizedBox(height: 8),
+            if (widget.availableUsers.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Text(
+                  'No other users available.',
+                  style: TextStyle(fontSize: 13, color: AppTheme.textMuted),
+                ),
+              )
+            else
+              ...widget.availableUsers.map((uid) {
+                final isOn = _shared.contains(uid);
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isOn
+                          ? const Color(0xFF6A82B8).withOpacity(0.10)
+                          : AppTheme.surfaceAlt,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isOn
+                            ? const Color(0xFF6A82B8).withOpacity(0.4)
+                            : AppTheme.borderDark,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 16,
+                          backgroundColor: const Color(
+                            0xFF6A82B8,
+                          ).withOpacity(isOn ? 0.25 : 0.1),
+                          child: Text(
+                            _displayName(uid)[0].toUpperCase(),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF6A82B8),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _displayName(uid),
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppTheme.textPrimary,
+                                ),
+                              ),
+                              Text(
+                                uid,
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  color: AppTheme.textMuted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        _saving.contains(uid)
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Color(0xFF6A82B8),
+                                ),
+                              )
+                            : GestureDetector(
+                                onTap: _anySaving ? null : () => _toggle(uid),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 150),
+                                  width: 44,
+                                  height: 24,
+                                  decoration: BoxDecoration(
+                                    color: isOn
+                                        ? const Color(0xFF6A82B8)
+                                        : AppTheme.surfaceHover,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: isOn
+                                          ? const Color(0xFF6A82B8)
+                                          : AppTheme.borderDark,
+                                    ),
+                                  ),
+                                  child: Align(
+                                    alignment: isOn
+                                        ? Alignment.centerRight
+                                        : Alignment.centerLeft,
+                                    child: Container(
+                                      width: 18,
+                                      height: 18,
+                                      margin: const EdgeInsets.symmetric(
+                                        horizontal: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(9),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _anySaving ? null : () => Navigator.pop(context),
+                child: Text(
+                  _anySaving ? 'Saving...' : 'Done',
+                  style: TextStyle(
+                    color: _anySaving ? AppTheme.textMuted : AppTheme.accent,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _RequestCard — shows a design request (admin sees actions, user sees status)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _RequestCard extends StatelessWidget {
+  final Map<String, dynamic> request;
+  final bool isAdmin;
+  final VoidCallback? onFulfill;
+  final VoidCallback? onDelete;
+
+  const _RequestCard({
+    required this.request,
+    required this.isAdmin,
+    this.onFulfill,
+    this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final status = request['status'] as String? ?? 'pending';
+    final isReady = status == 'ready';
+    final roomName = request['roomName'] as String? ?? 'Room';
+    final roomType = request['roomType'] as String? ?? 'other';
+    final notes = request['notes'] as String? ?? '';
+    final userName = request['userName'] as String? ?? 'User';
+    final createdAt = request['createdAt'] as String?;
+    DateTime? created;
+    try {
+      if (createdAt != null) created = DateTime.parse(createdAt);
+    } catch (_) {}
+
+    final statusColor = isReady
+        ? const Color(0xFF4CAF7D)
+        : const Color(0xFFE8A838);
+    final statusLabel = isReady ? 'Ready' : 'Pending';
+    final statusIcon = isReady
+        ? Icons.check_circle_outline_rounded
+        : Icons.hourglass_top_rounded;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceDark,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isReady
+              ? const Color(0xFF4CAF7D).withOpacity(0.3)
+              : AppTheme.borderDark,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: statusColor.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              isAdmin ? Icons.design_services_outlined : statusIcon,
+              color: isAdmin ? AppTheme.accent : statusColor,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        roomName,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: statusColor.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        statusLabel,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: statusColor,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    if (isAdmin) ...[
+                      const Icon(
+                        Icons.person_outline,
+                        size: 11,
+                        color: AppTheme.textMuted,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        userName,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppTheme.textMuted,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
+                    const Icon(
+                      Icons.category_outlined,
+                      size: 11,
+                      color: AppTheme.textMuted,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      roomType,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: AppTheme.textMuted,
+                      ),
+                    ),
+                    if (created != null) ...[
+                      const SizedBox(width: 10),
+                      const Icon(
+                        Icons.access_time_rounded,
+                        size: 11,
+                        color: AppTheme.textMuted,
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        '${DateTime.now().difference(created).inHours < 24 ? '${DateTime.now().difference(created).inHours}h ago' : '${DateTime.now().difference(created).inDays}d ago'}',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: AppTheme.textMuted,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                if (notes.isNotEmpty) ...[
+                  const SizedBox(height: 5),
+                  Text(
+                    '"$notes"',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppTheme.textSecondary,
+                      fontStyle: FontStyle.italic,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+                if (isReady && !isAdmin) ...[
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Your design is ready! Check "Shared with Me" below.',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF4CAF7D),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (isAdmin) ...[
+            const SizedBox(width: 12),
+            Column(
+              children: [
+                if (!isReady)
+                  Tooltip(
+                    message: 'Open & Design',
+                    child: InkWell(
+                      onTap: onFulfill,
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: AppTheme.accent.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: AppTheme.accent.withOpacity(0.3),
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.edit_outlined,
+                          size: 16,
+                          color: AppTheme.accent,
+                        ),
+                      ),
+                    ),
+                  ),
+                if (!isReady) const SizedBox(height: 6),
+                Tooltip(
+                  message: 'Dismiss',
+                  child: InkWell(
+                    onTap: onDelete,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: AppTheme.error.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        Icons.close_rounded,
+                        size: 16,
+                        color: AppTheme.error,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }

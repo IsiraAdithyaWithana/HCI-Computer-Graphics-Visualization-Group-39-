@@ -29,9 +29,10 @@ class LayoutPersistenceService {
   static String _shapeKey(String userId, String projectId) =>
       'user:$userId:project:$projectId:roomShape';
 
-  /// Global key for furniture type sizes — shared across all users and projects.
-  /// Resizing a GLB in any project updates the size for every project/user.
-  static const String _typeSizeKey = 'global:furniture_type_sizes';
+  /// Stores the last-used {width, height, scaleFactor} per furniture type name.
+  /// Key example: user:u1:project:p1:typeSizes
+  static String _typeSizeKey(String userId, String projectId) =>
+      'user:$userId:project:$projectId:typeSizes';
 
   // ── Project list ──────────────────────────────────────────────────────────
 
@@ -81,7 +82,27 @@ class LayoutPersistenceService {
     await prefs.remove(_depthKey(userId, projectId));
     await prefs.remove(_schemeKey(userId, projectId));
     await prefs.remove(_canvasBgKey(userId, projectId));
+    await prefs.remove(_typeSizeKey(userId, projectId));
     await prefs.remove(_shapeKey(userId, projectId));
+    // Remove from every user's shared list by scanning all keys
+    final allKeys = prefs.getKeys();
+    for (final key in allKeys) {
+      if (!key.endsWith(':sharedProjects')) continue;
+      final raw = prefs.getString(key);
+      if (raw == null || raw.isEmpty) continue;
+      try {
+        final entries = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+        final hadEntry = entries.any(
+          (e) => e['projectId'] == projectId && e['ownerUserId'] == userId,
+        );
+        if (hadEntry) {
+          entries.removeWhere(
+            (e) => e['projectId'] == projectId && e['ownerUserId'] == userId,
+          );
+          await prefs.setString(key, jsonEncode(entries));
+        }
+      } catch (_) {}
+    }
   }
 
   // ── Layout (furniture + room dims) ────────────────────────────────────────
@@ -153,17 +174,27 @@ class LayoutPersistenceService {
 
   // ── Type size preferences ────────────────────────────────────────────────
 
-  /// Saves the last-used size + scaleFactor per furniture type globally.
-  /// [sizes] maps type name → {'w': double, 'h': double, 'sf': double}
-  Future<void> saveTypeSizes(Map<String, Map<String, double>> sizes) async {
+  /// Saves the last-used size + scaleFactor per furniture type.
+  /// [prefs] maps type name → {'w': double, 'h': double, 'sf': double}
+  Future<void> saveTypeSizes(
+    String userId,
+    String projectId,
+    Map<String, Map<String, double>> prefs,
+  ) async {
     final sharedPrefs = await SharedPreferences.getInstance();
-    await sharedPrefs.setString(_typeSizeKey, jsonEncode(sizes));
+    await sharedPrefs.setString(
+      _typeSizeKey(userId, projectId),
+      jsonEncode(prefs),
+    );
   }
 
-  /// Loads the global type size prefs. Returns an empty map if nothing saved yet.
-  Future<Map<String, Map<String, double>>> loadTypeSizes() async {
+  /// Loads the type size prefs. Returns an empty map if nothing saved yet.
+  Future<Map<String, Map<String, double>>> loadTypeSizes(
+    String userId,
+    String projectId,
+  ) async {
     final sharedPrefs = await SharedPreferences.getInstance();
-    final raw = sharedPrefs.getString(_typeSizeKey);
+    final raw = sharedPrefs.getString(_typeSizeKey(userId, projectId));
     if (raw == null || raw.isEmpty) return {};
     try {
       final decoded = jsonDecode(raw) as Map<String, dynamic>;
@@ -178,6 +209,192 @@ class LayoutPersistenceService {
     } catch (_) {
       return {};
     }
+  }
+
+  // ── Shared projects ───────────────────────────────────────────────────────
+
+  static String _sharedProjectsKey(String userId) =>
+      'user:$userId:sharedProjects';
+
+  Future<List<Map<String, dynamic>>> loadSharedProjects(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_sharedProjectsKey(userId));
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final list = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+
+      // Auto-clean: remove entries whose owner project no longer exists.
+      // This handles the case where admin deletes a project that was shared
+      // but the user's dashboard was open and missed the deletion event.
+      final cleaned = <Map<String, dynamic>>[];
+      bool didClean = false;
+      for (final entry in list) {
+        final ownerUserId = entry['ownerUserId'] as String?;
+        final projectId = entry['projectId'] as String?;
+        if (ownerUserId == null || projectId == null) continue;
+        // Check if the project still exists in the owner's project list
+        final ownerProjects = await loadProjects(ownerUserId);
+        final stillExists = ownerProjects.any((p) => p.id == projectId);
+        if (stillExists) {
+          cleaned.add(entry);
+        } else {
+          didClean = true;
+        }
+      }
+      // Persist cleaned list so future loads are fast
+      if (didClean) {
+        await prefs.setString(_sharedProjectsKey(userId), jsonEncode(cleaned));
+      }
+      return cleaned;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> _saveSharedProjects(
+    String userId,
+    List<Map<String, dynamic>> list,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_sharedProjectsKey(userId), jsonEncode(list));
+  }
+
+  Future<void> shareProject({
+    required String ownerUserId,
+    required String projectId,
+    required String targetUserId,
+    required String projectName,
+    required String roomType,
+    required double widthM,
+    required double depthM,
+    required int previewColorValue,
+  }) async {
+    final list = await loadSharedProjects(targetUserId);
+    final exists = list.any(
+      (e) => e['projectId'] == projectId && e['ownerUserId'] == ownerUserId,
+    );
+    if (!exists) {
+      list.add({
+        'projectId': projectId,
+        'ownerUserId': ownerUserId,
+        'name': projectName,
+        'roomType': roomType,
+        'widthM': widthM,
+        'depthM': depthM,
+        'previewColorValue': previewColorValue,
+      });
+      await _saveSharedProjects(targetUserId, list);
+    }
+  }
+
+  Future<void> unshareProject({
+    required String ownerUserId,
+    required String projectId,
+    required String targetUserId,
+  }) async {
+    final list = await loadSharedProjects(targetUserId);
+    list.removeWhere(
+      (e) => e['projectId'] == projectId && e['ownerUserId'] == ownerUserId,
+    );
+    await _saveSharedProjects(targetUserId, list);
+  }
+
+  // ── Known regular users — dynamic registry ────────────────────────────────
+
+  static const String _knownUsersKey = 'global:knownUserIds';
+
+  static Future<void> registerUser(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_knownUsersKey);
+    final list = <String>[];
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        list.addAll((jsonDecode(raw) as List).cast<String>());
+      } catch (_) {}
+    }
+    if (!list.contains(userId)) {
+      list.add(userId);
+      await prefs.setString(_knownUsersKey, jsonEncode(list));
+    }
+  }
+
+  static Future<List<String>> getKnownUserIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_knownUsersKey);
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      return (jsonDecode(raw) as List).cast<String>();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // ── Design Requests ───────────────────────────────────────────────────────
+
+  static const String _requestsKey = 'global:designRequests';
+
+  Future<List<Map<String, dynamic>>> loadRequests() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_requestsKey);
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      return (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> _saveRequests(List<Map<String, dynamic>> list) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_requestsKey, jsonEncode(list));
+  }
+
+  Future<void> submitRequest({
+    required String requestId,
+    required String userId,
+    required String userName,
+    required String roomName,
+    required String roomType,
+    required String notes,
+  }) async {
+    final list = await loadRequests();
+    list.add({
+      'id': requestId,
+      'userId': userId,
+      'userName': userName,
+      'roomName': roomName,
+      'roomType': roomType,
+      'notes': notes,
+      'status': 'pending',
+      'createdAt': DateTime.now().toIso8601String(),
+      'projectId': null,
+      'ownerUserId': null,
+    });
+    await _saveRequests(list);
+  }
+
+  Future<void> fulfillRequest({
+    required String requestId,
+    required String projectId,
+    required String ownerUserId,
+  }) async {
+    final list = await loadRequests();
+    final idx = list.indexWhere((r) => r['id'] == requestId);
+    if (idx != -1) {
+      list[idx] = {
+        ...list[idx],
+        'status': 'ready',
+        'projectId': projectId,
+        'ownerUserId': ownerUserId,
+      };
+      await _saveRequests(list);
+    }
+  }
+
+  Future<void> deleteRequest(String requestId) async {
+    final list = await loadRequests();
+    list.removeWhere((r) => r['id'] == requestId);
+    await _saveRequests(list);
   }
 
   /// Legacy single-slot load — for migrating old saves.

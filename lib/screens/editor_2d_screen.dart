@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
@@ -67,6 +68,8 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   // Key: FurnitureType.name (built-ins) or glbFileName (custom)
   // Value: {'w': width, 'h': height, 'sf': scaleFactor}
   Map<String, Map<String, double>> _typeSizePrefs = {};
+  // Last loaded snapshot — used by normal users to launch 3D view directly
+  LayoutSnapshot? _lastSnapshot;
   void _onThumbsUpdated() {
     if (mounted)
       setState(() => _thumbnails = Map.of(ThumbnailCache.instance.images));
@@ -170,7 +173,19 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
   }
 
   void _openRealistic3D() {
-    final items = _canvasKey.currentState?.furnitureItems ?? [];
+    var items = _canvasKey.currentState?.furnitureItems ?? [];
+    // Normal users view read-only — canvas may not be populated yet.
+    // Parse directly from snapshot JSON so 3D always works.
+    if (items.isEmpty && !widget.isAdmin && _lastSnapshot != null) {
+      try {
+        final decoded = jsonDecode(_lastSnapshot!.furnitureJson) as List?;
+        if (decoded != null && decoded.isNotEmpty) {
+          items = decoded
+              .map((e) => FurnitureModel.fromJson(e as Map<String, dynamic>))
+              .toList();
+        }
+      } catch (_) {}
+    }
     if (items.isEmpty) {
       return;
     }
@@ -237,7 +252,11 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
 
             // Save both layout AND type size prefs to disk
             _saveLayout();
-            LayoutPersistenceService.instance.saveTypeSizes(_typeSizePrefs);
+            LayoutPersistenceService.instance.saveTypeSizes(
+              widget.userId,
+              widget.projectId,
+              _typeSizePrefs,
+            );
           },
           onNaturalSizeDetected: (String id, double widthPx, double depthPx) {
             _canvasKey.currentState?.updateItemNaturalSize(
@@ -336,7 +355,10 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       projectId: widget.projectId,
     );
     // Load global type size preferences (shared across all projects and users)
-    final sizePrefs = await LayoutPersistenceService.instance.loadTypeSizes();
+    final sizePrefs = await LayoutPersistenceService.instance.loadTypeSizes(
+      widget.userId,
+      widget.projectId,
+    );
     if (sizePrefs.isNotEmpty) {
       setState(() => _typeSizePrefs = sizePrefs);
     }
@@ -357,6 +379,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
         );
       }
     });
+    setState(() => _lastSnapshot = snapshot);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _canvasKey.currentState?.loadFromJson(snapshot.furnitureJson);
     });
@@ -521,52 +544,61 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       ),
       body: Row(
         children: [
-          MouseToolSidebar(
-            currentMode: _currentMode,
-            onModeChanged: (mode) => setState(() => _currentMode = mode),
-          ),
+          if (widget.isAdmin)
+            MouseToolSidebar(
+              currentMode: _currentMode,
+              onModeChanged: (mode) => setState(() => _currentMode = mode),
+            ),
           SizedBox(
             width: 220,
-            child: _LeftPanel(
-              selectedType: _selectedType,
-              selectedCustomId: _selectedCustomId,
-              onTypeChanged: (t) => setState(() {
-                _selectedType = t;
-                _selectedCustomId = null;
-                _currentMode = MouseMode.draw;
-              }),
-              onCustomItemSelected: (id) => setState(() {
-                _selectedType = FurnitureType.custom;
-                _selectedCustomId = id;
-                _currentMode = MouseMode.draw;
-              }),
-              roomWidthM: _roomWidthM,
-              roomDepthM: _roomDepthM,
-              roomShape: _roomShape,
-              customShapePoints: _customShapePoints,
-              onShapeChanged: (s, pts) {
-                setState(() {
-                  _roomShape = s;
-                  _customShapePoints = pts;
-                });
-                _saveLayout();
-              },
-              minRoomM: _minRoomM,
-              maxRoomM: _maxRoomM,
-              onWidthChanged: (v) {
-                setState(() => _roomWidthM = v);
-                _saveLayout();
-              },
-              onDepthChanged: (v) {
-                setState(() => _roomDepthM = v);
-                _saveLayout();
-              },
-              onRealistic3D: _openRealistic3D,
-              showCeilingLayer: _showCeilingLayer,
-              onCeilingLayerToggle: () =>
-                  setState(() => _showCeilingLayer = !_showCeilingLayer),
-              isAdmin: widget.isAdmin,
-            ),
+            child: widget.isAdmin
+                ? _LeftPanel(
+                    selectedType: _selectedType,
+                    selectedCustomId: _selectedCustomId,
+                    onTypeChanged: (t) => setState(() {
+                      _selectedType = t;
+                      _selectedCustomId = null;
+                      _currentMode = MouseMode.draw;
+                    }),
+                    onCustomItemSelected: (id) => setState(() {
+                      _selectedType = FurnitureType.custom;
+                      _selectedCustomId = id;
+                      _currentMode = MouseMode.draw;
+                    }),
+                    roomWidthM: _roomWidthM,
+                    roomDepthM: _roomDepthM,
+                    roomShape: _roomShape,
+                    customShapePoints: _customShapePoints,
+                    onShapeChanged: (s, pts) {
+                      setState(() {
+                        _roomShape = s;
+                        _customShapePoints = pts;
+                      });
+                      _saveLayout();
+                    },
+                    minRoomM: _minRoomM,
+                    maxRoomM: _maxRoomM,
+                    onWidthChanged: (v) {
+                      setState(() => _roomWidthM = v);
+                      _saveLayout();
+                    },
+                    onDepthChanged: (v) {
+                      setState(() => _roomDepthM = v);
+                      _saveLayout();
+                    },
+                    onRealistic3D: _openRealistic3D,
+                    showCeilingLayer: _showCeilingLayer,
+                    onCeilingLayerToggle: () =>
+                        setState(() => _showCeilingLayer = !_showCeilingLayer),
+                    isAdmin: widget.isAdmin,
+                  )
+                : _UserViewPanel(
+                    projectName: widget.projectName ?? 'Design',
+                    roomWidthM: _roomWidthM,
+                    roomDepthM: _roomDepthM,
+                    scheme: _currentScheme,
+                    onRealistic3D: _openRealistic3D,
+                  ),
           ),
           Expanded(
             child: _ToolWheelScope(
@@ -1185,6 +1217,7 @@ class _LeftPanelState extends State<_LeftPanel> {
                               id,
                             );
                         },
+                        isAdmin: widget.isAdmin,
                       );
                     }),
 
@@ -1214,83 +1247,86 @@ class _LeftPanelState extends State<_LeftPanel> {
                               id,
                             );
                         },
+                        isAdmin: widget.isAdmin,
                       );
                     }),
 
                     const Divider(height: 1, thickness: 1),
 
-                    // Room size section
-                    Container(
-                      color: const Color(0xFF1F1F2B),
-                      padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
-                      child: Row(
-                        children: const [
-                          Icon(
-                            Icons.square_foot,
-                            size: 15,
-                            color: const Color(0xFF8E8A9A),
-                          ),
-                          SizedBox(width: 6),
-                          Text(
-                            'Room Size',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                              color: Color(0xFFF0EDE8),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    _RoomSlider(
-                      label: 'Width',
-                      value: widget.roomWidthM,
-                      min: widget.minRoomM,
-                      max: widget.maxRoomM,
-                      onChanged: widget.onWidthChanged,
-                    ),
-                    _RoomSlider(
-                      label: 'Depth',
-                      value: widget.roomDepthM,
-                      min: widget.minRoomM,
-                      max: widget.maxRoomM,
-                      onChanged: widget.onDepthChanged,
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 2, 12, 10),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFC9A96E).withOpacity(0.08),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: const Color(0xFFC9A96E).withOpacity(0.25),
-                          ),
-                        ),
+                    // Room size section (admin only — users cannot resize the room)
+                    if (widget.isAdmin) ...[
+                      Container(
+                        color: const Color(0xFF1F1F2B),
+                        padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
                         child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.straighten,
-                              size: 13,
-                              color: const Color(0xFFC9A96E),
+                          children: const [
+                            Icon(
+                              Icons.square_foot,
+                              size: 15,
+                              color: const Color(0xFF8E8A9A),
                             ),
-                            const SizedBox(width: 6),
+                            SizedBox(width: 6),
                             Text(
-                              '${widget.roomWidthM.toStringAsFixed(1)} m  ×  ${widget.roomDepthM.toStringAsFixed(1)} m',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: const Color(0xFFC9A96E),
+                              'Room Size',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                color: Color(0xFFF0EDE8),
                               ),
                             ),
                           ],
                         ),
                       ),
-                    ),
+                      _RoomSlider(
+                        label: 'Width',
+                        value: widget.roomWidthM,
+                        min: widget.minRoomM,
+                        max: widget.maxRoomM,
+                        onChanged: widget.onWidthChanged,
+                      ),
+                      _RoomSlider(
+                        label: 'Depth',
+                        value: widget.roomDepthM,
+                        min: widget.minRoomM,
+                        max: widget.maxRoomM,
+                        onChanged: widget.onDepthChanged,
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 2, 12, 10),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFC9A96E).withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: const Color(0xFFC9A96E).withOpacity(0.25),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.straighten,
+                                size: 13,
+                                color: const Color(0xFFC9A96E),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                '${widget.roomWidthM.toStringAsFixed(1)} m  ×  ${widget.roomDepthM.toStringAsFixed(1)} m',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: const Color(0xFFC9A96E),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
 
                     if (widget.isAdmin) ...[
                       const Divider(height: 1, thickness: 1),
@@ -1387,6 +1423,7 @@ class _CategorySection extends StatelessWidget {
 
   /// id, name
   final void Function(String id, String name) onDeleteCustom;
+  final bool isAdmin;
 
   const _CategorySection({
     required this.category,
@@ -1399,6 +1436,7 @@ class _CategorySection extends StatelessWidget {
     required this.onDeleteCustom,
     this.selectedCustomId,
     this.extraEntries = const [],
+    this.isAdmin = true,
   });
 
   @override
@@ -1617,6 +1655,7 @@ class _CategorySection extends StatelessWidget {
             accentColor: accent,
             onTap: () => onCustomItemTap(entry.id),
             onDelete: () => onDeleteCustom(entry.id, entry.name),
+            isAdmin: isAdmin,
           );
         },
       ),
@@ -1636,6 +1675,7 @@ class _CustomCategorySection extends StatelessWidget {
   final VoidCallback onToggle;
   final ValueChanged<String> onItemTap;
   final void Function(String id, String name) onDelete;
+  final bool isAdmin;
 
   static const Color _accent = const Color(0xFFC9A96E);
 
@@ -1648,6 +1688,7 @@ class _CustomCategorySection extends StatelessWidget {
     required this.onToggle,
     required this.onItemTap,
     required this.onDelete,
+    this.isAdmin = true,
   });
 
   @override
@@ -1770,6 +1811,7 @@ class _CustomCategorySection extends StatelessWidget {
           accentColor: _accent,
           onTap: () => onItemTap(entry.id),
           onDelete: () => onDelete(entry.id, entry.name),
+          isAdmin: isAdmin,
         );
       },
     ),
@@ -1786,6 +1828,7 @@ class _CustomItemTile extends StatelessWidget {
   final Color accentColor;
   final VoidCallback onTap;
   final VoidCallback onDelete;
+  final bool isAdmin;
 
   const _CustomItemTile({
     required this.entry,
@@ -1793,6 +1836,7 @@ class _CustomItemTile extends StatelessWidget {
     required this.accentColor,
     required this.onTap,
     required this.onDelete,
+    this.isAdmin = true,
   });
 
   @override
@@ -1846,28 +1890,29 @@ class _CustomItemTile extends StatelessWidget {
                 ),
               ),
             ),
-            // Trash button
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: onDelete,
-              child: Tooltip(
-                message: 'Delete "${entry.name}"',
-                child: Container(
-                  width: 24,
-                  height: 24,
-                  margin: const EdgeInsets.only(right: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(5),
-                  ),
-                  child: Icon(
-                    Icons.delete_outline,
-                    size: 13,
-                    color: const Color(0xFFE05252),
+            // Trash button — admin only
+            if (isAdmin)
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onDelete,
+                child: Tooltip(
+                  message: 'Delete "${entry.name}"',
+                  child: Container(
+                    width: 24,
+                    height: 24,
+                    margin: const EdgeInsets.only(right: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(5),
+                    ),
+                    child: const Icon(
+                      Icons.delete_outline,
+                      size: 13,
+                      color: Color(0xFFE05252),
+                    ),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       ),
@@ -3762,6 +3807,263 @@ class _SizeField extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _UserViewPanel — read-only left panel shown to normal (non-admin) users
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _UserViewPanel extends StatelessWidget {
+  final String projectName;
+  final double roomWidthM;
+  final double roomDepthM;
+  final RoomColourScheme scheme;
+  final VoidCallback onRealistic3D;
+
+  const _UserViewPanel({
+    required this.projectName,
+    required this.roomWidthM,
+    required this.roomDepthM,
+    required this.scheme,
+    required this.onRealistic3D,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xFF17171F),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            width: double.infinity,
+            color: const Color(0xFF1F1F2B),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.visibility_outlined,
+                  size: 15,
+                  color: Color(0xFF6A82B8),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'View Mode',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    color: Color(0xFF6A82B8),
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF6A82B8).withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xFF6A82B8).withOpacity(0.3),
+                    ),
+                  ),
+                  child: const Text(
+                    'User',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF6A82B8),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // Project info
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Project',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF8E8A9A),
+                    letterSpacing: 0.8,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  projectName,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFFF0EDE8),
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Room Size',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF8E8A9A),
+                    letterSpacing: 0.8,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFC9A96E).withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: const Color(0xFFC9A96E).withOpacity(0.25),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.straighten,
+                        size: 14,
+                        color: Color(0xFFC9A96E),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${roomWidthM.toStringAsFixed(1)} m  ×  ${roomDepthM.toStringAsFixed(1)} m',
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFFC9A96E),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Wall Colour',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF8E8A9A),
+                    letterSpacing: 0.8,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: scheme.wall,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFF3A3A4A)),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: scheme.floor,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFF3A3A4A)),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Wall / Floor',
+                      style: TextStyle(fontSize: 11, color: Color(0xFF8E8A9A)),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          const Spacer(),
+
+          // Info note
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF6A82B8).withOpacity(0.07),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: const Color(0xFF6A82B8).withOpacity(0.2),
+                ),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.info_outline_rounded,
+                    size: 14,
+                    color: Color(0xFF6A82B8),
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'This design was shared with you by an admin. You can explore the layout and view it in 3D.',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF8E8A9A),
+                        height: 1.5,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          // 3D View button
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.auto_awesome, size: 17),
+                label: const Text('Realistic 3D View'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFC9A96E),
+                  foregroundColor: const Color(0xFF0D0D11),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                onPressed: onRealistic3D,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

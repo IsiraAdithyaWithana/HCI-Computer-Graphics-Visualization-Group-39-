@@ -1074,6 +1074,7 @@ class RoomCanvasState extends State<RoomCanvas> {
                             ),
                           );
                           _drawTapPos = null;
+                          _save(); // persist new item immediately
                         }
                       },
                       onSecondaryTap: () {
