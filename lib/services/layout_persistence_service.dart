@@ -83,7 +83,9 @@ class LayoutPersistenceService {
     await prefs.remove(_depthKey(userId, projectId));
     await prefs.remove(_schemeKey(userId, projectId));
     await prefs.remove(_canvasBgKey(userId, projectId));
-    await prefs.remove(_typeSizeKey);
+    // NOTE: _typeSizeKey is intentionally NOT removed — it is global across
+    // ALL users and ALL projects. Deleting a project must never wipe saved
+    // furniture sizes for everyone.
     await prefs.remove(_shapeKey(userId, projectId));
     // Remove from every user's shared list by scanning all keys
     final allKeys = prefs.getKeys();

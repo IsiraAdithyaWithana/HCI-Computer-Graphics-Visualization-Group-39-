@@ -713,6 +713,31 @@
       background: linear-gradient(135deg, #16a34a, #15803d);
     }
 
+    #btn-tint-all {
+      width: 100%;
+      margin-top: 7px;
+      padding: 8px 0;
+      border: 1.5px solid rgba(201, 169, 110, 0.5);
+      border-radius: 8px;
+      background: rgba(201, 169, 110, 0.09);
+      color: #c9a96e;
+      font: 700 11px/1 sans-serif;
+      cursor: pointer;
+      letter-spacing: 0.3px;
+      transition: background 0.15s, box-shadow 0.15s;
+    }
+
+    #btn-tint-all:hover {
+      background: rgba(201, 169, 110, 0.20);
+      box-shadow: 0 4px 12px rgba(201, 169, 110, 0.28);
+    }
+
+    #btn-tint-all.saved {
+      background: rgba(22, 163, 74, 0.18);
+      border-color: #16a34a;
+      color: #4ade80;
+    }
+
     .tint-divider {
       height: 1px;
       background: rgba(255, 255, 255, 0.07);
@@ -1063,6 +1088,7 @@
         <button id="btn-tint-clear">✕ Clear Tint</button>
         <button id="btn-tint-save">🎨 Save Tint</button>
       </div>
+      <button id="btn-tint-all">🎨 Apply Tint to ALL Furniture</button>
     </div>
   </div>
 
@@ -1094,14 +1120,6 @@
       <div id="lp-close">×</div>
     </div>
     <div id="lp-body">
-
-      <div class="lp-section-label">Room</div>
-
-      <div class="lp-row">
-        <span class="lp-label">Wall Height</span>
-        <input type="range" class="lp-slider" id="lp-wall-height" min="2.0" max="5.0" step="0.1" value="3.2">
-        <span class="lp-badge" id="lp-wall-height-val">3.2 m</span>
-      </div>
 
       <div class="lp-section-label">Scene lighting</div>
 
@@ -2232,19 +2250,12 @@
               mesh.position.y = cfg.height - bw2.min.y - (bw2.getSize(new THREE.Vector3()).y / 2);
               group.add(mesh);
             }
-            // Directional light pointing inward from wall — computed from tangent angle.
-            // Inward normal in XZ plane: (sin(wallRotY2), cos(wallRotY2))
+            // Directional light pointing inward from wall
             var dl2 = new THREE.DirectionalLight(cfg.color, cfg.intensity * sf);
             dl2.position.set(0, cfg.height, 0);
-            // Inward direction: perpendicular to wall, pointing into room.
-            // wallRotY2 is already the inward-facing rotation.y, so the +Z direction
-            // after rotation = (sin(wallRotY2), cos(wallRotY2)) in XZ world space.
-            var inwardDist = 4;
-            dl2.target.position.set(
-              cx + Math.sin(wallRotY2) * inwardDist,
-              0,
-              cz + Math.cos(wallRotY2) * inwardDist
-            );
+            var inX = (wall2.gx < (rw4 / 2 || 5)) ? 3 : -3;
+            var inZ = (wall2.gz < (rd4 / 2 || 4)) ? 3 : -3;
+            dl2.target.position.set(inX, 0, inZ);
             dl2.castShadow = true;
             dl2.shadow.mapSize.set(1024, 1024);
             dl2.shadow.camera.left = -5; dl2.shadow.camera.right = 5;
@@ -2345,6 +2356,10 @@
               if (!mat.userData) mat.userData = {};
               if (!mat.userData.origColor) {
                 mat.userData.origColor = mat.color ? mat.color.clone() : new THREE.Color(1, 1, 1);
+              }
+              if (!mat.userData.origEmissive && mat.emissive) {
+                mat.userData.origEmissive = mat.emissive.clone();
+                mat.userData.origEmissiveIntensity = mat.emissiveIntensity || 0;
               }
             });
           }
@@ -2571,10 +2586,7 @@
             var orig = (mat.userData && mat.userData.origColor)
               ? mat.userData.origColor.clone()
               : new THREE.Color(1, 1, 1);
-            // Lerp: result = orig*(1-strength) + tintColor*strength
-            // At 0%  → exact original colour (no tint)
-            // At 50% → even mix of original and chosen colour
-            // At 100% → pure chosen colour
+            // Lerp base colour: orig→tint as strength goes 0→1
             // NOTE: must use setRGB() not set() — in Three.js r128 color.set()
             // only accepts a single argument; passing 3 floats would interpret
             // only the first as a hex int (near-zero = black).
@@ -2583,6 +2595,19 @@
               orig.g * (1 - strength) + tintColor.g * strength,
               orig.b * (1 - strength) + tintColor.b * strength
             );
+            // Also drive emissive so the tint is VISIBLE on dark/black textured
+            // furniture (mat.color alone only multiplies the texture — if the
+            // texture is near-black the result stays near-black no matter what
+            // colour you lerp to).  Emissive is additive and ignores texture
+            // darkness, making the colour change obvious at any strength.
+            if (mat.emissive && !mat.isMeshBasicMaterial) {
+              mat.emissive.setRGB(
+                tintColor.r * strength * 0.72,
+                tintColor.g * strength * 0.72,
+                tintColor.b * strength * 0.72
+              );
+              mat.emissiveIntensity = 1.0;
+            }
             mat.needsUpdate = true;
           });
         }
@@ -2596,6 +2621,18 @@
           mats.forEach(function (mat) {
             var orig = mat.userData && mat.userData.origColor;
             if (orig) mat.color.copy(orig);
+            // Restore original emissive so our tint emissive doesn't linger
+            if (mat.emissive && !mat.isMeshBasicMaterial) {
+              var origEm = mat.userData && mat.userData.origEmissive;
+              if (origEm) {
+                mat.emissive.copy(origEm);
+                mat.emissiveIntensity = mat.userData.origEmissiveIntensity || 0;
+              } else {
+                mat.emissive.setRGB(0, 0, 0);
+                mat.emissiveIntensity = 0;
+              }
+            }
+            mat.needsUpdate = true;
           });
         }
       });
@@ -2628,6 +2665,20 @@
       var btn = document.getElementById('btn-tint-save');
       btn.textContent = '✓ Saved!'; btn.classList.add('saved');
       setTimeout(function () { btn.textContent = '🎨 Save Tint'; btn.classList.remove('saved'); }, 1800);
+    }
+
+    function applyTintToAll() {
+      var str = parseFloat(document.getElementById('tint-strength').value);
+      placedItems.forEach(function (entry) {
+        _applyTintToEntry(entry, _tintHex, str);
+        entry.tintHex = _tintHex;
+        entry.tintStrength = str;
+        var msg = { type: 'tintUpdate', id: entry.data.id, tintHex: _tintHex, tintStrength: str };
+        try { window.chrome.webview.postMessage(JSON.stringify(msg)); } catch (e) { }
+      });
+      var btn = document.getElementById('btn-tint-all');
+      btn.textContent = '✓ Applied to All!'; btn.classList.add('saved');
+      setTimeout(function () { btn.textContent = '🎨 Apply Tint to ALL Furniture'; btn.classList.remove('saved'); }, 2000);
     }
 
     function updateTintTrack(slider) {
@@ -2913,6 +2964,10 @@
       });
       document.getElementById('btn-tint-clear').addEventListener('click', function (e) { e.stopPropagation(); clearTint(); });
       document.getElementById('btn-tint-save').addEventListener('click', function (e) { e.stopPropagation(); saveTint(); });
+      document.getElementById('btn-tint-all').addEventListener('click', function (e) { e.stopPropagation(); applyTintToAll(); });
+      ['mousedown', 'pointerdown'].forEach(function (ev) {
+        document.getElementById('btn-tint-all').addEventListener(ev, function (e) { e.stopPropagation(); });
+      });
 
       // Click anywhere outside popup to close it
       document.addEventListener('click', function () { closeTCP(); });
