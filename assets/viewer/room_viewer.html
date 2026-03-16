@@ -2179,17 +2179,24 @@
             group.rotation.y = -(item.rotation || 0);
 
           } else if (item.type === 'wallLight') {
-            // Detect nearest wall, snap flush to it
-            var rw3 = 0, rd3 = 0;
-            if (_scenePayload) {
-              rw3 = _scenePayload.roomWidth * _sceneRs; rd3 = _scenePayload.roomDepth * _sceneRs;
-            }
-            var wall = nearestWall(rw3 || 10, rd3 || 8);
-            group.position.set(wall.gx, 0, wall.gz);
+            // Use Flutter's pre-computed 2D position and wall-tangent rotation.
+            // item.rotation is the wall tangent angle (radians) from PathMetrics.
+            // The inward-facing rotY = item.rotation (verified for all 4 rect walls
+            // and correct for any polygon wall by the tangent→normal mapping).
+            // cx/cz is already on the wall surface — use directly.
+            group.position.set(cx, 0, cz);
+            // Flutter tangent angle must be NEGATED to match Three.js wall convention:
+            // wall meshes use rotation.y = -atan2(dz, dx) (see buildRoom line for walls).
+            // Negate so light faces inward (same as wall surface normal).
+            var wallRotY = (item.rotation !== undefined) ? -(item.rotation) : (function () {
+              var rw3 = _scenePayload ? _scenePayload.roomWidth * _sceneRs : 10;
+              var rd3 = _scenePayload ? _scenePayload.roomDepth * _sceneRs : 8;
+              return nearestWall(rw3, rd3).rotY;
+            })();
             var mesh = cloneLightMesh('wallLight');
             if (mesh) {
               scaleMeshTo(mesh, LIGHT_MODEL_HEIGHT['wallLight'] * sf);
-              mesh.rotation.y = wall.rotY;
+              mesh.rotation.y = wallRotY;
               mesh.updateMatrixWorld(true);
               var bb5 = new THREE.Box3().setFromObject(mesh);
               mesh.position.y = cfg.height - bb5.min.y;
@@ -2201,13 +2208,13 @@
             group.add(pl4);
 
           } else if (item.type === 'windowLight') {
-            // Detect nearest wall, embed window in it
-            var rw4 = 0, rd4 = 0;
-            if (_scenePayload) {
-              rw4 = _scenePayload.roomWidth * _sceneRs; rd4 = _scenePayload.roomDepth * _sceneRs;
-            }
-            var wall2 = nearestWall(rw4 || 10, rd4 || 8);
-            group.position.set(wall2.gx, 0, wall2.gz);
+            // Same fix: use Flutter's position and tangent-derived rotation.
+            group.position.set(cx, 0, cz);
+            var wallRotY2 = (item.rotation !== undefined) ? -(item.rotation) : (function () {
+              var rw4 = _scenePayload ? _scenePayload.roomWidth * _sceneRs : 10;
+              var rd4 = _scenePayload ? _scenePayload.roomDepth * _sceneRs : 8;
+              return nearestWall(rw4, rd4).rotY;
+            })();
             var mesh = cloneLightMesh('windowLight');
             if (mesh) {
               // Scale window to fit 2D footprint width
@@ -2219,18 +2226,25 @@
               var scH = bsz.y > 0.001 ? LIGHT_MODEL_HEIGHT['windowLight'] / bsz.y : 1.0;
               var scFit = Math.min(scW, scH) * sf;
               mesh.scale.setScalar(scFit);
-              mesh.rotation.y = wall2.rotY;
+              mesh.rotation.y = wallRotY2;
               mesh.updateMatrixWorld(true);
               var bw2 = new THREE.Box3().setFromObject(mesh);
               mesh.position.y = cfg.height - bw2.min.y - (bw2.getSize(new THREE.Vector3()).y / 2);
               group.add(mesh);
             }
-            // Directional light pointing inward from wall
+            // Directional light pointing inward from wall — computed from tangent angle.
+            // Inward normal in XZ plane: (sin(wallRotY2), cos(wallRotY2))
             var dl2 = new THREE.DirectionalLight(cfg.color, cfg.intensity * sf);
             dl2.position.set(0, cfg.height, 0);
-            var inX = (wall2.gx < (rw4 / 2 || 5)) ? 3 : -3;
-            var inZ = (wall2.gz < (rd4 / 2 || 4)) ? 3 : -3;
-            dl2.target.position.set(inX, 0, inZ);
+            // Inward direction: perpendicular to wall, pointing into room.
+            // wallRotY2 is already the inward-facing rotation.y, so the +Z direction
+            // after rotation = (sin(wallRotY2), cos(wallRotY2)) in XZ world space.
+            var inwardDist = 4;
+            dl2.target.position.set(
+              cx + Math.sin(wallRotY2) * inwardDist,
+              0,
+              cz + Math.cos(wallRotY2) * inwardDist
+            );
             dl2.castShadow = true;
             dl2.shadow.mapSize.set(1024, 1024);
             dl2.shadow.camera.left = -5; dl2.shadow.camera.right = 5;

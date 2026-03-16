@@ -187,7 +187,8 @@ class RoomCanvasState extends State<RoomCanvas> {
 
   final double gridSize = 20;
   bool enableSnap = true;
-  bool snapResizeEnabled = true;
+  // snapResizeEnabled is an alias — toggleResizeSnap operates on enableSnap
+  bool get snapResizeEnabled => enableSnap;
   static const double _cursorSize = 32;
 
   /// Returns the (dx, dy) offset to subtract from the pointer position when
@@ -214,9 +215,8 @@ class RoomCanvasState extends State<RoomCanvas> {
   final FocusNode _focusNode = FocusNode();
 
   // ── Public API ────────────────────────────────────────────────────────────
-  bool get isSnapResizeEnabled => snapResizeEnabled;
-  void toggleResizeSnap() =>
-      setState(() => snapResizeEnabled = !snapResizeEnabled);
+  bool get isSnapResizeEnabled => enableSnap;
+  void toggleResizeSnap() => setState(() => enableSnap = !enableSnap);
   double get currentZoom => _transformationController.value.getMaxScaleOnAxis();
 
   /// Called by the 3D screen when a custom GLB's real footprint is measured.
@@ -876,8 +876,11 @@ class RoomCanvasState extends State<RoomCanvas> {
         ? widget.selectedType.lightZone
         : LightZone.floor;
 
+    double wallRotation = 0.0;
     if (zone == LightZone.wall) {
-      placedPos = _snapToWall(position, itemSize);
+      final result = _snapToWallFull(position, itemSize);
+      placedPos = result.position;
+      wallRotation = result.rotation;
     } else if (zone == LightZone.ceiling) {
       placedPos = _clampToRoom(position, itemSize);
     } else if (zone == LightZone.onFurniture) {
@@ -893,6 +896,7 @@ class RoomCanvasState extends State<RoomCanvas> {
       size: itemSize,
       color: _defaultColor(widget.selectedType),
       scaleFactor: inheritedScaleFactor,
+      rotation: zone == LightZone.wall ? wallRotation : 0.0,
       glbOverride: widget.selectedType == FurnitureType.custom
           ? widget.customGlbOverride
           : null,
@@ -903,11 +907,14 @@ class RoomCanvasState extends State<RoomCanvas> {
   }
 
   // ── Constrain drag position by light zone ───────────────────────────────
+  // For wall lights, this also updates item.rotation to match the wall angle.
   Offset _constrainForZone(FurnitureModel item, Offset pos) {
     if (!item.type.isLight) return pos;
     final zone = item.type.lightZone;
     if (zone == LightZone.wall) {
-      return _snapToWall(pos, item.size);
+      final result = _snapToWallFull(pos, item.size);
+      item.rotation = result.rotation; // auto-align to wall surface
+      return result.position;
     } else if (zone == LightZone.ceiling) {
       return _clampToRoom(pos, item.size);
     } else if (zone == LightZone.onFurniture) {
@@ -916,30 +923,100 @@ class RoomCanvasState extends State<RoomCanvas> {
     return pos;
   }
 
-  // ── Snap to nearest wall ─────────────────────────────────────────────────
-  Offset _snapToWall(Offset pos, Size size) {
+  // ── Snap to nearest wall (shape-aware) ─────────────────────────────────────
+  //
+  // Works for ALL room shapes: rectangle, polygon, curved, custom.
+  // Steps:
+  //   1. Sample the room's Flutter Path at fine intervals using PathMetrics.
+  //   2. Find the sample whose position is nearest to the item centre.
+  //   3. Return the top-left corner so the item centre sits on the wall,
+  //      AND set item.rotation to match the wall tangent angle so the light
+  //      bar is always flush with the surface.
+  //
+  // The old rectangle-only fallback is kept as _snapToWallRect() and is only
+  // used if PathMetrics returns no data (should never happen in practice).
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// Snap position + auto-rotate to match any wall edge.
+  /// Returns the top-left [Offset] to assign to item.position.
+  /// Also writes the correct wall-aligned rotation into [targetRotation].
+  Offset _snapToWall(
+    Offset pos,
+    Size size, {
+    double? Function(double)? onRotation,
+  }) {
+    final result = _snapToWallFull(pos, size);
+    onRotation?.call(result.rotation);
+    return result.position;
+  }
+
+  /// Full snap result: position + wall-tangent rotation for ANY room shape.
+  ({Offset position, double rotation}) _snapToWallFull(Offset pos, Size size) {
+    // Build the current room boundary path
+    final path = buildRoomPath(
+      widget.roomShape,
+      widget.roomWidthPx,
+      widget.roomDepthPx,
+      customPoints: widget.customShapePoints,
+    );
+
+    final metrics = path.computeMetrics().toList();
+    if (metrics.isEmpty) {
+      // Fallback: rectangle snap with no rotation
+      return (position: _snapToWallRect(pos, size), rotation: 0.0);
+    }
+
+    final metric = metrics.first;
+    final totalLen = metric.length;
+
+    // Item centre in room coordinates
+    final center = pos + Offset(size.width / 2, size.height / 2);
+
+    // Sample the path — one sample every ~4 px gives good precision without
+    // being expensive (a typical room perimeter is 2000–4000 px).
+    final numSamples = (totalLen / 4.0).ceil().clamp(128, 4096);
+    double bestDist = double.infinity;
+    Offset bestPoint = Offset.zero;
+    double bestAngle = 0.0;
+
+    for (int i = 0; i <= numSamples; i++) {
+      final t = (i / numSamples) * totalLen;
+      final tangent = metric.getTangentForOffset(t);
+      if (tangent == null) continue;
+      final pt = tangent.position;
+      final d = (pt - center).distance;
+      if (d < bestDist) {
+        bestDist = d;
+        bestPoint = pt;
+        // tangent.vector is the unit direction along the path — that IS the
+        // wall direction, so use its angle as the item rotation.
+        bestAngle = Math.atan2(tangent.vector.dy, tangent.vector.dx);
+      }
+    }
+
+    // Top-left so that the item's centre lands exactly on the wall point
+    final topLeft = Offset(
+      bestPoint.dx - size.width / 2,
+      bestPoint.dy - size.height / 2,
+    );
+
+    return (position: topLeft, rotation: bestAngle);
+  }
+
+  /// Legacy rectangle-only snap — kept as a fallback.
+  Offset _snapToWallRect(Offset pos, Size size) {
     final roomW = widget.roomWidthPx;
     final roomH = widget.roomDepthPx;
-    // Distances from pos.dx/dy to each wall edge
     final dLeft = pos.dx;
     final dRight = roomW - pos.dx;
     final dTop = pos.dy;
     final dBottom = roomH - pos.dy;
     final minD = Math.min(Math.min(dLeft, dRight), Math.min(dTop, dBottom));
-
-    if (minD == dLeft) {
-      // Left wall — item hugs left edge
-      return Offset(0, pos.dy.clamp(0, roomH - size.height));
-    } else if (minD == dRight) {
-      // Right wall
+    if (minD == dLeft) return Offset(0, pos.dy.clamp(0, roomH - size.height));
+    if (minD == dRight)
       return Offset(roomW - size.width, pos.dy.clamp(0, roomH - size.height));
-    } else if (minD == dTop) {
-      // Top wall
-      return Offset(pos.dx.clamp(0, roomW - size.width), 0);
-    } else {
-      // Bottom wall
-      return Offset(pos.dx.clamp(0, roomW - size.width), roomH - size.height);
-    }
+    if (minD == dTop) return Offset(pos.dx.clamp(0, roomW - size.width), 0);
+    return Offset(pos.dx.clamp(0, roomW - size.width), roomH - size.height);
   }
 
   // ── Clamp to room interior ───────────────────────────────────────────────
@@ -1912,6 +1989,8 @@ class RoomCanvasState extends State<RoomCanvas> {
                             ceilingColour: widget.ceilingColour,
                             wallColour: widget.roomWallColour,
                             thumbnails: widget.thumbnails,
+                            roomShape: widget.roomShape,
+                            customShapePoints: widget.customShapePoints,
                           ),
                           size: const Size(_canvasW, _canvasH),
                         ),
@@ -3675,6 +3754,8 @@ class CeilingPainter extends CustomPainter {
   final Color ceilingColour;
   final Color wallColour;
   final Map<String, ui.Image> thumbnails;
+  final RoomShape roomShape;
+  final List<Offset>? customShapePoints;
 
   const CeilingPainter({
     required this.furnitureItems,
@@ -3686,6 +3767,8 @@ class CeilingPainter extends CustomPainter {
     required this.ceilingColour,
     required this.wallColour,
     this.thumbnails = const {},
+    this.roomShape = RoomShape.rectangle,
+    this.customShapePoints,
   });
 
   @override
@@ -3696,17 +3779,23 @@ class CeilingPainter extends CustomPainter {
       Paint()..color = const Color(0xFF0D0D11),
     );
 
-    final rr = Rect.fromLTWH(0, 0, roomWidth, roomDepth);
+    // Build the correct room shape path (mirrors the main furniture canvas)
+    final roomPath = buildRoomPath(
+      roomShape,
+      roomWidth,
+      roomDepth,
+      customPoints: customShapePoints,
+    );
 
     // ── Ceiling surface — ceiling colour at 22% opacity ───────────────────
-    canvas.drawRect(rr, Paint()..color = ceilingColour.withOpacity(0.22));
+    canvas.drawPath(roomPath, Paint()..color = ceilingColour.withOpacity(0.22));
 
-    // ── Subtle grid ───────────────────────────────────────────────────────
+    // ── Subtle grid clipped to room shape ─────────────────────────────────
     final gp = Paint()
       ..color = Colors.white.withOpacity(0.05)
       ..strokeWidth = 1;
     canvas.save();
-    canvas.clipRect(rr);
+    canvas.clipPath(roomPath);
     for (double x = 0; x <= roomWidth; x += 20)
       canvas.drawLine(Offset(x, 0), Offset(x, roomDepth), gp);
     for (double y = 0; y <= roomDepth; y += 20)
@@ -3714,8 +3803,8 @@ class CeilingPainter extends CustomPainter {
     canvas.restore();
 
     // ── Wall border ───────────────────────────────────────────────────────
-    canvas.drawRect(
-      rr,
+    canvas.drawPath(
+      roomPath,
       Paint()
         ..color = wallColour.withOpacity(0.6)
         ..style = PaintingStyle.stroke
@@ -3727,6 +3816,7 @@ class CeilingPainter extends CustomPainter {
       Rect.fromLTWH(0, 0, canvasW, canvasH),
       Paint()..color = Colors.white.withOpacity(0.40),
     );
+    canvas.clipPath(roomPath); // clip ghosts to actual room shape
     for (final item in furnitureItems) {
       if (item.type == FurnitureType.ceilingSpot) continue;
       canvas.save();
@@ -3748,6 +3838,8 @@ class CeilingPainter extends CustomPainter {
     canvas.restore();
 
     // ── Ceiling spots — use thumbnail if available ───────────────────────
+    canvas.save();
+    canvas.clipPath(roomPath); // ceiling spots stay inside room boundary
     for (final item in furnitureItems) {
       if (item.type != FurnitureType.ceilingSpot) continue;
       canvas.save();
@@ -3813,6 +3905,8 @@ class CeilingPainter extends CustomPainter {
       }
       canvas.restore();
     }
+
+    canvas.restore(); // end ceiling spots + selection rings clip
 
     // ── "CEILING LAYER" label ─────────────────────────────────────────────
     final tp = TextPainter(
