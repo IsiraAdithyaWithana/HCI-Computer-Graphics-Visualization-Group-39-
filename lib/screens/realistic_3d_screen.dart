@@ -10,6 +10,7 @@ class Realistic3DScreen extends StatefulWidget {
   final List<FurnitureModel> furniture;
   final double roomWidth;
   final double roomDepth;
+  final double wallHeightM;
 
   /// Room colour scheme — passed through to the Three.js viewer.
   final Color wallColour;
@@ -30,8 +31,7 @@ class Realistic3DScreen extends StatefulWidget {
 
   /// Called when the user saves a tint on a selected furniture item.
   /// [tintHex] is null when tint is cleared.
-  final void Function(String id, String? tintHex, {double strength})?
-  onTintUpdated;
+  final void Function(String id, String? tintHex)? onTintUpdated;
 
   /// Undo / Redo — ValueNotifier so the appbar reacts live to canvas history changes.
   final ValueNotifier<bool>? canUndoNotifier;
@@ -55,6 +55,7 @@ class Realistic3DScreen extends StatefulWidget {
     required this.furniture,
     required this.roomWidth,
     required this.roomDepth,
+    this.wallHeightM = 3.2,
     this.wallColour = const Color(0xFFF0EBE2),
     this.floorColour = const Color(0xFFD4C4A8),
     this.ceilingColour = const Color(0xFFFAF8F4),
@@ -173,12 +174,9 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
           } else if (data['type'] == 'tintUpdate') {
             final id = data['id'] as String?;
             final tintHex = data['tintHex'] as String?;
-            final strength = (data['tintStrength'] as num?)?.toDouble() ?? 0.4;
             if (id != null) {
-              widget.onTintUpdated?.call(id, tintHex, strength: strength);
-              debugPrint(
-                '[3D→Flutter] tintUpdate id=$id tint=$tintHex strength=$strength',
-              );
+              widget.onTintUpdated?.call(id, tintHex);
+              debugPrint('[3D→Flutter] tintUpdate id=$id tint=$tintHex');
             }
           } else if (data['type'] == 'thumbnail') {
             final key = data['key'] as String?;
@@ -267,7 +265,6 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
             if (f.glbOverride != null) 'glbFile': f.glbOverride,
             if (f.labelOverride != null) 'label': f.labelOverride,
             if (f.tintHex != null) 'tint': f.tintHex,
-            if (f.tintHex != null) 'tintStrength': f.tintStrength,
           },
         )
         .toList();
@@ -276,6 +273,7 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
       'items': items,
       'roomWidth': widget.roomWidth,
       'roomDepth': widget.roomDepth,
+      'wallHeight': widget.wallHeightM,
       'wallColor': _colourHex(widget.wallColour),
       'floorColor': _colourHex(widget.floorColour),
       'ceilingColor': _colourHex(widget.ceilingColour),

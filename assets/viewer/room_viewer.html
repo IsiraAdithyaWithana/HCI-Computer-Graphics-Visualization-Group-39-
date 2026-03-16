@@ -719,6 +719,28 @@
       margin: 4px 0 14px;
     }
 
+    /* ── Room dimensions badge */
+    #room-info {
+      position: fixed;
+      bottom: 16px;
+      right: 16px;
+      background: rgba(10, 12, 30, 0.82);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      border-radius: 10px;
+      padding: 6px 12px;
+      color: rgba(255, 255, 255, 0.75);
+      font: 600 12px/1.4 sans-serif;
+      letter-spacing: 0.3px;
+      pointer-events: none;
+      backdrop-filter: blur(8px);
+      display: none;
+      z-index: 100;
+    }
+
+    #room-info span {
+      color: #e8c97e;
+    }
+
     /* ── Lighting toggle button ─────────────────────────────────────────────── */
     #lighting-toggle {
       position: fixed;
@@ -957,6 +979,9 @@
 </head>
 
 <body>
+  <!-- Room dimensions badge -->
+  <div id="room-info"></div>
+
   <div id="loading">
     <div class="spinner"></div>
     <div id="load-text">Starting…</div>
@@ -1069,6 +1094,14 @@
       <div id="lp-close">×</div>
     </div>
     <div id="lp-body">
+
+      <div class="lp-section-label">Room</div>
+
+      <div class="lp-row">
+        <span class="lp-label">Wall Height</span>
+        <input type="range" class="lp-slider" id="lp-wall-height" min="2.0" max="5.0" step="0.1" value="3.2">
+        <span class="lp-badge" id="lp-wall-height-val">3.2 m</span>
+      </div>
 
       <div class="lp-section-label">Scene lighting</div>
 
@@ -1564,7 +1597,9 @@
 
       function buildRoom(rw, rd) {
         while (roomGroup.children.length) roomGroup.remove(roomGroup.children[0]);
-        var WH = 3.2; _WH = WH; // keep module-level in sync
+        // WH is pre-computed in onReady as wallHeightM * 100 * rs (scales with room)
+        // Use _WH directly; fall back to 3.2 only as a safety net
+        var WH = _WH || 3.2;
         var _p = getPayload() || {};
         var shapeName = (_p.roomShape || 'rectangle');
         var customPts = _p.customShapePoints || null;
@@ -1816,7 +1851,21 @@
         var TARGET_M = 12, rs = TARGET_M / Math.max(payload.roomWidth, payload.roomDepth);
         _scenePayload = payload; // make payload accessible inside placeItem
         _sceneRs = rs;
+        // Scale wallHeight by rs so proportions stay correct at any room size.
+        // wallHeight is real metres → canvas px (×100) → 3D world units (×rs)
+        var wallHm = payload.wallHeight || 3.2;
+        _WH = wallHm * 100 * rs;
         buildRoom(payload.roomWidth * rs, payload.roomDepth * rs);
+        // Show room dimensions badge bottom-right
+        (function () {
+          var w = (payload.roomWidth / 100).toFixed(1);
+          var d = (payload.roomDepth / 100).toFixed(1);
+          var el = document.getElementById('room-info');
+          if (el) {
+            el.innerHTML = '&#x25AD; <span>' + w + ' m</span> &times; <span>' + d + ' m</span>';
+            el.style.display = 'block';
+          }
+        })();
         var fg = new THREE.Group(); scene.add(fg);
         placedItems = [];
         payload.items.forEach(function (item, idx) {
@@ -3057,6 +3106,25 @@
         sl.addEventListener('mousedown', function (e) { e.stopPropagation(); });
         sl.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
       }
+
+      // ── Wall height slider ──────────────────────────────────────────────
+      (function () {
+        var whSlider = document.getElementById('lp-wall-height');
+        var whVal = document.getElementById('lp-wall-height-val');
+        if (!whSlider) return;
+        function applyWallHeight(v) {
+          whVal.textContent = v.toFixed(1) + ' m';
+          var payload = getPayload();
+          var rs = _sceneRs || (payload ? 12 / Math.max(payload.roomWidth, payload.roomDepth) : 0.02);
+          // Scale wall height by rs — same conversion as furniture footprints
+          _WH = v * 100 * rs;
+          if (payload) {
+            buildRoom(payload.roomWidth * rs, payload.roomDepth * rs);
+          }
+        }
+        whSlider.addEventListener('input', function () { applyWallHeight(parseFloat(this.value)); });
+        _updateSliderStyle && _updateSliderStyle(whSlider);
+      })();
 
       wireSceneSlider('lp-ambient', 'lp-ambient-val', null, function (v) {
         if (_ambientLight) _ambientLight.intensity = v;

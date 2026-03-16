@@ -317,7 +317,44 @@ class RoomCanvasState extends State<RoomCanvas> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    // Global pointer-up listener — resets interaction state even when the
+    // pointer-up fires outside the canvas widget bounds (e.g. marquee started
+    // in canvas background, released outside). Without this, onPanEnd is
+    // never called and the cursor + selection flags stay stuck.
+    GestureBinding.instance.pointerRouter.addGlobalRoute(_onGlobalPointerEvent);
+  }
+
+  void _onGlobalPointerEvent(PointerEvent event) {
+    if (event is! PointerUpEvent && event is! PointerCancelEvent) return;
+    if (!_isDraggingLive && !_isRotatingLive && !_isSelectingBox) return;
+    // Something was mid-gesture — reset everything
+    if (mounted) {
+      setState(() {
+        _isRotating = _isDragging = _isResizing = _isPanningCanvas =
+            _isSelectingBox = false;
+        _selectionStart = _selectionCurrent = null;
+        _preDragPositions = {};
+      });
+      _isRotatingLive = _isResizingLive = _isDraggingLive = false;
+      _dragStart = null;
+      _hoveredItem.value = null;
+      if (widget.currentMode == MouseMode.hand) {
+        _cursorAsset.value = 'assets/cursors/canvas_cursor.png';
+      } else if (widget.currentMode == MouseMode.draw) {
+        _cursorAsset.value = 'assets/cursors/add_cursor.png';
+      } else {
+        _cursorAsset.value = 'assets/cursors/main_cursor.png';
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    GestureBinding.instance.pointerRouter.removeGlobalRoute(
+      _onGlobalPointerEvent,
+    );
     _hoveredItem.dispose();
     _cursorPos.dispose();
     _cursorAsset.dispose();
@@ -1098,403 +1135,480 @@ class RoomCanvasState extends State<RoomCanvas> {
         onPointerPanZoomStart: _onTrackpadStart,
         onPointerPanZoomUpdate: _onTrackpadUpdate,
         onPointerPanZoomEnd: _onTrackpadEnd,
-        child: Stack(
-          children: [
-            ColoredBox(
-              color: widget.canvasBgColour,
-              child: ClipRect(
-                child: AnimatedBuilder(
-                  animation: _transformationController,
-                  builder: (context, _) => Transform(
-                    transform: _transformationController.value,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTapDown: (d) {
-                        final s = _globalToScene(d.globalPosition);
-                        if (widget.currentMode == MouseMode.draw) {
-                          // Draw mode restricted to admins
-                          if (!widget.isAdmin) return;
-                          // Ceiling spots can only be placed on the ceiling canvas (right panel)
-                          if (widget.selectedType == FurnitureType.ceilingSpot)
-                            return;
-                          // Only allow placement inside the room
-                          if (_insideRoom(s)) _drawTapPos = s;
-                          return;
-                        }
-                        if (widget.currentMode != MouseMode.select) return;
-                        if (_onAnyHandle(s)) return;
-                        for (final item in furnitureItems.reversed) {
-                          // Ceiling spots are locked in the furniture canvas
-                          if (item.type == FurnitureType.ceilingSpot) continue;
-                          if (_inside(item, s)) {
-                            setState(() {
-                              if (HardwareKeyboard.instance.isControlPressed) {
-                                selectedItems.contains(item)
-                                    ? selectedItems.remove(item)
-                                    : selectedItems.add(item);
-                                selectedItem = item;
-                              } else if (selectedItems.contains(item)) {
-                                selectedItem = item;
-                              } else {
-                                selectedItems
-                                  ..clear()
-                                  ..add(item);
-                                selectedItem = item;
-                              }
-                            });
+        child: GestureDetector(
+          // ── Outer GestureDetector: covers entire viewport including ──────
+          // the area OUTSIDE the canvas tile. Lets the user start a marquee
+          // selection from the dark background area around the room.
+          behavior: HitTestBehavior.translucent,
+          onPanStart: (d) {
+            if (_isTrackpadActive) return;
+            if (widget.currentMode != MouseMode.select) return;
+            // Only start marquee from outer detector if nothing is already
+            // mid-gesture (inner GestureDetector handles furniture drags)
+            if (_isDraggingLive || _isRotatingLive) return;
+            if (_isSelectingBox) return; // inner already started it
+            final s = _globalToScene(d.globalPosition);
+            setState(() {
+              _isSelectingBox = true;
+              _selectionStart = s;
+              _selectionCurrent = s;
+              selectedItems.clear();
+              selectedItem = null;
+            });
+            _cursorAsset.value = 'assets/cursors/main_cursor.png';
+          },
+          onPanUpdate: (d) {
+            if (_isTrackpadActive) return;
+            if (!_isSelectingBox || _selectionStart == null) return;
+            final s = _globalToScene(d.globalPosition);
+            setState(() => _selectionCurrent = s);
+            // Keep cursor image tracking the pointer during marquee
+            final localPos = (context.findRenderObject() as RenderBox?)
+                ?.globalToLocal(d.globalPosition);
+            if (localPos != null) _cursorPos.value = localPos;
+          },
+          onPanEnd: (_) {
+            if (_isTrackpadActive) return;
+            if (!_isSelectingBox ||
+                _selectionStart == null ||
+                _selectionCurrent == null)
+              return;
+            final rect = Rect.fromPoints(_selectionStart!, _selectionCurrent!);
+            setState(() {
+              selectedItems = furnitureItems
+                  .where(
+                    (item) => rect.overlaps(
+                      Rect.fromLTWH(
+                        item.position.dx,
+                        item.position.dy,
+                        item.size.width,
+                        item.size.height,
+                      ),
+                    ),
+                  )
+                  .toList();
+              selectedItem = selectedItems.isNotEmpty
+                  ? selectedItems.last
+                  : null;
+              _isSelectingBox = false;
+              _selectionStart = _selectionCurrent = null;
+            });
+          },
+          onPanCancel: () {
+            if (!_isSelectingBox) return;
+            setState(() {
+              _isSelectingBox = false;
+              _selectionStart = _selectionCurrent = null;
+            });
+          },
+          child: Stack(
+            children: [
+              ColoredBox(
+                color: widget.canvasBgColour,
+                child: ClipRect(
+                  child: AnimatedBuilder(
+                    animation: _transformationController,
+                    builder: (context, _) => Transform(
+                      transform: _transformationController.value,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTapDown: (d) {
+                          final s = _globalToScene(d.globalPosition);
+                          if (widget.currentMode == MouseMode.draw) {
+                            // Draw mode restricted to admins
+                            if (!widget.isAdmin) return;
+                            // Ceiling spots can only be placed on the ceiling canvas (right panel)
+                            if (widget.selectedType ==
+                                FurnitureType.ceilingSpot)
+                              return;
+                            // Only allow placement inside the room
+                            if (_insideRoom(s)) _drawTapPos = s;
                             return;
                           }
-                        }
-                        setState(() {
-                          selectedItems.clear();
-                          selectedItem = null;
-                        });
-                      },
-                      onTapUp: (d) {
-                        if (widget.currentMode == MouseMode.draw &&
-                            _drawTapPos != null) {
-                          _pushUndo();
-                          setState(
-                            () => furnitureItems.add(
-                              _newItem(position: _drawTapPos!),
-                            ),
-                          );
+                          if (widget.currentMode != MouseMode.select) return;
+                          if (_onAnyHandle(s)) return;
+                          for (final item in furnitureItems.reversed) {
+                            // Ceiling spots are locked in the furniture canvas
+                            if (item.type == FurnitureType.ceilingSpot)
+                              continue;
+                            if (_inside(item, s)) {
+                              setState(() {
+                                if (HardwareKeyboard
+                                    .instance
+                                    .isControlPressed) {
+                                  selectedItems.contains(item)
+                                      ? selectedItems.remove(item)
+                                      : selectedItems.add(item);
+                                  selectedItem = item;
+                                } else if (selectedItems.contains(item)) {
+                                  selectedItem = item;
+                                } else {
+                                  selectedItems
+                                    ..clear()
+                                    ..add(item);
+                                  selectedItem = item;
+                                }
+                              });
+                              return;
+                            }
+                          }
+                          setState(() {
+                            selectedItems.clear();
+                            selectedItem = null;
+                          });
+                        },
+                        onTapUp: (d) {
+                          if (widget.currentMode == MouseMode.draw &&
+                              _drawTapPos != null) {
+                            _pushUndo();
+                            setState(
+                              () => furnitureItems.add(
+                                _newItem(position: _drawTapPos!),
+                              ),
+                            );
+                            _drawTapPos = null;
+                          }
+                        },
+                        onSecondaryTap: () {
+                          // Quick right-click on furniture = context menu.
+                          // The tool wheel (hold + drag) is handled by
+                          // _ToolWheelScope above this widget.
+                          if (selectedItem != null) {
+                            final RenderBox box =
+                                context.findRenderObject() as RenderBox;
+                            final pos = box.localToGlobal(
+                              Offset(
+                                selectedItem!.position.dx +
+                                    selectedItem!.size.width / 2,
+                                selectedItem!.position.dy +
+                                    selectedItem!.size.height / 2,
+                              ),
+                            );
+                            _showContextMenu(pos);
+                          }
+                        },
+                        onSecondaryTapDown: (d) {
+                          final s = _globalToScene(d.globalPosition);
+                          for (final item in furnitureItems.reversed) {
+                            if (_inside(item, s)) {
+                              setState(() {
+                                selectedItem = item;
+                                if (!selectedItems.contains(item))
+                                  selectedItems
+                                    ..clear()
+                                    ..add(item);
+                              });
+                              return;
+                            }
+                          }
+                        },
+                        onPanStart: (d) {
+                          if (_isTrackpadActive) return;
                           _drawTapPos = null;
-                        }
-                      },
-                      onSecondaryTap: () {
-                        // Quick right-click on furniture = context menu.
-                        // The tool wheel (hold + drag) is handled by
-                        // _ToolWheelScope above this widget.
-                        if (selectedItem != null) {
-                          final RenderBox box =
-                              context.findRenderObject() as RenderBox;
-                          final pos = box.localToGlobal(
-                            Offset(
+                          if (widget.currentMode == MouseMode.hand) {
+                            setState(() => _isPanningCanvas = true);
+                            _cursorAsset.value =
+                                'assets/cursors/grab_cursor.png';
+                            _dragStart = d.globalPosition;
+                            return;
+                          }
+                          final s = _globalToScene(d.globalPosition);
+                          // Rotate — admin only
+                          if (widget.isAdmin &&
+                              selectedItem != null &&
+                              _onRotate(selectedItem!, s)) {
+                            _pushUndo();
+                            setState(() => _isRotating = true);
+                            _isRotatingLive = true;
+                            _cursorAsset.value =
+                                'assets/cursors/rotate_cursor.png';
+                            return;
+                          }
+                          // Draw mode — no marquee, no drag on empty canvas
+                          if (widget.currentMode == MouseMode.draw) return;
+                          // Drag furniture — admin only
+                          if (widget.isAdmin) {
+                            for (final item in furnitureItems.reversed) {
+                              if (_inside(item, s)) {
+                                setState(() {
+                                  if (!selectedItems.contains(item)) {
+                                    if (!HardwareKeyboard
+                                        .instance
+                                        .isControlPressed)
+                                      selectedItems.clear();
+                                    selectedItems.add(item);
+                                  }
+                                  selectedItem = item;
+                                  _isDragging = true;
+                                });
+                                _isDraggingLive = true;
+                                _cursorAsset.value =
+                                    'assets/cursors/move_cursor.png';
+                                _dragStart = s;
+                                _pushUndo();
+                                _preDragPositions = {
+                                  for (final it in selectedItems)
+                                    it.id: it.position,
+                                };
+                                return;
+                              }
+                            }
+                          }
+                          // Select mode only — start marquee box
+                          if (widget.currentMode != MouseMode.select) return;
+                          setState(() {
+                            _isSelectingBox = true;
+                            _selectionStart = s;
+                            _selectionCurrent = s;
+                            selectedItems.clear();
+                            selectedItem = null;
+                          });
+                          _cursorAsset.value = 'assets/cursors/main_cursor.png';
+                        },
+                        onPanUpdate: (d) {
+                          if (_isTrackpadActive) return;
+                          final s = _globalToScene(d.globalPosition);
+                          _cursorPos.value =
+                              (context.findRenderObject() as RenderBox?)
+                                  ?.globalToLocal(d.globalPosition);
+                          if (_isSelectingBox && _selectionStart != null) {
+                            setState(() => _selectionCurrent = s);
+                            final localPos =
+                                (context.findRenderObject() as RenderBox?)
+                                    ?.globalToLocal(d.globalPosition);
+                            if (localPos != null) _updateCursor(s, localPos);
+                            return;
+                          }
+                          if (_isRotating && selectedItem != null) {
+                            final c = Offset(
                               selectedItem!.position.dx +
                                   selectedItem!.size.width / 2,
                               selectedItem!.position.dy +
                                   selectedItem!.size.height / 2,
-                            ),
-                          );
-                          _showContextMenu(pos);
-                        }
-                      },
-                      onSecondaryTapDown: (d) {
-                        final s = _globalToScene(d.globalPosition);
-                        for (final item in furnitureItems.reversed) {
-                          if (_inside(item, s)) {
-                            setState(() {
-                              selectedItem = item;
-                              if (!selectedItems.contains(item))
-                                selectedItems
-                                  ..clear()
-                                  ..add(item);
-                            });
+                            );
+                            setState(
+                              () => selectedItem!.rotation =
+                                  Math.atan2(s.dy - c.dy, s.dx - c.dx) + 1.5708,
+                            );
                             return;
                           }
-                        }
-                      },
-                      onPanStart: (d) {
-                        if (_isTrackpadActive) return;
-                        _drawTapPos = null;
-                        if (widget.currentMode == MouseMode.hand) {
-                          setState(() => _isPanningCanvas = true);
-                          _cursorAsset.value = 'assets/cursors/grab_cursor.png';
-                          _dragStart = d.globalPosition;
-                          return;
-                        }
-                        final s = _globalToScene(d.globalPosition);
-                        // Rotate — admin only
-                        if (widget.isAdmin &&
-                            selectedItem != null &&
-                            _onRotate(selectedItem!, s)) {
-                          _pushUndo();
-                          setState(() => _isRotating = true);
-                          _isRotatingLive = true;
-                          _cursorAsset.value =
-                              'assets/cursors/rotate_cursor.png';
-                          return;
-                        }
-                        // Draw mode — no marquee, no drag on empty canvas
-                        if (widget.currentMode == MouseMode.draw) return;
-                        // Drag furniture — admin only
-                        if (widget.isAdmin) {
-                          for (final item in furnitureItems.reversed) {
-                            if (_inside(item, s)) {
-                              setState(() {
-                                if (!selectedItems.contains(item)) {
-                                  if (!HardwareKeyboard
-                                      .instance
-                                      .isControlPressed)
-                                    selectedItems.clear();
-                                  selectedItems.add(item);
-                                }
-                                selectedItem = item;
-                                _isDragging = true;
-                              });
-                              _isDraggingLive = true;
-                              _cursorAsset.value =
-                                  'assets/cursors/move_cursor.png';
-                              _dragStart = s;
-                              _pushUndo();
-                              _preDragPositions = {
-                                for (final it in selectedItems)
-                                  it.id: it.position,
-                              };
-                              return;
-                            }
+                          if (_isResizing && selectedItem != null) {
+                            // Resize disabled — no-op
+                            return;
                           }
-                        }
-                        // Select mode only — start marquee box
-                        if (widget.currentMode != MouseMode.select) return;
-                        setState(() {
-                          _isSelectingBox = true;
-                          _selectionStart = s;
-                          _selectionCurrent = s;
-                          selectedItems.clear();
-                          selectedItem = null;
-                        });
-                        _cursorAsset.value = 'assets/cursors/main_cursor.png';
-                      },
-                      onPanUpdate: (d) {
-                        if (_isTrackpadActive) return;
-                        final s = _globalToScene(d.globalPosition);
-                        _cursorPos.value =
-                            (context.findRenderObject() as RenderBox?)
-                                ?.globalToLocal(d.globalPosition);
-                        if (_isSelectingBox && _selectionStart != null) {
-                          setState(() => _selectionCurrent = s);
-                          final localPos =
-                              (context.findRenderObject() as RenderBox?)
-                                  ?.globalToLocal(d.globalPosition);
-                          if (localPos != null) _updateCursor(s, localPos);
-                          return;
-                        }
-                        if (_isRotating && selectedItem != null) {
-                          final c = Offset(
-                            selectedItem!.position.dx +
-                                selectedItem!.size.width / 2,
-                            selectedItem!.position.dy +
-                                selectedItem!.size.height / 2,
-                          );
-                          setState(
-                            () => selectedItem!.rotation =
-                                Math.atan2(s.dy - c.dy, s.dx - c.dx) + 1.5708,
-                          );
-                          return;
-                        }
-                        if (_isResizing && selectedItem != null) {
-                          // Resize disabled — no-op
-                          return;
-                        }
-                        if (_isDragging &&
-                            selectedItems.isNotEmpty &&
-                            _dragStart != null) {
-                          final delta = s - _dragStart!;
-                          setState(() {
-                            for (final item in selectedItems) {
-                              final raw = item.position + delta;
-                              item.position = _constrainForZone(item, raw);
-                            }
-                          });
-                          _dragStart = s;
-                          return;
-                        }
-                        if (_isPanningCanvas) {
-                          _transformationController.value =
-                              _transformationController.value.clone()
-                                ..translate(d.delta.dx, d.delta.dy);
-                        }
-                      },
-                      onPanCancel: () {
-                        // Fired when gesture is cancelled (e.g. drag started
-                        // outside canvas bounds). Reset all interaction state
-                        // so cursor never gets stuck.
-                        setState(() {
-                          _isRotating = _isDragging = _isResizing =
-                              _isPanningCanvas = _isSelectingBox = false;
-                          _selectionStart = _selectionCurrent = null;
-                          _preDragPositions = {};
-                        });
-                        _isRotatingLive = _isResizingLive = _isDraggingLive =
-                            false;
-                        _dragStart = null;
-                        if (widget.currentMode == MouseMode.hand) {
-                          _cursorAsset.value =
-                              'assets/cursors/canvas_cursor.png';
-                        } else if (widget.currentMode == MouseMode.draw) {
-                          _cursorAsset.value = 'assets/cursors/add_cursor.png';
-                        } else {
-                          _cursorAsset.value = 'assets/cursors/main_cursor.png';
-                        }
-                      },
-                      onPanEnd: (_) {
-                        if (_isTrackpadActive) return;
-                        // Restore hand-mode cursor after releasing grab
-                        if (_isPanningCanvas) {
-                          _cursorAsset.value =
-                              'assets/cursors/canvas_cursor.png';
-                        }
-                        if (widget.currentMode == MouseMode.select &&
-                            _isSelectingBox &&
-                            _selectionStart != null &&
-                            _selectionCurrent != null) {
-                          final rect = Rect.fromPoints(
-                            _selectionStart!,
-                            _selectionCurrent!,
-                          );
-                          setState(() {
-                            selectedItems = furnitureItems
-                                .where(
-                                  (item) => rect.overlaps(
-                                    Rect.fromLTWH(
-                                      item.position.dx,
-                                      item.position.dy,
-                                      item.size.width,
-                                      item.size.height,
-                                    ),
-                                  ),
-                                )
-                                .toList();
-                            selectedItem = selectedItems.isNotEmpty
-                                ? selectedItems.last
-                                : null;
-                          });
-                        }
-                        if (selectedItems.isNotEmpty) {
-                          setState(() {
-                            for (final item in selectedItems) {
-                              item.position = _constrainForZone(
-                                item,
-                                _snapOffset(item.position),
-                              );
-                              // Only snap the size when the user was actively
-                              // resizing — dragging must NEVER alter the size.
-                              if (_isResizing) {
-                                item.size = Size(
-                                  _snap(item.size.width).clamp(40.0, 800.0),
-                                  _snap(item.size.height).clamp(40.0, 800.0),
-                                );
-                              }
-                            }
-                            // Overlap check: if any dragged item overlaps a
-                            // non-dragged item, revert ALL dragged items to
-                            // their pre-drag positions.
-                            if (_isDragging && _preDragPositions.isNotEmpty) {
-                              final draggedIds = selectedItems
-                                  .map((i) => i.id)
-                                  .toSet();
-                              bool hasOverlap = false;
+                          if (_isDragging &&
+                              selectedItems.isNotEmpty &&
+                              _dragStart != null) {
+                            final delta = s - _dragStart!;
+                            setState(() {
                               for (final item in selectedItems) {
-                                // onFurniture lights (table lamps) intentionally
-                                // sit ON furniture — always overlap their host.
-                                // Exclude them from the overlap revert check.
-                                if (item.type.isLight &&
-                                    item.type.lightZone ==
-                                        LightZone.onFurniture) {
-                                  continue;
-                                }
-                                final r = Rect.fromLTWH(
-                                  item.position.dx,
-                                  item.position.dy,
-                                  item.size.width,
-                                  item.size.height,
-                                );
-                                for (final other in furnitureItems) {
-                                  if (draggedIds.contains(other.id)) continue;
-                                  // Also skip furniture that this light sits on
-                                  if (other.type.isLight) continue;
-                                  final or2 = Rect.fromLTWH(
-                                    other.position.dx,
-                                    other.position.dy,
-                                    other.size.width,
-                                    other.size.height,
-                                  );
-                                  if (r.overlaps(or2)) {
-                                    hasOverlap = true;
-                                    break;
-                                  }
-                                }
-                                if (hasOverlap) break;
+                                final raw = item.position + delta;
+                                item.position = _constrainForZone(item, raw);
                               }
-                              if (hasOverlap) {
-                                for (final item in selectedItems) {
-                                  final orig = _preDragPositions[item.id];
-                                  if (orig != null) item.position = orig;
-                                }
-                                // Drag was cancelled — discard the undo snapshot
-                                if (_undoStack.isNotEmpty) {
-                                  _undoStack.removeLast();
-                                  widget.onUndoStateChanged?.call();
-                                }
-                              }
-                            }
+                            });
+                            _dragStart = s;
+                            return;
+                          }
+                          if (_isPanningCanvas) {
+                            _transformationController.value =
+                                _transformationController.value.clone()
+                                  ..translate(d.delta.dx, d.delta.dy);
+                          }
+                        },
+                        onPanCancel: () {
+                          // Fired when gesture is cancelled (e.g. drag started
+                          // outside canvas bounds). Reset all interaction state
+                          // so cursor never gets stuck.
+                          setState(() {
+                            _isRotating = _isDragging = _isResizing =
+                                _isPanningCanvas = _isSelectingBox = false;
+                            _selectionStart = _selectionCurrent = null;
                             _preDragPositions = {};
                           });
-                          _save();
-                        }
+                          _isRotatingLive = _isResizingLive = _isDraggingLive =
+                              false;
+                          _dragStart = null;
+                          if (widget.currentMode == MouseMode.hand) {
+                            _cursorAsset.value =
+                                'assets/cursors/canvas_cursor.png';
+                          } else if (widget.currentMode == MouseMode.draw) {
+                            _cursorAsset.value =
+                                'assets/cursors/add_cursor.png';
+                          } else {
+                            _cursorAsset.value =
+                                'assets/cursors/main_cursor.png';
+                          }
+                        },
+                        onPanEnd: (_) {
+                          if (_isTrackpadActive) return;
+                          // Restore hand-mode cursor after releasing grab
+                          if (_isPanningCanvas) {
+                            _cursorAsset.value =
+                                'assets/cursors/canvas_cursor.png';
+                          }
+                          if (widget.currentMode == MouseMode.select &&
+                              _isSelectingBox &&
+                              _selectionStart != null &&
+                              _selectionCurrent != null) {
+                            final rect = Rect.fromPoints(
+                              _selectionStart!,
+                              _selectionCurrent!,
+                            );
+                            setState(() {
+                              selectedItems = furnitureItems
+                                  .where(
+                                    (item) => rect.overlaps(
+                                      Rect.fromLTWH(
+                                        item.position.dx,
+                                        item.position.dy,
+                                        item.size.width,
+                                        item.size.height,
+                                      ),
+                                    ),
+                                  )
+                                  .toList();
+                              selectedItem = selectedItems.isNotEmpty
+                                  ? selectedItems.last
+                                  : null;
+                            });
+                          }
+                          if (selectedItems.isNotEmpty) {
+                            setState(() {
+                              for (final item in selectedItems) {
+                                item.position = _constrainForZone(
+                                  item,
+                                  _snapOffset(item.position),
+                                );
+                                // Only snap the size when the user was actively
+                                // resizing — dragging must NEVER alter the size.
+                                if (_isResizing) {
+                                  item.size = Size(
+                                    _snap(item.size.width).clamp(40.0, 800.0),
+                                    _snap(item.size.height).clamp(40.0, 800.0),
+                                  );
+                                }
+                              }
+                              // Overlap check: if any dragged item overlaps a
+                              // non-dragged item, revert ALL dragged items to
+                              // their pre-drag positions.
+                              if (_isDragging && _preDragPositions.isNotEmpty) {
+                                final draggedIds = selectedItems
+                                    .map((i) => i.id)
+                                    .toSet();
+                                bool hasOverlap = false;
+                                for (final item in selectedItems) {
+                                  // onFurniture lights (table lamps) intentionally
+                                  // sit ON furniture — always overlap their host.
+                                  // Exclude them from the overlap revert check.
+                                  if (item.type.isLight &&
+                                      item.type.lightZone ==
+                                          LightZone.onFurniture) {
+                                    continue;
+                                  }
+                                  final r = Rect.fromLTWH(
+                                    item.position.dx,
+                                    item.position.dy,
+                                    item.size.width,
+                                    item.size.height,
+                                  );
+                                  for (final other in furnitureItems) {
+                                    if (draggedIds.contains(other.id)) continue;
+                                    // Also skip furniture that this light sits on
+                                    if (other.type.isLight) continue;
+                                    final or2 = Rect.fromLTWH(
+                                      other.position.dx,
+                                      other.position.dy,
+                                      other.size.width,
+                                      other.size.height,
+                                    );
+                                    if (r.overlaps(or2)) {
+                                      hasOverlap = true;
+                                      break;
+                                    }
+                                  }
+                                  if (hasOverlap) break;
+                                }
+                                if (hasOverlap) {
+                                  for (final item in selectedItems) {
+                                    final orig = _preDragPositions[item.id];
+                                    if (orig != null) item.position = orig;
+                                  }
+                                  // Drag was cancelled — discard the undo snapshot
+                                  if (_undoStack.isNotEmpty) {
+                                    _undoStack.removeLast();
+                                    widget.onUndoStateChanged?.call();
+                                  }
+                                }
+                              }
+                              _preDragPositions = {};
+                            });
+                            _save();
+                          }
 
-                        setState(() {
-                          _isRotating = _isDragging = _isResizing =
-                              _isPanningCanvas = _isSelectingBox = false;
-                          _selectionStart = _selectionCurrent = null;
-                        });
-                        _isRotatingLive = _isResizingLive = _isDraggingLive =
-                            false;
-                        _dragStart = null;
-                        // Restore the correct idle cursor for the active mode
-                        if (widget.currentMode == MouseMode.hand) {
-                          _cursorAsset.value =
-                              'assets/cursors/canvas_cursor.png';
-                        } else if (widget.currentMode == MouseMode.draw) {
-                          _cursorAsset.value = 'assets/cursors/add_cursor.png';
-                        } else {
-                          _cursorAsset.value = 'assets/cursors/main_cursor.png';
-                        }
-                      },
-                      child: SizedBox(
-                        width: _canvasW,
-                        height: _canvasH,
-                        child: RepaintBoundary(
-                          child: Stack(
-                            children: [
-                              CustomPaint(
-                                painter: RoomPainter(
-                                  // Ceiling spots are NEVER shown on the
-                                  // furniture canvas — only in CeilingPainter.
-                                  furnitureItems: furnitureItems
-                                      .where(
-                                        (i) =>
-                                            i.type != FurnitureType.ceilingSpot,
-                                      )
-                                      .toList(),
-                                  selectedItems: selectedItems,
-                                  roomWidth: widget.roomWidthPx,
-                                  roomDepth: widget.roomDepthPx,
-                                  canvasW: _canvasW,
-                                  canvasH: _canvasH,
-                                  canvasBgColour: widget.canvasBgColour,
-                                  roomFloorColour: widget.roomFloorColour,
-                                  roomWallColour: widget.roomWallColour,
-                                  thumbnails: widget.thumbnails,
-                                  showCeilingLayer: widget.showCeilingLayer,
-                                  roomShape: widget.roomShape,
-                                  customShapePoints: widget.customShapePoints,
-                                ),
-                                size: const Size(_canvasW, _canvasH),
-                              ),
-                              if (_isSelectingBox &&
-                                  _selectionStart != null &&
-                                  _selectionCurrent != null)
+                          setState(() {
+                            _isRotating = _isDragging = _isResizing =
+                                _isPanningCanvas = _isSelectingBox = false;
+                            _selectionStart = _selectionCurrent = null;
+                          });
+                          _isRotatingLive = _isResizingLive = _isDraggingLive =
+                              false;
+                          _dragStart = null;
+                          // Restore the correct idle cursor for the active mode
+                          if (widget.currentMode == MouseMode.hand) {
+                            _cursorAsset.value =
+                                'assets/cursors/canvas_cursor.png';
+                          } else if (widget.currentMode == MouseMode.draw) {
+                            _cursorAsset.value =
+                                'assets/cursors/add_cursor.png';
+                          } else {
+                            _cursorAsset.value =
+                                'assets/cursors/main_cursor.png';
+                          }
+                        },
+                        child: SizedBox(
+                          width: _canvasW,
+                          height: _canvasH,
+                          child: RepaintBoundary(
+                            child: Stack(
+                              children: [
                                 CustomPaint(
-                                  painter: MarqueePainter(
-                                    _selectionStart!,
-                                    _selectionCurrent!,
+                                  painter: RoomPainter(
+                                    // Ceiling spots are NEVER shown on the
+                                    // furniture canvas — only in CeilingPainter.
+                                    furnitureItems: furnitureItems
+                                        .where(
+                                          (i) =>
+                                              i.type !=
+                                              FurnitureType.ceilingSpot,
+                                        )
+                                        .toList(),
+                                    selectedItems: selectedItems,
+                                    roomWidth: widget.roomWidthPx,
+                                    roomDepth: widget.roomDepthPx,
+                                    canvasW: _canvasW,
+                                    canvasH: _canvasH,
+                                    canvasBgColour: widget.canvasBgColour,
+                                    roomFloorColour: widget.roomFloorColour,
+                                    roomWallColour: widget.roomWallColour,
+                                    thumbnails: widget.thumbnails,
+                                    showCeilingLayer: widget.showCeilingLayer,
+                                    roomShape: widget.roomShape,
+                                    customShapePoints: widget.customShapePoints,
                                   ),
                                   size: const Size(_canvasW, _canvasH),
                                 ),
-                            ],
+                                if (_isSelectingBox &&
+                                    _selectionStart != null &&
+                                    _selectionCurrent != null)
+                                  CustomPaint(
+                                    painter: MarqueePainter(
+                                      _selectionStart!,
+                                      _selectionCurrent!,
+                                    ),
+                                    size: const Size(_canvasW, _canvasH),
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -1502,91 +1616,92 @@ class RoomCanvasState extends State<RoomCanvas> {
                   ),
                 ),
               ),
-            ),
-            // ── Hover tooltip overlay ───────────────────────────────
-            ValueListenableBuilder<FurnitureModel?>(
-              valueListenable: _hoveredItem,
-              builder: (_, hovered, __) {
-                if (hovered == null) return const SizedBox.shrink();
-                final matrix = _transformationController.value;
-                final scale = matrix.getMaxScaleOnAxis();
-                final tx = matrix.storage[12];
-                final ty = matrix.storage[13];
-                final cx =
-                    (hovered.position.dx + hovered.size.width / 2) * scale + tx;
-                final cy =
-                    (hovered.position.dy + hovered.size.height / 2) * scale +
-                    ty;
-                return Positioned(
-                  left: cx - 60,
-                  top: (cy - hovered.size.height / 2 * scale - 30).clamp(
-                    4.0,
-                    double.infinity,
-                  ),
-                  child: IgnorePointer(
-                    child: Container(
-                      constraints: const BoxConstraints(maxWidth: 120),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1A1A2E).withOpacity(0.92),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: const Color(0xFF6366F1).withOpacity(0.5),
+              // ── Hover tooltip overlay ───────────────────────────────
+              ValueListenableBuilder<FurnitureModel?>(
+                valueListenable: _hoveredItem,
+                builder: (_, hovered, __) {
+                  if (hovered == null) return const SizedBox.shrink();
+                  final matrix = _transformationController.value;
+                  final scale = matrix.getMaxScaleOnAxis();
+                  final tx = matrix.storage[12];
+                  final ty = matrix.storage[13];
+                  final cx =
+                      (hovered.position.dx + hovered.size.width / 2) * scale +
+                      tx;
+                  final cy =
+                      (hovered.position.dy + hovered.size.height / 2) * scale +
+                      ty;
+                  return Positioned(
+                    left: cx - 60,
+                    top: (cy - hovered.size.height / 2 * scale - 30).clamp(
+                      4.0,
+                      double.infinity,
+                    ),
+                    child: IgnorePointer(
+                      child: Container(
+                        constraints: const BoxConstraints(maxWidth: 120),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
                         ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.4),
-                            blurRadius: 6,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1A1A2E).withOpacity(0.92),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: const Color(0xFF6366F1).withOpacity(0.5),
                           ),
-                        ],
-                      ),
-                      child: Text(
-                        _furnitureLabel(hovered),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          decoration: TextDecoration.none,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.4),
+                              blurRadius: 6,
+                            ),
+                          ],
+                        ),
+                        child: Text(
+                          _furnitureLabel(hovered),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            decoration: TextDecoration.none,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                );
-              },
-            ),
-            // Cursor overlay
-            ValueListenableBuilder<Offset?>(
-              valueListenable: _cursorPos,
-              builder: (_, pos, __) {
-                if (pos == null) return const SizedBox.shrink();
-                return ValueListenableBuilder<String?>(
-                  valueListenable: _cursorAsset,
-                  builder: (_, asset, __) {
-                    if (asset == null) return const SizedBox.shrink();
-                    return Positioned(
-                      left: pos.dx - _cursorHotspot(asset).dx,
-                      top: pos.dy - _cursorHotspot(asset).dy,
-                      width: _cursorSize,
-                      height: _cursorSize,
-                      child: IgnorePointer(
-                        child: Image.asset(
-                          asset,
-                          width: _cursorSize,
-                          height: _cursorSize,
-                          fit: BoxFit.contain,
+                  );
+                },
+              ),
+              // Cursor overlay
+              ValueListenableBuilder<Offset?>(
+                valueListenable: _cursorPos,
+                builder: (_, pos, __) {
+                  if (pos == null) return const SizedBox.shrink();
+                  return ValueListenableBuilder<String?>(
+                    valueListenable: _cursorAsset,
+                    builder: (_, asset, __) {
+                      if (asset == null) return const SizedBox.shrink();
+                      return Positioned(
+                        left: pos.dx - _cursorHotspot(asset).dx,
+                        top: pos.dy - _cursorHotspot(asset).dy,
+                        width: _cursorSize,
+                        height: _cursorSize,
+                        child: IgnorePointer(
+                          child: Image.asset(
+                            asset,
+                            width: _cursorSize,
+                            height: _cursorSize,
+                            fit: BoxFit.contain,
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-          ],
-        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ],
+          ),
+        ), // GestureDetector (outer — covers full viewport for marquee)
       ),
     );
   }

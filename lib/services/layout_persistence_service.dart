@@ -30,9 +30,10 @@ class LayoutPersistenceService {
       'user:$userId:project:$projectId:roomShape';
 
   /// Stores the last-used {width, height, scaleFactor} per furniture type name.
-  /// Key example: user:u1:project:p1:typeSizes
-  static String _typeSizeKey(String userId, String projectId) =>
-      'user:$userId:project:$projectId:typeSizes';
+  /// Global key — shared across ALL users and ALL projects so that a resize
+  /// done in one project is automatically applied when the same furniture type
+  /// is placed in any other project.
+  static const String _typeSizeKey = 'global:typeSizes';
 
   // ── Project list ──────────────────────────────────────────────────────────
 
@@ -82,7 +83,7 @@ class LayoutPersistenceService {
     await prefs.remove(_depthKey(userId, projectId));
     await prefs.remove(_schemeKey(userId, projectId));
     await prefs.remove(_canvasBgKey(userId, projectId));
-    await prefs.remove(_typeSizeKey(userId, projectId));
+    await prefs.remove(_typeSizeKey);
     await prefs.remove(_shapeKey(userId, projectId));
     // Remove from every user's shared list by scanning all keys
     final allKeys = prefs.getKeys();
@@ -176,25 +177,17 @@ class LayoutPersistenceService {
 
   /// Saves the last-used size + scaleFactor per furniture type.
   /// [prefs] maps type name → {'w': double, 'h': double, 'sf': double}
-  Future<void> saveTypeSizes(
-    String userId,
-    String projectId,
-    Map<String, Map<String, double>> prefs,
-  ) async {
+  /// Stored under a single global key so all projects and users share it.
+  Future<void> saveTypeSizes(Map<String, Map<String, double>> prefs) async {
     final sharedPrefs = await SharedPreferences.getInstance();
-    await sharedPrefs.setString(
-      _typeSizeKey(userId, projectId),
-      jsonEncode(prefs),
-    );
+    await sharedPrefs.setString(_typeSizeKey, jsonEncode(prefs));
   }
 
   /// Loads the type size prefs. Returns an empty map if nothing saved yet.
-  Future<Map<String, Map<String, double>>> loadTypeSizes(
-    String userId,
-    String projectId,
-  ) async {
+  /// Global — not scoped to any project or user.
+  Future<Map<String, Map<String, double>>> loadTypeSizes() async {
     final sharedPrefs = await SharedPreferences.getInstance();
-    final raw = sharedPrefs.getString(_typeSizeKey(userId, projectId));
+    final raw = sharedPrefs.getString(_typeSizeKey);
     if (raw == null || raw.isEmpty) return {};
     try {
       final decoded = jsonDecode(raw) as Map<String, dynamic>;

@@ -112,6 +112,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
 
   double _roomWidthM = 6.0;
   double _roomDepthM = 5.0;
+  double _wallHeightM = 3.2; // 3D wall height — passed to 3D viewer
   static const double _minRoomM = 3.0;
   static const double _maxRoomM = 50.0;
   static const double _mPerPx = 100.0;
@@ -198,6 +199,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
           furniture: List.from(items),
           roomWidth: _roomWidthPx,
           roomDepth: _roomDepthPx,
+          wallHeightM: _wallHeightM,
           roomShape: _roomShape.name,
           customShapePoints: _customShapePoints
               ?.map((p) => {'x': p.dx, 'y': p.dy})
@@ -254,11 +256,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
 
             // Save both layout AND type size prefs to disk
             _saveLayout();
-            LayoutPersistenceService.instance.saveTypeSizes(
-              widget.userId,
-              widget.projectId,
-              _typeSizePrefs,
-            );
+            LayoutPersistenceService.instance.saveTypeSizes(_typeSizePrefs);
           },
           onNaturalSizeDetected: (String id, double widthPx, double depthPx) {
             _canvasKey.currentState?.updateItemNaturalSize(
@@ -360,10 +358,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
       projectId: widget.projectId,
     );
     // Load global type size preferences (shared across all projects and users)
-    final sizePrefs = await LayoutPersistenceService.instance.loadTypeSizes(
-      widget.userId,
-      widget.projectId,
-    );
+    final sizePrefs = await LayoutPersistenceService.instance.loadTypeSizes();
     if (sizePrefs.isNotEmpty) {
       setState(() => _typeSizePrefs = sizePrefs);
     }
@@ -419,7 +414,6 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
         ),
       );
     }
-    // Flash "Saved ✓" indicator — triggered on every save regardless of source
     if (mounted) {
       _savedNotifier.value = true;
       Future.delayed(const Duration(seconds: 2), () {
@@ -537,7 +531,6 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             tooltip: 'Realistic 3D View',
             onPressed: _openRealistic3D,
           ),
-          // Saved ✓ indicator — appears briefly after every save
           ValueListenableBuilder<bool>(
             valueListenable: _savedNotifier,
             builder: (_, saved, __) => AnimatedOpacity(
@@ -585,13 +578,6 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
               tooltip: 'Toggle resize snap',
               onPressed: _toggleResizeSnap,
             ),
-            IconButton(
-              icon: const Icon(Icons.save),
-              tooltip: 'Export to JSON',
-              onPressed: () {
-                debugPrint(_canvasKey.currentState?.exportToJson());
-              },
-            ),
           ],
         ],
       ),
@@ -637,6 +623,11 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                     },
                     onDepthChanged: (v) {
                       setState(() => _roomDepthM = v);
+                      _saveLayout();
+                    },
+                    wallHeightM: _wallHeightM,
+                    onWallHeightChanged: (v) {
+                      setState(() => _wallHeightM = v);
                       _saveLayout();
                     },
                     onRealistic3D: _openRealistic3D,
@@ -1089,6 +1080,8 @@ class _LeftPanel extends StatefulWidget {
   final ValueChanged<String> onCustomItemSelected;
   final double roomWidthM, roomDepthM, minRoomM, maxRoomM;
   final ValueChanged<double> onWidthChanged, onDepthChanged;
+  final double wallHeightM;
+  final ValueChanged<double> onWallHeightChanged;
   final VoidCallback onRealistic3D;
   final bool showCeilingLayer;
   final VoidCallback onCeilingLayerToggle;
@@ -1108,6 +1101,8 @@ class _LeftPanel extends StatefulWidget {
     required this.maxRoomM,
     required this.onWidthChanged,
     required this.onDepthChanged,
+    this.wallHeightM = 3.2,
+    required this.onWallHeightChanged,
     required this.onRealistic3D,
     required this.showCeilingLayer,
     required this.onCeilingLayerToggle,
@@ -1343,6 +1338,13 @@ class _LeftPanelState extends State<_LeftPanel> {
                         min: widget.minRoomM,
                         max: widget.maxRoomM,
                         onChanged: widget.onDepthChanged,
+                      ),
+                      _RoomSlider(
+                        label: 'Wall H',
+                        value: widget.wallHeightM,
+                        min: 2.0,
+                        max: 10.0,
+                        onChanged: widget.onWallHeightChanged,
                       ),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(12, 2, 12, 10),
