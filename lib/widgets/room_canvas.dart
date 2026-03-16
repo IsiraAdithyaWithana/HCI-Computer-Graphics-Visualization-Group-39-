@@ -533,11 +533,11 @@ class RoomCanvasState extends State<RoomCanvas> {
   // ── Context menu ──────────────────────────────────────────────────────────
   void _showContextMenu(Offset globalPos) async {
     if (selectedItem == null) return;
+    // Only show context menu for admins — users are in read-only view mode
+    if (!widget.isAdmin) return;
     final items = <PopupMenuEntry<String>>[
-      if (widget.isAdmin)
-        const PopupMenuItem(value: 'delete', child: Text('Delete')),
-      if (widget.isAdmin)
-        const PopupMenuItem(value: 'duplicate', child: Text('Duplicate')),
+      const PopupMenuItem(value: 'delete', child: Text('Delete')),
+      const PopupMenuItem(value: 'duplicate', child: Text('Duplicate')),
       const PopupMenuItem(value: 'rotate', child: Text('Rotate 90°')),
     ];
     if (items.isEmpty) return;
@@ -1074,7 +1074,6 @@ class RoomCanvasState extends State<RoomCanvas> {
                             ),
                           );
                           _drawTapPos = null;
-                          _save(); // persist new item immediately
                         }
                       },
                       onSecondaryTap: () {

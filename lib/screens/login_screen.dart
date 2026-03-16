@@ -65,7 +65,7 @@ class _LoginScreenState extends State<LoginScreen>
       _loading = true;
       _error = null;
     });
-    await Future.delayed(const Duration(milliseconds: 900));
+    await Future.delayed(const Duration(milliseconds: 600));
     if (!mounted) return;
     setState(() => _loading = false);
 
@@ -83,40 +83,405 @@ class _LoginScreenState extends State<LoginScreen>
     final email = _emailCtrl.text.trim().toLowerCase();
     final password = _passwordCtrl.text;
 
-    // Credential validation
-    const adminEmail = 'admin@gmail.com';
-    const adminPass = 'admin123';
-    const userEmail = 'user@gmail.com';
-    const userPass = 'user123';
-
-    if (email == adminEmail && password == adminPass) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) =>
-              const DashboardScreen(userId: adminEmail, isAdmin: true),
-        ),
-      );
-    } else if (email == userEmail && password == userPass) {
-      await LayoutPersistenceService.registerUser(email);
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => DashboardScreen(userId: email, isAdmin: false),
-        ),
-      );
-    } else if (email.isNotEmpty) {
-      // Any other email treated as normal user
-      await LayoutPersistenceService.registerUser(email);
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => DashboardScreen(userId: email, isAdmin: false),
-        ),
-      );
-    } else {
+    if (email.isEmpty) {
       setState(() => _error = 'Please enter your email address.');
+      return;
     }
+    if (password.isEmpty) {
+      setState(() => _error = 'Please enter your password.');
+      return;
+    }
+
+    // Verify credentials (admin hardcoded, users from storage)
+    final ok = await LayoutPersistenceService.verifyPassword(email, password);
+    if (!ok) {
+      // Check if account exists at all — give a better error message
+      final exists = await LayoutPersistenceService.accountExists(email);
+      setState(
+        () => _error = exists
+            ? 'Incorrect password. Please try again.'
+            : 'No account found. Tap "Create one" to register.',
+      );
+      return;
+    }
+
+    final isAdmin = email == 'admin@gmail.com';
+    if (!isAdmin) await LayoutPersistenceService.registerUser(email);
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DashboardScreen(userId: email, isAdmin: isAdmin),
+      ),
+    );
+  }
+
+  // ── Create account dialog ─────────────────────────────────────────────────
+  void _showCreateAccount() {
+    final emailC = TextEditingController();
+    final passC = TextEditingController();
+    final pass2C = TextEditingController();
+    bool obscure1 = true, obscure2 = true;
+    String? err;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) {
+          return AlertDialog(
+            backgroundColor: AppTheme.lightBg,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: const Text(
+              'Create Account',
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 18,
+                color: AppTheme.lightText,
+              ),
+            ),
+            content: SizedBox(
+              width: 340,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (err != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppTheme.error.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: AppTheme.error.withOpacity(0.3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.error_outline,
+                            size: 14,
+                            color: AppTheme.error,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              err!,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppTheme.error,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+                  _FormLabel('Email address'),
+                  const SizedBox(height: 6),
+                  _LightTextField(
+                    controller: emailC,
+                    hint: 'you@example.com',
+                    icon: Icons.mail_outline_rounded,
+                  ),
+                  const SizedBox(height: 14),
+                  _FormLabel('Password'),
+                  const SizedBox(height: 6),
+                  _LightTextField(
+                    controller: passC,
+                    hint: '••••••••',
+                    icon: Icons.lock_outline_rounded,
+                    obscure: obscure1,
+                    suffixIcon: IconButton(
+                      onPressed: () => setS(() => obscure1 = !obscure1),
+                      icon: Icon(
+                        obscure1
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        size: 18,
+                        color: AppTheme.lightMuted,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  _FormLabel('Confirm password'),
+                  const SizedBox(height: 6),
+                  _LightTextField(
+                    controller: pass2C,
+                    hint: '••••••••',
+                    icon: Icons.lock_outline_rounded,
+                    obscure: obscure2,
+                    suffixIcon: IconButton(
+                      onPressed: () => setS(() => obscure2 = !obscure2),
+                      icon: Icon(
+                        obscure2
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        size: 18,
+                        color: AppTheme.lightMuted,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(
+                  'Cancel',
+                  style: TextStyle(color: AppTheme.lightMuted, fontSize: 13),
+                ),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.bgDark,
+                  foregroundColor: AppTheme.accent,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                onPressed: () async {
+                  final email = emailC.text.trim().toLowerCase();
+                  final pass = passC.text;
+                  final pass2 = pass2C.text;
+                  if (email.isEmpty) {
+                    setS(() => err = 'Please enter an email address.');
+                    return;
+                  }
+                  if (!email.contains('@') || !email.contains('.')) {
+                    setS(() => err = 'Please enter a valid email address.');
+                    return;
+                  }
+                  if (pass.length < 6) {
+                    setS(() => err = 'Password must be at least 6 characters.');
+                    return;
+                  }
+                  if (pass != pass2) {
+                    setS(() => err = 'Passwords do not match.');
+                    return;
+                  }
+                  final error = await LayoutPersistenceService.createAccount(
+                    email,
+                    pass,
+                  );
+                  if (error != null) {
+                    setS(() => err = error);
+                    return;
+                  }
+                  // Close dialog then go straight to dashboard — no need to log in again
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (!mounted) return;
+                  await LayoutPersistenceService.registerUser(email);
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          DashboardScreen(userId: email, isAdmin: false),
+                    ),
+                  );
+                },
+                child: const Text(
+                  'Create Account',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  // ── Forgot password dialog ────────────────────────────────────────────────
+  void _showForgotPassword() {
+    final emailC = TextEditingController(text: _emailCtrl.text.trim());
+    final passC = TextEditingController();
+    final pass2C = TextEditingController();
+    bool obscure1 = true, obscure2 = true;
+    String? err;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) {
+          return AlertDialog(
+            backgroundColor: AppTheme.lightBg,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            title: const Text(
+              'Reset Password',
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 18,
+                color: AppTheme.lightText,
+              ),
+            ),
+            content: SizedBox(
+              width: 340,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Enter your email and a new password.',
+                    style: TextStyle(fontSize: 13, color: AppTheme.lightMuted),
+                  ),
+                  const SizedBox(height: 16),
+                  if (err != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppTheme.error.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: AppTheme.error.withOpacity(0.3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.error_outline,
+                            size: 14,
+                            color: AppTheme.error,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              err!,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppTheme.error,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+                  _FormLabel('Email address'),
+                  const SizedBox(height: 6),
+                  _LightTextField(
+                    controller: emailC,
+                    hint: 'you@example.com',
+                    icon: Icons.mail_outline_rounded,
+                  ),
+                  const SizedBox(height: 14),
+                  _FormLabel('New password'),
+                  const SizedBox(height: 6),
+                  _LightTextField(
+                    controller: passC,
+                    hint: '••••••••',
+                    icon: Icons.lock_outline_rounded,
+                    obscure: obscure1,
+                    suffixIcon: IconButton(
+                      onPressed: () => setS(() => obscure1 = !obscure1),
+                      icon: Icon(
+                        obscure1
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        size: 18,
+                        color: AppTheme.lightMuted,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  _FormLabel('Confirm new password'),
+                  const SizedBox(height: 6),
+                  _LightTextField(
+                    controller: pass2C,
+                    hint: '••••••••',
+                    icon: Icons.lock_outline_rounded,
+                    obscure: obscure2,
+                    suffixIcon: IconButton(
+                      onPressed: () => setS(() => obscure2 = !obscure2),
+                      icon: Icon(
+                        obscure2
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        size: 18,
+                        color: AppTheme.lightMuted,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text(
+                  'Cancel',
+                  style: TextStyle(color: AppTheme.lightMuted, fontSize: 13),
+                ),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.bgDark,
+                  foregroundColor: AppTheme.accent,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                onPressed: () async {
+                  final email = emailC.text.trim().toLowerCase();
+                  final pass = passC.text;
+                  final pass2 = pass2C.text;
+                  if (email.isEmpty) {
+                    setS(() => err = 'Please enter your email address.');
+                    return;
+                  }
+                  if (pass.length < 6) {
+                    setS(() => err = 'Password must be at least 6 characters.');
+                    return;
+                  }
+                  if (pass != pass2) {
+                    setS(() => err = 'Passwords do not match.');
+                    return;
+                  }
+                  final error = await LayoutPersistenceService.resetPassword(
+                    email,
+                    pass,
+                  );
+                  if (error != null) {
+                    setS(() => err = error);
+                    return;
+                  }
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: const Text(
+                        'Password reset successfully. Please sign in.',
+                      ),
+                      backgroundColor: const Color(0xFF4CAF50),
+                      behavior: SnackBarBehavior.floating,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  );
+                },
+                child: const Text(
+                  'Reset Password',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -231,7 +596,7 @@ class _LoginScreenState extends State<LoginScreen>
             child: Padding(
               padding: const EdgeInsets.only(top: 8),
               child: TextButton(
-                onPressed: () {},
+                onPressed: _showForgotPassword,
                 style: TextButton.styleFrom(
                   padding: EdgeInsets.zero,
                   minimumSize: Size.zero,
@@ -368,7 +733,7 @@ class _LoginScreenState extends State<LoginScreen>
               ),
               const SizedBox(width: 4),
               TextButton(
-                onPressed: () {},
+                onPressed: _showCreateAccount,
                 style: TextButton.styleFrom(
                   padding: EdgeInsets.zero,
                   minimumSize: Size.zero,

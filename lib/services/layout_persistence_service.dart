@@ -221,31 +221,8 @@ class LayoutPersistenceService {
     final raw = prefs.getString(_sharedProjectsKey(userId));
     if (raw == null || raw.isEmpty) return [];
     try {
-      final list = (jsonDecode(raw) as List).cast<Map<String, dynamic>>();
-
-      // Auto-clean: remove entries whose owner project no longer exists.
-      // This handles the case where admin deletes a project that was shared
-      // but the user's dashboard was open and missed the deletion event.
-      final cleaned = <Map<String, dynamic>>[];
-      bool didClean = false;
-      for (final entry in list) {
-        final ownerUserId = entry['ownerUserId'] as String?;
-        final projectId = entry['projectId'] as String?;
-        if (ownerUserId == null || projectId == null) continue;
-        // Check if the project still exists in the owner's project list
-        final ownerProjects = await loadProjects(ownerUserId);
-        final stillExists = ownerProjects.any((p) => p.id == projectId);
-        if (stillExists) {
-          cleaned.add(entry);
-        } else {
-          didClean = true;
-        }
-      }
-      // Persist cleaned list so future loads are fast
-      if (didClean) {
-        await prefs.setString(_sharedProjectsKey(userId), jsonEncode(cleaned));
-      }
-      return cleaned;
+      final list = jsonDecode(raw) as List;
+      return list.cast<Map<String, dynamic>>();
     } catch (_) {
       return [];
     }
@@ -327,6 +304,75 @@ class LayoutPersistenceService {
     } catch (_) {
       return [];
     }
+  }
+
+  // ── User credentials (email + password) ──────────────────────────────────
+  // Stored as: global:credentials → { email: password, ... }
+  // Admin credentials are hardcoded and cannot be changed via this method.
+
+  static const String _credentialsKey = 'global:credentials';
+
+  static Future<Map<String, String>> _loadCredentials() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_credentialsKey);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      return (jsonDecode(raw) as Map<String, dynamic>).map(
+        (k, v) => MapEntry(k, v as String),
+      );
+    } catch (_) {
+      return {};
+    }
+  }
+
+  static Future<void> _saveCredentials(Map<String, String> map) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_credentialsKey, jsonEncode(map));
+  }
+
+  /// Register a new user with email + password.
+  /// Returns null on success, or an error message string on failure.
+  static Future<String?> createAccount(String email, String password) async {
+    final e = email.trim().toLowerCase();
+    // Block the hardcoded admin slot
+    if (e == 'admin@gmail.com') return 'That email is reserved.';
+    final creds = await _loadCredentials();
+    if (creds.containsKey(e))
+      return 'An account with that email already exists.';
+    creds[e] = password;
+    await _saveCredentials(creds);
+    await registerUser(e);
+    return null; // success
+  }
+
+  /// Validate credentials. Returns true if correct.
+  /// Admin is checked separately via hardcoded values.
+  static Future<bool> verifyPassword(String email, String password) async {
+    final e = email.trim().toLowerCase();
+    // Admin hardcoded
+    if (e == 'admin@gmail.com') return password == 'admin123';
+    final creds = await _loadCredentials();
+    return creds[e] == password;
+  }
+
+  /// Check whether a user account exists.
+  static Future<bool> accountExists(String email) async {
+    final e = email.trim().toLowerCase();
+    if (e == 'admin@gmail.com') return true;
+    final creds = await _loadCredentials();
+    return creds.containsKey(e);
+  }
+
+  /// Reset (change) password for an existing account.
+  /// Returns null on success, error string on failure.
+  static Future<String?> resetPassword(String email, String newPassword) async {
+    final e = email.trim().toLowerCase();
+    if (e == 'admin@gmail.com') return 'Admin password cannot be changed here.';
+    final creds = await _loadCredentials();
+    if (!creds.containsKey(e)) return 'No account found with that email.';
+    creds[e] = newPassword;
+    await _saveCredentials(creds);
+    return null; // success
   }
 
   // ── Design Requests ───────────────────────────────────────────────────────

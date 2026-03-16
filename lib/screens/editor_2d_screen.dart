@@ -604,6 +604,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
             child: _ToolWheelScope(
               currentMode: _currentMode,
               onModeChanged: (m) => setState(() => _currentMode = m),
+              enabled: widget.isAdmin,
               child: Stack(
                 children: [
                   RoomCanvas(
@@ -661,10 +662,15 @@ class _ToolWheelScope extends StatefulWidget {
   final ValueChanged<MouseMode> onModeChanged;
   final Widget child;
 
+  /// When false (non-admin / view-only users) the wheel is completely disabled
+  /// and right-click does nothing.
+  final bool enabled;
+
   const _ToolWheelScope({
     required this.currentMode,
     required this.onModeChanged,
     required this.child,
+    this.enabled = true,
   });
 
   @override
@@ -778,6 +784,9 @@ class _ToolWheelScopeState extends State<_ToolWheelScope>
 
   @override
   Widget build(BuildContext context) {
+    // Non-admin users: skip all gesture handling, just render the child
+    if (!widget.enabled) return widget.child;
+
     return Listener(
       behavior: HitTestBehavior.translucent,
       onPointerDown: (e) {
