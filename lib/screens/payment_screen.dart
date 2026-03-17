@@ -40,7 +40,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
   final _cityCtrl = TextEditingController();
   final _postcodeCtrl = TextEditingController();
   String _delivery = 'standard';
-  final _cardNumCtrl = TextEditingController();
+  // Card number: 4 groups of 4 digits (based on user feedback, usability test March 2026)
+  final _card1 = TextEditingController();
+  final _card2 = TextEditingController();
+  final _card3 = TextEditingController();
+  final _card4 = TextEditingController();
+  final _cardFocus1 = FocusNode();
+  final _cardFocus2 = FocusNode();
+  final _cardFocus3 = FocusNode();
+  final _cardFocus4 = FocusNode();
   final _cardNameCtrl = TextEditingController();
   final _expiryCtrl = TextEditingController();
   final _cvvCtrl = TextEditingController();
@@ -58,12 +66,17 @@ class _PaymentScreenState extends State<PaymentScreen> {
       _addressCtrl,
       _cityCtrl,
       _postcodeCtrl,
-      _cardNumCtrl,
+      _card1,
+      _card2,
+      _card3,
+      _card4,
       _cardNameCtrl,
       _expiryCtrl,
       _cvvCtrl,
     ])
       c.dispose();
+    for (final f in [_cardFocus1, _cardFocus2, _cardFocus3, _cardFocus4])
+      f.dispose();
     super.dispose();
   }
 
@@ -384,17 +397,23 @@ class _PaymentScreenState extends State<PaymentScreen> {
           _Sect(
             title: 'Card Details',
             children: [
-              _Fld(
-                ctrl: _cardNumCtrl,
-                label: 'Card Number',
-                icon: Icons.credit_card,
-                keyboardType: TextInputType.number,
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                  LengthLimitingTextInputFormatter(16),
+              // Grouped card number input — 4 boxes of 4 digits
+              // Implemented based on user feedback from usability testing (March 2026):
+              // participant found single-box entry error-prone as they could not
+              // quickly verify all 16 digits were entered correctly.
+              _CardGroupField(
+                ctrls: [_card1, _card2, _card3, _card4],
+                focusNodes: [
+                  _cardFocus1,
+                  _cardFocus2,
+                  _cardFocus3,
+                  _cardFocus4,
                 ],
-                validator: (v) =>
-                    (v?.length == 16) ? null : 'Enter 16-digit number',
+                validator: () {
+                  final all =
+                      _card1.text + _card2.text + _card3.text + _card4.text;
+                  return all.length == 16 ? null : 'Enter all 16 digits';
+                },
               ),
               const SizedBox(height: 12),
               _Fld(
@@ -997,6 +1016,160 @@ class _StepDot extends StatelessWidget {
             fontWeight: active ? FontWeight.w700 : FontWeight.w500,
           ),
         ),
+      ],
+    );
+  }
+}
+
+// ── Card number grouped input ────────────────────────────────────────────────
+// Four separate 4-digit boxes with automatic focus advance.
+// Added following usability test feedback: single field made it hard for
+// users to verify that all 16 digits had been entered correctly.
+class _CardGroupField extends StatefulWidget {
+  final List<TextEditingController> ctrls;
+  final List<FocusNode> focusNodes;
+  final String? Function() validator;
+  const _CardGroupField({
+    required this.ctrls,
+    required this.focusNodes,
+    required this.validator,
+  });
+  @override
+  State<_CardGroupField> createState() => _CardGroupFieldState();
+}
+
+class _CardGroupFieldState extends State<_CardGroupField> {
+  String? _error;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Label row
+        const Row(
+          children: [
+            Icon(Icons.credit_card, size: 16, color: AppTheme.textMuted),
+            SizedBox(width: 6),
+            Text(
+              'Card Number',
+              style: TextStyle(color: AppTheme.textMuted, fontSize: 13),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        // Four boxes
+        Row(
+          children: List.generate(4, (i) {
+            final isLast = i == 3;
+            return Expanded(
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: widget.ctrls[i],
+                      focusNode: widget.focusNodes[i],
+                      keyboardType: TextInputType.number,
+                      textAlign: TextAlign.center,
+                      maxLength: 4,
+                      style: const TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 4,
+                      ),
+                      decoration: InputDecoration(
+                        counterText: '',
+                        filled: true,
+                        fillColor: AppTheme.surfaceAlt,
+                        hintText: '0000',
+                        hintStyle: TextStyle(
+                          color: AppTheme.textMuted.withOpacity(0.4),
+                          fontSize: 16,
+                          letterSpacing: 4,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(
+                            color: AppTheme.borderDark,
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(
+                            color: _error != null
+                                ? AppTheme.error
+                                : AppTheme.borderDark,
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: const BorderSide(
+                            color: AppTheme.accent,
+                            width: 1.5,
+                          ),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 14,
+                        ),
+                      ),
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      onChanged: (v) {
+                        // Auto-advance to next box when 4 digits entered
+                        if (v.length == 4 && !isLast) {
+                          FocusScope.of(
+                            context,
+                          ).requestFocus(widget.focusNodes[i + 1]);
+                        }
+                        // Auto-back to previous box when cleared
+                        if (v.isEmpty && i > 0) {
+                          FocusScope.of(
+                            context,
+                          ).requestFocus(widget.focusNodes[i - 1]);
+                        }
+                        // Clear error as user types
+                        if (_error != null) setState(() => _error = null);
+                      },
+                      // Validate on form submit via FormField wrapper
+                      validator: (_) {
+                        if (i == 3) {
+                          final err = widget.validator();
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted) setState(() => _error = err);
+                          });
+                          return err;
+                        }
+                        return null;
+                      },
+                    ),
+                  ),
+                  // Dash separator between groups
+                  if (!isLast)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Text(
+                        '–',
+                        style: TextStyle(
+                          color: AppTheme.textMuted.withOpacity(0.6),
+                          fontSize: 18,
+                          fontWeight: FontWeight.w300,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            );
+          }),
+        ),
+        // Error text
+        if (_error != null) ...[
+          const SizedBox(height: 6),
+          Text(
+            _error!,
+            style: const TextStyle(color: AppTheme.error, fontSize: 12),
+          ),
+        ],
       ],
     );
   }
