@@ -1121,14 +1121,6 @@
     </div>
     <div id="lp-body">
 
-      <div class="lp-section-label">Room</div>
-
-      <div class="lp-row">
-        <span class="lp-label">Wall Height</span>
-        <input type="range" class="lp-slider" id="lp-wall-height" min="2.0" max="5.0" step="0.1" value="3.2">
-        <span class="lp-badge" id="lp-wall-height-val">3.2 m</span>
-      </div>
-
       <div class="lp-section-label">Scene lighting</div>
 
       <div class="lp-row">
@@ -2236,11 +2228,13 @@
           } else if (item.type === 'windowLight') {
             // Same fix: use Flutter's position and tangent-derived rotation.
             group.position.set(cx, 0, cz);
-            var wallRotY2 = (item.rotation !== undefined) ? -(item.rotation) : (function () {
-              var rw4 = _scenePayload ? _scenePayload.roomWidth * _sceneRs : 10;
-              var rd4 = _scenePayload ? _scenePayload.roomDepth * _sceneRs : 8;
-              return nearestWall(rw4, rd4).rotY;
-            })();
+            // FIX: compute rw4/rd4 and wall2 OUTSIDE the IIFE so they are
+            // accessible later when building the directional light target.
+            // Previously wall2 was never defined → ReferenceError → infinite load.
+            var rw4 = _scenePayload ? _scenePayload.roomWidth * _sceneRs : 10;
+            var rd4 = _scenePayload ? _scenePayload.roomDepth * _sceneRs : 8;
+            var wall2 = nearestWall(rw4, rd4);
+            var wallRotY2 = (item.rotation !== undefined) ? -(item.rotation) : wall2.rotY;
             var mesh = cloneLightMesh('windowLight');
             if (mesh) {
               // Scale window to fit 2D footprint width
@@ -2261,8 +2255,8 @@
             // Directional light pointing inward from wall
             var dl2 = new THREE.DirectionalLight(cfg.color, cfg.intensity * sf);
             dl2.position.set(0, cfg.height, 0);
-            var inX = (wall2.gx < (rw4 / 2 || 5)) ? 3 : -3;
-            var inZ = (wall2.gz < (rd4 / 2 || 4)) ? 3 : -3;
+            var inX = (wall2.gx < (rw4 / 2)) ? 3 : -3;
+            var inZ = (wall2.gz < (rd4 / 2)) ? 3 : -3;
             dl2.target.position.set(inX, 0, inZ);
             dl2.castShadow = true;
             dl2.shadow.mapSize.set(1024, 1024);
@@ -2364,6 +2358,12 @@
               if (!mat.userData) mat.userData = {};
               if (!mat.userData.origColor) {
                 mat.userData.origColor = mat.color ? mat.color.clone() : new THREE.Color(1, 1, 1);
+              }
+              // Also snapshot emissive so _clearTintOnEntry can fully restore it.
+              if (!mat.userData.origEmissive) {
+                mat.userData.origEmissive = (mat.emissive)
+                  ? mat.emissive.clone()
+                  : new THREE.Color(0, 0, 0);
               }
             });
           }
@@ -2590,18 +2590,24 @@
             var orig = (mat.userData && mat.userData.origColor)
               ? mat.userData.origColor.clone()
               : new THREE.Color(1, 1, 1);
-            // Lerp: result = orig*(1-strength) + tintColor*strength
+            // Lerp mat.color: result = orig*(1-strength) + tintColor*strength
             // At 0%  → exact original colour (no tint)
-            // At 50% → even mix of original and chosen colour
             // At 100% → pure chosen colour
-            // NOTE: must use setRGB() not set() — in Three.js r128 color.set()
-            // only accepts a single argument; passing 3 floats would interpret
-            // only the first as a hex int (near-zero = black).
             mat.color.setRGB(
               orig.r * (1 - strength) + tintColor.r * strength,
               orig.g * (1 - strength) + tintColor.g * strength,
               orig.b * (1 - strength) + tintColor.b * strength
             );
+            // Also drive emissive so dark/black-textured furniture shows the tint.
+            // Without this, near-black mat.color * anything ≈ black — invisible.
+            // emissive contribution = tintColor × strength × 0.72
+            if (mat.emissive) {
+              mat.emissive.setRGB(
+                tintColor.r * strength * 0.72,
+                tintColor.g * strength * 0.72,
+                tintColor.b * strength * 0.72
+              );
+            }
             mat.needsUpdate = true;
           });
         }
@@ -2615,6 +2621,9 @@
           mats.forEach(function (mat) {
             var orig = mat.userData && mat.userData.origColor;
             if (orig) mat.color.copy(orig);
+            // Also restore emissive to its original value (before any tint).
+            var origEm = mat.userData && mat.userData.origEmissive;
+            if (origEm && mat.emissive) mat.emissive.copy(origEm);
           });
         }
       });
