@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'login_screen.dart';
 import 'editor_2d_screen.dart';
+import 'pricing_manager_screen.dart';
 import '../theme/app_theme.dart';
 import '../models/design_project.dart';
 import '../services/layout_persistence_service.dart';
@@ -1053,6 +1054,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           sharedProjects: _sharedProjects,
           onShare: _shareProject,
         );
+      case _NavItem.pricing:
+        return PricingManagerScreen(
+          onBack: () => setState(() => _currentNav = _NavItem.home),
+        );
       case _NavItem.templates:
         return _TemplatesContent(
           onTemplate: (t) => _createNewProject(template: t),
@@ -1082,6 +1087,7 @@ enum _NavItem {
   home,
   projects,
   templates,
+  pricing,
   settings;
 
   String get label {
@@ -1092,6 +1098,8 @@ enum _NavItem {
         return 'My Projects';
       case _NavItem.templates:
         return 'Templates';
+      case _NavItem.pricing:
+        return 'Pricing';
       case _NavItem.settings:
         return 'Settings';
     }
@@ -1105,6 +1113,8 @@ enum _NavItem {
         return Icons.folder_outlined;
       case _NavItem.templates:
         return Icons.space_dashboard_outlined;
+      case _NavItem.pricing:
+        return Icons.sell_outlined;
       case _NavItem.settings:
         return Icons.settings_outlined;
     }
@@ -1118,6 +1128,8 @@ enum _NavItem {
         return Icons.folder_rounded;
       case _NavItem.templates:
         return Icons.space_dashboard_rounded;
+      case _NavItem.pricing:
+        return Icons.sell_rounded;
       case _NavItem.settings:
         return Icons.settings_rounded;
     }
@@ -1301,7 +1313,12 @@ class _Sidebar extends StatelessWidget {
                   padding: EdgeInsets.symmetric(horizontal: isWide ? 10 : 8),
                   child: Column(
                     children: _NavItem.values
-                        .where((n) => n != _NavItem.settings)
+                        .where(
+                          (n) =>
+                              n != _NavItem.settings &&
+                              (n != _NavItem.pricing || isAdmin) &&
+                              (n != _NavItem.templates || isAdmin),
+                        )
                         .map(
                           (nav) => _NavTile(
                             nav: nav,
@@ -1988,12 +2005,15 @@ class _HomeContent extends StatelessWidget {
                 request: req,
                 isAdmin: false,
                 onFulfill: null,
-                onDelete: null,
+                onDelete: (req['status'] == 'ready')
+                    ? () => onDeleteRequest(req['id'] as String)
+                    : null,
               ),
             ),
             const SizedBox(height: 24),
           ],
 
+          // Recent projects — admin only (users cannot create projects)
           // Recent projects — admin only (users cannot create projects)
           if (isAdmin) ...[
             _SectionHeader(
@@ -2088,28 +2108,29 @@ class _HomeContent extends StatelessWidget {
             const SizedBox(height: 36),
           ],
 
-          // Templates
-          const _SectionHeader(
-            title: 'Start from Template',
-            subtitle: 'Pre-configured room layouts',
-          ),
-          const SizedBox(height: 14),
-
-          SizedBox(
-            height: 140,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: kRoomTemplates.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 12),
-              itemBuilder: (_, i) => _TemplateCard(
-                template: kRoomTemplates[i],
-                onTap: () => onTemplate(kRoomTemplates[i]),
+          // Templates — admin only
+          if (isAdmin) ...[
+            const _SectionHeader(
+              title: 'Start from Template',
+              subtitle: 'Pre-configured room layouts',
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              height: 140,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: kRoomTemplates.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 12),
+                itemBuilder: (_, i) => _TemplateCard(
+                  template: kRoomTemplates[i],
+                  onTap: () => onTemplate(kRoomTemplates[i]),
+                ),
               ),
             ),
-          ),
+            const SizedBox(height: 36),
+          ],
 
-          const SizedBox(height: 36),
-          _TipsSection(),
+          _TipsSection(isAdmin: isAdmin),
         ],
       ),
     );
@@ -3910,7 +3931,12 @@ class _TemplateCardState extends State<_TemplateCard> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _TipsSection extends StatelessWidget {
-  final _tips = const [
+  final bool isAdmin;
+  const _TipsSection({this.isAdmin = true});
+
+  List<(IconData, String)> get _tips => isAdmin ? _adminTips : _userTips;
+
+  static const _adminTips = [
     (
       Icons.touch_app_outlined,
       'Select any furniture in the sidebar — the canvas switches to draw mode instantly.',
@@ -3934,6 +3960,33 @@ class _TipsSection extends StatelessWidget {
     (
       Icons.copy_rounded,
       'Duplicate a project from the three-dot menu to experiment without losing the original.',
+    ),
+  ];
+
+  static const _userTips = [
+    (
+      Icons.view_in_ar_outlined,
+      'Open any shared design and tap "Realistic 3D View" to explore the room in full 3D.',
+    ),
+    (
+      Icons.threesixty_rounded,
+      'In 3D view, left-drag to orbit around the room, scroll to zoom, and right-drag to pan.',
+    ),
+    (
+      Icons.receipt_long_outlined,
+      'Tap "View Bill" inside a design to see the itemised price list for all the furniture.',
+    ),
+    (
+      Icons.shopping_bag_outlined,
+      'Proceed to checkout from the bill screen to place an order for the furniture you love.',
+    ),
+    (
+      Icons.design_services_outlined,
+      'Use "Request Design" to ask your designer to create a custom room layout just for you.',
+    ),
+    (
+      Icons.notifications_outlined,
+      '"You\'ll be notified when your requested design is ready — check \'Shared with Me\' on the dashboard.',
     ),
   ];
 
@@ -4600,11 +4653,11 @@ class _RequestCard extends StatelessWidget {
               ],
             ),
           ),
-          if (isAdmin) ...[
+          if (isAdmin || onDelete != null) ...[
             const SizedBox(width: 12),
             Column(
               children: [
-                if (!isReady)
+                if (!isReady && isAdmin)
                   Tooltip(
                     message: 'Open & Design',
                     child: InkWell(
@@ -4628,7 +4681,7 @@ class _RequestCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                if (!isReady) const SizedBox(height: 6),
+                if (!isReady && isAdmin) const SizedBox(height: 6),
                 Tooltip(
                   message: 'Dismiss',
                   child: InkWell(

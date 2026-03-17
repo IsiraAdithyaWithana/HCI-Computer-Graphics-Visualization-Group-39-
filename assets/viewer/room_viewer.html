@@ -1121,6 +1121,14 @@
     </div>
     <div id="lp-body">
 
+      <div class="lp-section-label">Room</div>
+
+      <div class="lp-row">
+        <span class="lp-label">Wall Height</span>
+        <input type="range" class="lp-slider" id="lp-wall-height" min="2.0" max="5.0" step="0.1" value="3.2">
+        <span class="lp-badge" id="lp-wall-height-val">3.2 m</span>
+      </div>
+
       <div class="lp-section-label">Scene lighting</div>
 
       <div class="lp-row">
@@ -1889,7 +1897,7 @@
         payload.items.forEach(function (item, idx) {
           var result = placeItem(item, rs);
           fg.add(result.obj);
-          var entry = { obj: result.obj, data: item, baseScale: result.baseScale, scaleFactor: item.scaleFactor || 1.0, tintHex: item.tint || null, tintStrength: item.tintStrength !== undefined ? item.tintStrength : 0.5, index: idx };
+          var entry = { obj: result.obj, data: item, baseScale: result.baseScale, scaleFactor: item.scaleFactor || 1.0, tintHex: item.tint || null, tintStrength: (item.tintStrength != null && item.tintStrength !== undefined) ? parseFloat(item.tintStrength) : 0.4, index: idx };
           placedItems.push(entry);
           // Apply saved tint immediately after placement
           if (entry.tintHex) _applyTintToEntry(entry, entry.tintHex, entry.tintStrength);
@@ -2357,10 +2365,6 @@
               if (!mat.userData.origColor) {
                 mat.userData.origColor = mat.color ? mat.color.clone() : new THREE.Color(1, 1, 1);
               }
-              if (!mat.userData.origEmissive && mat.emissive) {
-                mat.userData.origEmissive = mat.emissive.clone();
-                mat.userData.origEmissiveIntensity = mat.emissiveIntensity || 0;
-              }
             });
           }
         });
@@ -2482,7 +2486,7 @@
       var tintSlider = document.getElementById('tint-strength');
       var tintBadge = document.getElementById('tint-strength-badge');
       var savedTint = entry.tintHex || '#c9a96e';
-      var savedStr = (entry.tintHex && entry.tintStrength !== undefined) ? entry.tintStrength : 0.4;
+      var savedStr = (entry.tintHex && entry.tintStrength != null && entry.tintStrength !== undefined) ? parseFloat(entry.tintStrength) : 0.4;
       _setTintColour(savedTint);
       tintSlider.value = savedStr;
       tintBadge.value = Math.round(savedStr * 100) + '%';
@@ -2586,7 +2590,10 @@
             var orig = (mat.userData && mat.userData.origColor)
               ? mat.userData.origColor.clone()
               : new THREE.Color(1, 1, 1);
-            // Lerp base colour: orig→tint as strength goes 0→1
+            // Lerp: result = orig*(1-strength) + tintColor*strength
+            // At 0%  → exact original colour (no tint)
+            // At 50% → even mix of original and chosen colour
+            // At 100% → pure chosen colour
             // NOTE: must use setRGB() not set() — in Three.js r128 color.set()
             // only accepts a single argument; passing 3 floats would interpret
             // only the first as a hex int (near-zero = black).
@@ -2595,19 +2602,6 @@
               orig.g * (1 - strength) + tintColor.g * strength,
               orig.b * (1 - strength) + tintColor.b * strength
             );
-            // Also drive emissive so the tint is VISIBLE on dark/black textured
-            // furniture (mat.color alone only multiplies the texture — if the
-            // texture is near-black the result stays near-black no matter what
-            // colour you lerp to).  Emissive is additive and ignores texture
-            // darkness, making the colour change obvious at any strength.
-            if (mat.emissive && !mat.isMeshBasicMaterial) {
-              mat.emissive.setRGB(
-                tintColor.r * strength * 0.72,
-                tintColor.g * strength * 0.72,
-                tintColor.b * strength * 0.72
-              );
-              mat.emissiveIntensity = 1.0;
-            }
             mat.needsUpdate = true;
           });
         }
@@ -2621,18 +2615,6 @@
           mats.forEach(function (mat) {
             var orig = mat.userData && mat.userData.origColor;
             if (orig) mat.color.copy(orig);
-            // Restore original emissive so our tint emissive doesn't linger
-            if (mat.emissive && !mat.isMeshBasicMaterial) {
-              var origEm = mat.userData && mat.userData.origEmissive;
-              if (origEm) {
-                mat.emissive.copy(origEm);
-                mat.emissiveIntensity = mat.userData.origEmissiveIntensity || 0;
-              } else {
-                mat.emissive.setRGB(0, 0, 0);
-                mat.emissiveIntensity = 0;
-              }
-            }
-            mat.needsUpdate = true;
           });
         }
       });

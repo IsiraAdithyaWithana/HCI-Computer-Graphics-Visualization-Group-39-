@@ -8,6 +8,7 @@ import '../widgets/colour_scheme_picker.dart';
 import '../models/furniture_model.dart';
 import '../services/custom_furniture_registry.dart';
 import 'realistic_3d_screen.dart';
+import 'bill_preview_screen.dart';
 import '../services/layout_persistence_service.dart';
 import '../services/thumbnail_cache.dart';
 import '../services/thumbnail_generator_service.dart';
@@ -197,6 +198,7 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
         builder: (_) => Realistic3DScreen(
           isAdmin: widget.isAdmin,
           furniture: List.from(items),
+          allFurniture: List.from(items),
           roomWidth: _roomWidthPx,
           roomDepth: _roomDepthPx,
           wallHeightM: _wallHeightM,
@@ -525,6 +527,64 @@ class _Editor2DScreenState extends State<Editor2DScreen> {
                 ),
               ),
             ),
+          // ── Both roles: View Bill ─────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+            child: GestureDetector(
+              onTap: () {
+                final items = _canvasKey.currentState?.furnitureItems ?? [];
+                if (items.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('No furniture in this design.'),
+                    ),
+                  );
+                  return;
+                }
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => BillPreviewScreen(
+                      projectName: widget.projectName ?? 'My Design',
+                      furniture: List.from(items),
+                    ),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0x33C9A96E),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: const Color(0xFFC9A96E).withOpacity(0.5),
+                  ),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.receipt_long_outlined,
+                      color: Color(0xFFC9A96E),
+                      size: 14,
+                    ),
+                    SizedBox(width: 5),
+                    Text(
+                      'View Bill',
+                      style: TextStyle(
+                        color: Color(0xFFC9A96E),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
           // ── Both roles: 3D View ──────────────────────────────────────────
           IconButton(
             icon: const Icon(Icons.auto_awesome),

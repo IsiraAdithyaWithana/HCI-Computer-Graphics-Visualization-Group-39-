@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:webview_windows/webview_windows.dart';
 import '../models/furniture_model.dart';
 import '../services/asset_server.dart';
+import 'bill_preview_screen.dart';
 import '../services/thumbnail_cache.dart';
 
 class Realistic3DScreen extends StatefulWidget {
@@ -31,12 +32,16 @@ class Realistic3DScreen extends StatefulWidget {
 
   /// Called when the user saves a tint on a selected furniture item.
   /// [tintHex] is null when tint is cleared.
+  /// FIX: added {double strength} so the saved percentage is forwarded to Flutter.
   final void Function(String id, String? tintHex, {double strength})?
   onTintUpdated;
 
   /// Undo / Redo — ValueNotifier so the appbar reacts live to canvas history changes.
   final ValueNotifier<bool>? canUndoNotifier;
   final ValueNotifier<bool>? canRedoNotifier;
+
+  /// Callback to open the bill preview from 3D view.
+  final List<FurnitureModel>? allFurniture;
 
   /// Returns JSON of updated furniture items so the 3D scene can live-update.
   final String? Function()? onUndo;
@@ -67,6 +72,7 @@ class Realistic3DScreen extends StatefulWidget {
     this.onSizeUpdated,
     this.onNaturalSizeDetected,
     this.onTintUpdated,
+    this.allFurniture,
     this.onUndo,
     this.onRedo,
     this.canUndoNotifier,
@@ -173,6 +179,8 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
               );
             }
           } else if (data['type'] == 'tintUpdate') {
+            // FIX: read tintStrength from the JS message and forward it.
+            // Previously this was dropped, so Flutter always stored 0.4 default.
             final id = data['id'] as String?;
             final tintHex = data['tintHex'] as String?;
             final tintStrength =
@@ -269,6 +277,9 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
             'scaleFactor': f.scaleFactor,
             if (f.glbOverride != null) 'glbFile': f.glbOverride,
             if (f.labelOverride != null) 'label': f.labelOverride,
+            // FIX: send both tint colour AND tintStrength so JS restores the
+            // exact saved percentage when the 3D view is reopened.
+            // Previously only 'tint' was sent — JS fell back to 0.5 default.
             if (f.tintHex != null) 'tint': f.tintHex,
             if (f.tintHex != null) 'tintStrength': f.tintStrength,
           },
@@ -306,6 +317,19 @@ class _Realistic3DScreenState extends State<Realistic3DScreen> {
           onUndo: _handleUndo,
           onRedo: _handleRedo,
           isAdmin: widget.isAdmin,
+          onViewBill: widget.allFurniture != null
+              ? () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => BillPreviewScreen(
+                        projectName: 'My Design',
+                        furniture: widget.allFurniture!,
+                      ),
+                    ),
+                  );
+                }
+              : null,
         ),
       ),
       body: Stack(
@@ -357,6 +381,7 @@ class _AppBar extends StatelessWidget {
   final VoidCallback? onUndo;
   final VoidCallback? onRedo;
   final bool isAdmin;
+  final VoidCallback? onViewBill;
 
   const _AppBar({
     required this.itemCount,
@@ -365,6 +390,7 @@ class _AppBar extends StatelessWidget {
     this.onUndo,
     this.onRedo,
     this.isAdmin = true,
+    this.onViewBill,
   });
 
   @override
@@ -420,6 +446,45 @@ class _AppBar extends StatelessWidget {
                     icon: Icons.redo_rounded,
                     enabled: canRedo,
                     onTap: canRedo ? onRedo : null,
+                  ),
+                ),
+              ),
+            ],
+            // ── View Bill button ──────────────────────────────────
+            if (onViewBill != null) ...[
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: onViewBill,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0x33C9A96E),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: const Color(0xFFC9A96E).withOpacity(0.5),
+                    ),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.receipt_long_outlined,
+                        color: Color(0xFFC9A96E),
+                        size: 14,
+                      ),
+                      SizedBox(width: 5),
+                      Text(
+                        'View Bill',
+                        style: TextStyle(
+                          color: Color(0xFFC9A96E),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),

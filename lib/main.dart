@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'screens/login_screen.dart';
 import 'services/custom_furniture_registry.dart';
 import 'services/furniture_scale_service.dart';
+import 'services/pricing_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'services/thumbnail_cache.dart';
 import 'theme/app_theme.dart';
@@ -17,6 +18,9 @@ void main() async {
   // Load persisted per-type scale factors so resized furniture remembers
   // its size across sessions, hot reloads, and full app restarts.
   await FurnitureScaleService.instance.load();
+
+  // Load globally saved furniture prices (admin-defined, visible to all users).
+  await PricingService.instance.load();
 
   // Wipe any thumbnails cached before the orientation/stretch fix (v2).
   // After this one-time clear they will regenerate with correct aspect ratio.
