@@ -346,6 +346,7 @@ class LayoutPersistenceService {
     final e = email.trim().toLowerCase();
     // Admin hardcoded
     if (e == 'admin@gmail.com') return password == 'admin123';
+    if (e == 'user@gmail.com') return password == 'user123';
     final creds = await _loadCredentials();
     return creds[e] == password;
   }
@@ -354,6 +355,7 @@ class LayoutPersistenceService {
   static Future<bool> accountExists(String email) async {
     final e = email.trim().toLowerCase();
     if (e == 'admin@gmail.com') return true;
+    if (e == 'user@gmail.com') return true;
     final creds = await _loadCredentials();
     return creds.containsKey(e);
   }

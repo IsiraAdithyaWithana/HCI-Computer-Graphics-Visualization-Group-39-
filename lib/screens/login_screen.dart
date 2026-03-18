@@ -108,6 +108,7 @@ class _LoginScreenState extends State<LoginScreen>
     }
 
     final isAdmin = email == 'admin@gmail.com';
+    final isHardcoded = email == 'admin@gmail.com' || email == 'user@gmail.com';
     if (!isAdmin) await LayoutPersistenceService.registerUser(email);
     if (!mounted) return;
     Navigator.pushReplacement(
