@@ -2285,37 +2285,40 @@ class _ProjectsContentState extends State<_ProjectsContent> {
               ),
             ],
           ),
-          const SizedBox(height: 18),
-
-          Expanded(
-            child: _display.isEmpty
-                ? _EmptyProjects(onNew: widget.onNew)
-                : GridView.builder(
-                    gridDelegate:
-                        const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 300,
-                          crossAxisSpacing: 14,
-                          mainAxisSpacing: 14,
-                          childAspectRatio: 1.22,
+          // For normal users with no own projects, skip the empty section entirely
+          // to avoid a large blank space above "Shared with Me".
+          if (widget.isAdmin || _display.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            Expanded(
+              child: _display.isEmpty
+                  ? _EmptyProjects(onNew: widget.onNew)
+                  : GridView.builder(
+                      gridDelegate:
+                          const SliverGridDelegateWithMaxCrossAxisExtent(
+                            maxCrossAxisExtent: 300,
+                            crossAxisSpacing: 14,
+                            mainAxisSpacing: 14,
+                            childAspectRatio: 1.22,
+                          ),
+                      itemCount: _display.length,
+                      itemBuilder: (_, i) => _ProjectCard(
+                        project: _display[i],
+                        onOpen: () => widget.onOpen(_display[i].id),
+                        onFavorite: () => widget.onFavorite(_display[i].id),
+                        onDelete: () => widget.onDelete(_display[i].id),
+                        onRename: () => widget.onRename(_display[i].id),
+                        onDuplicate: () => widget.onDuplicate(_display[i].id),
+                        isAdmin: widget.isAdmin,
+                        isShared: widget.sharedProjects.any(
+                          (e) => e['projectId'] == _display[i].id,
                         ),
-                    itemCount: _display.length,
-                    itemBuilder: (_, i) => _ProjectCard(
-                      project: _display[i],
-                      onOpen: () => widget.onOpen(_display[i].id),
-                      onFavorite: () => widget.onFavorite(_display[i].id),
-                      onDelete: () => widget.onDelete(_display[i].id),
-                      onRename: () => widget.onRename(_display[i].id),
-                      onDuplicate: () => widget.onDuplicate(_display[i].id),
-                      isAdmin: widget.isAdmin,
-                      isShared: widget.sharedProjects.any(
-                        (e) => e['projectId'] == _display[i].id,
+                        onShare: widget.isAdmin
+                            ? () => widget.onShare(_display[i].id)
+                            : null,
                       ),
-                      onShare: widget.isAdmin
-                          ? () => widget.onShare(_display[i].id)
-                          : null,
                     ),
-                  ),
-          ),
+            ),
+          ],
 
           // Shared with me section (normal users only) in My Projects tab
           if (!widget.isAdmin && widget.sharedProjects.isNotEmpty) ...[
